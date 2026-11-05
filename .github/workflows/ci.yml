@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # Named `gate`: branch protection requires a green check with this name.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the Claude Code CLI (for its plugin validator)
+        run: npm install --global @anthropic-ai/claude-code
+      - name: Checks
+        run: node scripts/check.mjs

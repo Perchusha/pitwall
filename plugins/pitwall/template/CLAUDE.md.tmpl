@@ -1,0 +1,47 @@
+# {{PROJECT_NAME}}
+
+{{ONE_LINE_IDEA}}
+
+The full spec is `docs/SPEC.md`. Read the sections your task touches before planning. `docs/INDEX.md` lists every document and when to read it.
+
+## Current state
+
+Process level: {{PROCESS_LEVEL}}. The current epic and its status are in `docs/EPICS.md`. This project is built with pitwall: `/pitwall:continue` picks up the next epic.
+
+## Commands
+
+E0 fills this section in. Never list a command here that has not been run successfully.
+
+- All checks, as CI runs them: `scripts/gate --full`
+- Inner loop: `scripts/gate --fast`
+- Changed packages only: `scripts/gate --changed`
+
+## Architecture boundaries
+
+Stage 2 (`decide`) fills this section in. Every boundary names the tool that enforces it.
+
+## Definition of done
+
+A task is done when all of these hold:
+
+- `scripts/gate --full` passes;
+- every new module has tests, and every acceptance criterion has a test or a QA scenario;
+- unit tests never touch the network;
+- `docs/SPEC.md` or the README is updated if behaviour or architecture changed;
+- a non-obvious decision has an ADR in `docs/adr/`;
+- after an epic, `docs/JOURNAL.md` has an entry with before and after numbers where they exist.
+
+## How to work
+
+- Read `docs/LESSONS.md` before writing code.
+- One epic, one branch `epic/E<n>-<slug>`, one PR. Never push to `main`.
+- A decision that belongs to the owner is asked one question at a time, with the options compared.
+- Check package versions in the registry, never from memory. Model IDs, prices and API limits live only in the config that `docs/STACK.md` names.
+- Small conventional commits, each green on its own.
+
+## Never
+
+- Read or print `.env*` files, or commit secrets.
+- Set the `ai-review` status outside the review flow.
+- Merge a PR whose `gate` or `ai-review` check is not green.
+- Weaken a check, a hook or a test to make it pass. Fix the cause.

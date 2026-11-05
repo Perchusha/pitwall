@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# The gate contract of a pitwall project.
+#
+#   scripts/gate --fast      lint, typecheck, unit tests: the inner loop
+#   scripts/gate --changed   checks for packages changed since main
+#   scripts/gate --full      everything CI runs
+#
+# Exit 0 is a pass, anything else is a fail. pitwall never assumes a stack:
+# its skills and hooks only call this script.
+#
+# This is the stub from the template. It passes while the repository holds
+# only docs, and fails as soon as code appears, so a project can never look
+# green with no real checks. Epic E0 replaces the body below with the real
+# checks for the chosen stack (E0, AC1).
+set -euo pipefail
+
+mode="${1:---full}"
+case "$mode" in
+  --fast|--changed|--full) ;;
+  *) echo "usage: scripts/gate [--fast|--changed|--full]" >&2; exit 2 ;;
+esac
+
+code_files="$(git ls-files | grep -vE '^(docs/|\.github/|\.claude/|scripts/gate$|CLAUDE\.md$|README\.md$|LICENSE$|\.gitignore$|\.editorconfig$)' || true)"
+
+if [ -n "$code_files" ]; then
+  echo "gate: FAIL - the repository has code, but scripts/gate is still the template stub."
+  echo "E0 replaces this stub with the real checks for the chosen stack. Files found:"
+  echo "$code_files" | head -20
+  exit 1
+fi
+
+echo "gate: PASS ($mode) - docs only, no checks configured yet. E0 replaces this stub."
