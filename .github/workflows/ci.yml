@@ -17,9 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Pinned: the validator's --strict rules change between releases.
-      # Bump it on purpose, in its own PR.
+      # Pinned in .claude-code-version: the validator's --strict rules change
+      # between releases. Bump it on purpose, in its own PR.
       - name: Install the Claude Code CLI (for its plugin validator)
-        run: npm install --global @anthropic-ai/claude-code@2.1.318
+        run: npm install --global "@anthropic-ai/claude-code@$(cat .claude-code-version)"
       - name: Checks
         run: node scripts/check.mjs

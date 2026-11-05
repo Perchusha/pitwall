@@ -10,7 +10,8 @@
 // Cyrillic, and no skill or agent hardcodes a model ID. Characters these
 // checks look for are built from code points (L-3).
 //
-// Needs Node 22, git, bash and the Claude Code CLI (`claude`) on the PATH.
+// Needs Node 22, git, bash and the Claude Code CLI (`claude`) on the PATH, at least
+// the version in .claude-code-version (the one CI installs).
 
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -62,6 +63,20 @@ function frontmatter(text) {
 
 const all = files(root);
 const textFiles = all.filter((p) => !['.png', '.jpg', '.jpeg', '.ico'].includes(extname(p)));
+
+// 0. The Claude Code CLI is at least the version CI pins in .claude-code-version.
+// An older CLI lacks validator options, which reads as a confusing "unknown option".
+step('claude cli version', (report) => {
+  const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
+  const r = spawnSync('claude', ['--version'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) return report(`cannot run "claude --version": ${r.error?.message ?? r.stderr}`);
+  const found = /(\d+)\.(\d+)\.(\d+)/.exec(r.stdout);
+  if (!found) return report(`cannot read a version from "claude --version": ${r.stdout.trim()}`);
+  const have = found.slice(1, 4).map(Number);
+  const need = pinned.split('.').map(Number);
+  const older = have[0] - need[0] || have[1] - need[1] || have[2] - need[2];
+  if (older < 0) report(`Claude Code ${have.join('.')} is older than ${pinned} (.claude-code-version). Run "claude update".`);
+});
 
 // 1. The official validator, strict, with the plugin directory's submission profile.
 function validate(target, extra, report) {
