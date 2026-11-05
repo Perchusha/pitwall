@@ -27,11 +27,11 @@ Stages 0 to 5 run once and produce an approved plan. Stage 6 repeats for every e
 
 | Level | When | Required | Lighter |
 | --- | --- | --- | --- |
-| lite | One user, no money or personal data, 1 to 3 epics | Discovery, 3 to 5 decisions, plan, epic loop with review | Spike optional, short plan review, a local build instead of staging |
-| standard | Users, a database, auth, a deployment | Every stage, staging, QA after every merge | Spike only for an unproven assumption |
-| full | Several services, realtime, payments, AI pipelines, a high cost of error | Every stage, spike and pre-mortem, production smoke check, owner merges high risk | Nothing |
+| lite | One user, no money or personal data, 1 to 3 epics | Discovery, 3 to 5 decisions, plan, epic loop with review | Spike optional, short plan review, a local build instead of staging and production |
+| standard | Users, a database, auth, a deployment | Every stage, staging, QA after every merge, a production smoke check | Spike only for an unproven assumption |
+| full | Several services, realtime, payments, AI pipelines, a high cost of error | Every stage, a spike and a pre-mortem, staging, QA, a production smoke check | Nothing |
 
-The level can go up later; that change is an ADR too.
+At every level, a high-risk PR waits for the owner (section 6). The level can go up later; that change is an ADR too.
 
 ## 4. Decisions
 
@@ -50,8 +50,8 @@ Project docs are tens or hundreds of kilobytes and change with almost every comm
 3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping.
 4. **Gate.** `scripts/gate --full`. Red gate: no PR.
 5. **PR** with the acceptance criteria, ADR links and what was not done. CI runs the gate as the check `gate`.
-6. **Review** by `code-reviewer` in the local session with a fresh context: the diff, the epic, its ADRs and `docs/LESSONS.md`. Its verdict is the commit status `ai-review` (ADR-0002). A third reject on one epic goes to the owner.
-7. **Merge** by risk class: low and normal merge themselves when `gate` and `ai-review` are green; high waits for the owner.
+6. **Review** by `code-reviewer` in the local session with a fresh context: the diff, the epic, its ADRs and `docs/LESSONS.md`. Its verdict is the commit status `ai-review` (ADR-0002). When rejects on one epic reach `review.ownerDecidesAtReject` in `config/defaults.json` (3 by default), the owner decides.
+7. **Merge** by risk class, at every process level: low and normal merge themselves when `gate` and `ai-review` are green; high waits for the owner.
 8. **Release and QA.** A semver tag with a changelog, a deploy to staging, QA against the acceptance criteria of every closed epic plus an exploratory pass, then production and a smoke check. Red QA files a bug and makes its fix the first item of the next loop.
 
 Staging defaults: web, a separate environment with its own database and URL; desktop, a built installer, and for Steam a closed beta branch; mobile, TestFlight and Google Play internal testing; lite level, a local build.

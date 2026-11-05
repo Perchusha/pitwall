@@ -12,4 +12,4 @@ disable-model-invocation: true
 
 1. Add `L-n` to `docs/LESSONS.md`: the rule in one line, why (link to the BUG or PR), the date, how it is checked.
 2. If a tool can check it (a lint rule, a hook, a test guard), add the guard and leave a line in LESSONS that points to it.
-3. The implementer and the reviewer read `docs/LESSONS.md` first, so the next agent does not step on the same rake.
+3. The implementer and the reviewer read `docs/LESSONS.md` first, so the next agent does not repeat the same mistake.

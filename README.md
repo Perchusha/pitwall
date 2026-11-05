@@ -17,7 +17,7 @@ What the plugin does, stage by stage: [plugins/pitwall/README.md](plugins/pitwal
 
 ## Principles
 
-1. **One source of truth per kind of knowledge.** SPEC is what we build, ADRs are why, EPICS is the plan, LESSONS are the rakes. Skills hold process only.
+1. **One source of truth per kind of knowledge.** SPEC is what we build, ADRs are why, EPICS is the plan, LESSONS are the mistakes not to repeat. Skills hold process only.
 2. **The owner decides.** Agents propose options with arguments; a one-way decision waits for a human answer.
 3. **Tools enforce the rules, not prompts.** Hooks, linters, module boundaries, required checks.
 4. **A stage closes only after its check**, and the check is written before the stage starts.

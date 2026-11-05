@@ -11,13 +11,13 @@ Every epic merges through a PR that a separate agent has reviewed. The review ha
 
 ## Options
 
-| Option | Pros | Cons |
-| --- | --- | --- |
-| Review in CI | Independent of the session | Spends API tokens instead of the subscription |
-| Review in the local session | Runs on the subscription | The session must publish the verdict itself |
-| Verdict as an approval from a GitHub App | A real "Approve" by a bot identity | An app, a private key and an install per repository; on one machine the key needs a guard anyway |
-| Verdict as a commit status from the owner's account | No setup | Any session with the token could set it, so a hook must guard it |
-| Branch protection everywhere | Enforced by GitHub | Not available for private repositories on GitHub Free |
+| Option | Pros | Cons | Maturity | Cost | Lock-in |
+| --- | --- | --- | --- | --- | --- |
+| Review in CI | Independent of the session | Needs an API key in CI | Common GitHub Actions pattern | API tokens per review | GitHub Actions |
+| Review in the local session | Runs on the subscription | The session must publish the verdict itself | Same tools as the rest of the loop | Covered by the subscription | None |
+| Verdict as an approval from a GitHub App | A real "Approve" by a bot identity | An app, a private key and an install per repository; on one machine the key needs a guard anyway | Standard GitHub feature | Free | GitHub |
+| Verdict as a commit status from the owner's account | No setup | Any session with the token could set it, so a hook must guard it | Standard GitHub API | Free | GitHub |
+| Branch protection everywhere | Enforced by GitHub | Not available for private repositories on GitHub Free | Standard GitHub feature | GitHub Pro for private repositories | GitHub |
 
 ## Decision
 

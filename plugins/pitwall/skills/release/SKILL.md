@@ -17,4 +17,4 @@ disable-model-invocation: true
    - mobile: TestFlight and Google Play internal testing;
    - lite level: a local build.
 3. Dispatch the `qa` agent: end-to-end tests for the acceptance criteria of every closed epic, plus an exploratory pass through the discovery scenarios.
-4. Green QA: promote to production and run a short smoke check there. Red QA: file BUG-n, keep production where it is, and make the fix the first item of the next loop.
+4. Green QA: promote to production and run a short smoke check there (standard and full; at the lite level the local build is the release). Red QA: file BUG-n, keep production where it is, and make the fix the first item of the next loop.

@@ -22,6 +22,6 @@ The template lives in `plugins/pitwall/template/` and `/pitwall:kickoff` copies 
 
 ## Consequences
 
-- Files a tool would load inside this repository carry a `.tmpl` suffix: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `gitignore.tmpl`, `editorconfig.tmpl`. Kickoff renames them.
+- Files a tool would load inside this repository carry a `.tmpl` suffix: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `gitignore.tmpl`, `editorconfig.tmpl`, `gitattributes.tmpl`. Kickoff renames them.
 - GitHub template repositories also do not copy settings such as branch protection, so kickoff would have set those up in either option.
 - Revisiting it is cheap: a template repository can be generated from `template/` at any time.

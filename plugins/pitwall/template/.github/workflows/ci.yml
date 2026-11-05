@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   # The job is named `gate`: branch protection (or the local merge hook)
   # requires a green check with exactly this name.
@@ -13,5 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # E0 adds the toolchain setup for the chosen stack here.
+      # Called through bash so a gate committed without the executable bit still runs.
       - name: Gate
-        run: scripts/gate --full
+        run: bash scripts/gate --full

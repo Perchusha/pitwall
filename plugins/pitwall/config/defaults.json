@@ -4,22 +4,26 @@
       "when": "one user, no money or personal data, 1 to 3 epics",
       "spike": "optional",
       "planReview": "short checklist",
-      "staging": "local build"
+      "staging": "local build",
+      "productionSmoke": false
     },
     "standard": {
       "when": "users, a database, auth, a deployment",
       "spike": "when an assumption is unproven",
       "planReview": "full",
-      "staging": "required"
+      "staging": "required",
+      "productionSmoke": true
     },
     "full": {
       "when": "several services, realtime, payments, AI pipelines, a high cost of error",
       "spike": "required",
       "planReview": "full with pre-mortem",
-      "staging": "required, plus a production smoke check"
+      "staging": "required",
+      "productionSmoke": true
     }
   },
   "riskClasses": {
+    "appliesAt": "every process level",
     "low": { "examples": "UI, copy", "implementer": "implementer", "merge": "auto" },
     "normal": { "examples": "ordinary logic", "implementer": "implementer", "merge": "auto" },
     "high": {
@@ -37,7 +41,7 @@
     "statusContext": "ai-review",
     "gateContext": "gate",
     "runs": "local session",
-    "rejectsBeforeOwner": 2
+    "ownerDecidesAtReject": 3
   },
   "mergeProtection": {
     "public": "branch protection with required checks",

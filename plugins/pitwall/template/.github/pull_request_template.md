@@ -1,6 +1,6 @@
 ## Epic
 
-E<n> - <title> (`docs/epics/E<n>.md`), risk class: low | normal | high
+E<n> - <title> (`docs/epics/E<n>-<slug>.md`), risk class: low | normal | high
 
 ## Acceptance criteria
 

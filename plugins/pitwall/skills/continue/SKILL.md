@@ -20,7 +20,7 @@ ORIENT -> SELECT -> CLARIFY -> DISPATCH -> GATE -> PR -> REVIEW -> MERGE -> RELE
 4. DISPATCH one implementer sub-agent per epic, chosen by risk class (`implementer` or `implementer-deep`), with a call budget. A PARTIAL report gets a continuation at once.
 5. GATE once on the finished tree. Red gate: no PR.
 6. PR with acceptance criteria, ADR links and what was not done. CI runs the gate again.
-7. REVIEW by the `code-reviewer` agent with a fresh context. Its verdict is the `ai-review` status check. A third reject on one epic goes to the owner.
-8. MERGE by risk class: low and normal merge themselves after green checks; high waits for the owner.
+7. REVIEW by the `code-reviewer` agent with a fresh context. Its verdict is the `ai-review` status check. When rejects on one epic reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides.
+8. MERGE by risk class, at every process level: low and normal merge themselves after green checks; high waits for the owner.
 9. RELEASE through the `release` skill.
-10. RECORD in `docs/EPICS.md` and `docs/JOURNAL.md`. After three recorded epics, stop and suggest a fresh session.
+10. RECORD in `docs/EPICS.md` and `docs/JOURNAL.md`. After `budgets.epicsPerSession` recorded epics (`config/defaults.json`), stop and suggest a fresh session.

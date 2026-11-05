@@ -29,9 +29,9 @@ Helpers: `/pitwall:gate`, `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`,
 
 ## Process levels
 
-- **lite**: one user, no money or personal data, 1 to 3 epics. A local build stands in for staging.
-- **standard**: users, a database, auth, a deployment. Every stage, staging and QA after every merge.
-- **full**: several services, realtime, payments or AI pipelines. A spike and a pre-mortem are required, high-risk PRs wait for the owner.
+- **lite**: one user, no money or personal data, 1 to 3 epics. A local build stands in for staging and production.
+- **standard**: users, a database, auth, a deployment. Every stage, staging, QA after every merge and a production smoke check.
+- **full**: several services, realtime, payments or AI pipelines. Everything in standard, plus a required spike and a pre-mortem.
 
 ## Review and merge
 
@@ -40,11 +40,11 @@ The reviewer runs in your local session and publishes its verdict as the `ai-rev
 - on a public repository, branch protection enforces it;
 - on a private repository on GitHub Free, where branch protection is not available, a local hook refuses the merge.
 
-Low and normal risk PRs merge themselves; high-risk PRs (auth, payments, data migrations, infrastructure, security) wait for you.
+At every process level, low and normal risk PRs merge themselves; high-risk PRs (auth, payments, data migrations, infrastructure, security) wait for you.
 
 ## The project template
 
-`template/` is copied into a new project by `/pitwall:kickoff`. Files that tools would otherwise pick up inside this plugin carry a `.tmpl` suffix, and kickoff renames them: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `gitignore.tmpl` (to `.gitignore`) and `editorconfig.tmpl` (to `.editorconfig`). The template holds no code: the code and the real `scripts/gate` arrive in epic E0, once the stack is chosen.
+`template/` is copied into a new project by `/pitwall:kickoff`. Files that tools would otherwise pick up inside this plugin carry a `.tmpl` suffix, and kickoff renames them: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `gitignore.tmpl` (to `.gitignore`), `editorconfig.tmpl` (to `.editorconfig`) and `gitattributes.tmpl` (to `.gitattributes`, which keeps line endings LF so scripts run on Windows too). The template holds no code: the code and the real `scripts/gate` arrive in epic E0, once the stack is chosen.
 
 ## Configuration
 

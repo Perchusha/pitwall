@@ -3,9 +3,11 @@
 //
 // It runs the official validator first, then the repository's own rules:
 // manifests parse and agree on the version, skills and agents are named after
-// their files and unbuilt ones cannot trigger, the template is complete and
-// carries .tmpl suffixes where a tool would load a file (L-1), relative links
-// resolve, and no file holds an em dash.
+// their files and unbuilt ones cannot trigger, the template is complete, its
+// gate is executable in the git index, and it carries .tmpl suffixes where a
+// tool would load a file (L-1), relative links resolve, no file holds an em
+// dash or Cyrillic, and no skill or agent hardcodes a model ID. Characters
+// these checks look for are built from code points (L-3).
 //
 // Needs Node 22 and the Claude Code CLI (`claude`) on the PATH.
 
@@ -46,10 +48,10 @@ function files(dir, out = []) {
 }
 
 function frontmatter(text) {
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
   if (!m) return null;
   const fields = {};
-  for (const line of m[1].split('\n')) {
+  for (const line of m[1].split(/\r?\n/)) {
     const kv = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
     if (kv) fields[kv[1]] = kv[2].trim();
   }
@@ -106,8 +108,10 @@ step('skills', (report) => {
     }
     if (fm.name !== name) report(`skills/${name}: frontmatter name is "${fm.name}"`);
     if (!fm.description) report(`skills/${name}: no description`);
-    if (/not implemented/i.test(text) && fm['disable-model-invocation'] !== 'true') {
-      report(`skills/${name}: not implemented but can trigger by itself (set disable-model-invocation: true)`);
+    // Unbuilt = the status line, or any wording that says so. Either way it must not trigger by itself.
+    const unbuilt = /^> Status: planned/m.test(text) || /not (implemented|built)/i.test(text);
+    if (unbuilt && fm['disable-model-invocation'] !== 'true') {
+      report(`skills/${name}: not built yet but can trigger by itself (set disable-model-invocation: true)`);
     }
   }
 });
@@ -125,7 +129,7 @@ step('agents', (report) => {
     }
     if (fm.name !== name) report(`agents/${file}: frontmatter name is "${fm.name}"`);
     if (!fm.description) report(`agents/${file}: no description`);
-    if (text.includes('NOT_IMPLEMENTED') && !fm.description.startsWith('(Planned')) {
+    if (text.includes('NOT_IMPLEMENTED') && !fm.description?.startsWith('(Planned')) {
       report(`agents/${file}: not implemented but the description does not say so`);
     }
   }
@@ -139,6 +143,7 @@ step('template', (report) => {
     '.claude/settings.json.tmpl',
     'gitignore.tmpl',
     'editorconfig.tmpl',
+    'gitattributes.tmpl',
     '.github/workflows/ci.yml',
     '.github/pull_request_template.md',
     'scripts/gate',
@@ -159,10 +164,25 @@ step('template', (report) => {
     'docs/archive/README.md',
   ];
   for (const f of required) if (!existsSync(join(t, f))) report(`template/${f} is missing`);
+
+  // Executable in the git index when there is one (what a clone gets), else on disk.
   const gate = join(t, 'scripts', 'gate');
-  if (existsSync(gate) && (statSync(gate).mode & 0o111) === 0) report('template/scripts/gate is not executable');
-  for (const f of ['CLAUDE.md', '.gitignore', '.editorconfig', '.claude/settings.json']) {
-    if (existsSync(join(t, f))) report(`template/${f} would act on this repository: rename it to the .tmpl form`);
+  if (existsSync(gate)) {
+    const staged = spawnSync('git', ['ls-files', '-s', rel(gate)], { cwd: root, encoding: 'utf8' });
+    const indexMode = staged.status === 0 ? staged.stdout.trim().split(/\s+/)[0] : '';
+    const executable = indexMode ? indexMode === '100755' : (statSync(gate).mode & 0o111) !== 0;
+    if (!executable) report(`template/scripts/gate is not executable${indexMode ? ` in the git index (${indexMode})` : ''}`);
+  }
+
+  // L-1: a file a tool loads by name, or anything under .claude/, must carry .tmpl inside this repository.
+  const toolLoaded = new Set(['CLAUDE.md', 'AGENTS.md', '.mcp.json', '.gitignore', '.gitattributes', '.editorconfig']);
+  for (const p of files(t)) {
+    const r = relative(t, p);
+    const base = r.split(/[\\/]/).pop();
+    if (r.endsWith('.tmpl')) continue;
+    if (toolLoaded.has(base) || r.startsWith('.claude')) {
+      report(`template/${r} would act on this repository: rename it to the .tmpl form`);
+    }
   }
 });
 
@@ -185,6 +205,26 @@ step('no em dashes', (report) => {
     const lines = readFileSync(p, 'utf8').split('\n');
     lines.forEach((line, i) => {
       if (line.includes(EM_DASH)) report(`${rel(p)}:${i + 1}`);
+    });
+  }
+});
+
+// 9. Every file is in English: no Cyrillic (the language the owner otherwise writes in).
+const CYRILLIC = new RegExp('[' + String.fromCodePoint(0x400) + '-' + String.fromCodePoint(0x4ff) + ']');
+step('english only', (report) => {
+  for (const p of textFiles) {
+    readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+      if (CYRILLIC.test(line)) report(`${rel(p)}:${i + 1}`);
+    });
+  }
+});
+
+// 10. No hardcoded model IDs in skills or agents: they belong in config.
+step('no model ids in skills or agents', (report) => {
+  const modelId = /\b(claude-(opus|sonnet|haiku|instant)[\w.-]*\d|claude-\d[\w.-]*|gpt-\d[\w.-]*|o\d-(mini|preview)|gemini-\d[\w.-]*)\b/i;
+  for (const p of files(plugin).filter((f) => /[\\/](skills|agents)[\\/]/.test(f) && f.endsWith('.md'))) {
+    readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+      if (modelId.test(line)) report(`${rel(p)}:${i + 1}: ${line.trim()}`);
     });
   }
 });

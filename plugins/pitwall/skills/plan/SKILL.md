@@ -18,7 +18,7 @@ disable-model-invocation: true
 
 ## Output
 
-`docs/EPICS.md` (order and status) and `docs/epics/E<n>.md` per epic, following `template/docs/epics/E0-skeleton.md`.
+`docs/EPICS.md` (order and status) and `docs/epics/E<n>-<slug>.md` per epic, following `template/docs/epics/E0-skeleton.md`.
 
 ## Check
 

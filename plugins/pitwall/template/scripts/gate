@@ -9,9 +9,10 @@
 # its skills and hooks only call this script.
 #
 # This is the stub from the template. It passes while the repository holds
-# only docs, and fails as soon as code appears, so a project can never look
-# green with no real checks. Epic E0 replaces the body below with the real
-# checks for the chosen stack (E0, AC1).
+# only docs and configuration, and fails as soon as anything else appears,
+# tracked or not, so a project can never look green with no real checks.
+# Epic E0 replaces the body below with the real checks for the chosen stack
+# (E0-AC1). It fails closed: outside a git repository it fails.
 set -euo pipefail
 
 mode="${1:---full}"
@@ -20,12 +21,34 @@ case "$mode" in
   *) echo "usage: scripts/gate [--fast|--changed|--full]" >&2; exit 2 ;;
 esac
 
-code_files="$(git ls-files | grep -vE '^(docs/|\.github/|\.claude/|scripts/gate$|CLAUDE\.md$|README\.md$|LICENSE$|\.gitignore$|\.editorconfig$)' || true)"
+if ! top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  echo "gate: FAIL - not inside a git repository."
+  exit 1
+fi
+cd "$top"
 
-if [ -n "$code_files" ]; then
+# Docs and configuration the template ships. Everything else counts as code.
+is_docs() {
+  case "$1" in
+    docs/*.md|docs/*.png|docs/*.jpg|docs/*.jpeg|docs/*.svg|docs/*.txt) return 0 ;;
+    .github/workflows/*.yml|.github/workflows/*.yaml|.github/*.md) return 0 ;;
+    .claude/*.json|.claude/*.md) return 0 ;;
+    CLAUDE.md|AGENTS.md|README.md|LICENSE|.gitignore|.gitattributes|.editorconfig) return 0 ;;
+    scripts/gate|.vscode/extensions.json) return 0 ;;
+  esac
+  return 1
+}
+
+code_files=()
+while IFS= read -r -d '' f; do
+  [ -e "$f" ] || continue
+  is_docs "$f" || code_files+=("$f")
+done < <(git -c core.quotePath=false ls-files -z --cached --others --exclude-standard)
+
+if [ "${#code_files[@]}" -gt 0 ]; then
   echo "gate: FAIL - the repository has code, but scripts/gate is still the template stub."
   echo "E0 replaces this stub with the real checks for the chosen stack. Files found:"
-  echo "$code_files" | head -20
+  printf '  %s\n' "${code_files[@]:0:20}"
   exit 1
 fi
 
