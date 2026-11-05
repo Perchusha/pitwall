@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.1.0, skeleton.** The commands, agents and project template are in place, but every command only says that its stage is not built yet. The stages arrive epic by epic: T1 (stages 0 to 2), T2 (stages 3 to 5), T3 (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.2.0, stages 0 to 2.** `/pitwall:kickoff`, `/pitwall:discovery` and `/pitwall:decide` work, with the `researcher` agent. The later commands still say that their stage is not built yet: T2 (stages 3 to 5), T3 (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -12,6 +12,11 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 /plugin marketplace add Perchusha/pitwall
 /plugin install pitwall@pitwall
 ```
+
+## Requirements
+
+- Node.js 20 or later on the PATH: the plugin's scripts (layout, docs check, merge protection) run on it. Your project's own stack can be anything.
+- The GitHub CLI, `gh`, signed in as an admin of the repository, for merge protection. Without it, kickoff hands you the command to run.
 
 ## Stages
 
@@ -33,22 +38,30 @@ Helpers: `/pitwall:gate`, `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`,
 - **standard**: users, a database, auth, a deployment. Every stage, staging, QA after every merge and a production smoke check.
 - **full**: several services, realtime, payments or AI pipelines. Everything in standard, plus a required spike and a pre-mortem.
 
+## What stages 0 to 2 leave in a project
+
+- `.claude/pitwall.json`: the process level, the merge protection mode and `templateVersion`, the plugin version the project was laid out from.
+- `docs/IDEA.md`, `docs/DISCOVERY.md` (analogues with links, constraints with the date you confirmed them, assumptions `A-1`, `A-2` by risk), one ADR per one-way decision and `docs/STACK.md` with registry-checked versions.
+- One commit on `main` (the skeleton), and everything after it on `plan/initial` until the plan is reviewed and merged in one PR.
+
+Each stage ends with `scripts/docs-check.mjs --stage <stage>` from the plugin, which also reports a missing section, an ID that points nowhere and a state file over its size limit.
+
 ## Review and merge
 
 The reviewer runs in your local session and publishes its verdict as the `ai-review` status check. A PR merges only when both `gate` and `ai-review` are green:
 
-- on a public repository, branch protection enforces it;
-- on a private repository on GitHub Free, where branch protection is not available, a local hook refuses the merge.
+- on a public repository, or a private one on a paid plan, branch protection enforces it, admins included, and `gate` must come from GitHub Actions;
+- on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`; the hook that refuses the merge ships with the epic loop (T3).
 
 At every process level, low and normal risk PRs merge themselves; high-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) wait for you.
 
 ## The project template
 
-`template/` is copied into a new project by `/pitwall:kickoff`. Files that tools would otherwise pick up inside this plugin carry a `.tmpl` suffix, and kickoff renames them: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `gitignore.tmpl` (to `.gitignore`), `editorconfig.tmpl` (to `.editorconfig`) and `gitattributes.tmpl` (to `.gitattributes`, which keeps line endings LF so scripts run on Windows too). The template holds no code: the code and the real `scripts/gate` arrive in epic E0, once the stack is chosen.
+`template/` is laid out in a new project by `/pitwall:kickoff`, through `scripts/layout.mjs`, which never overwrites a file. Files that tools would otherwise pick up inside this plugin carry a `.tmpl` suffix, and kickoff renames them: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `.claude/pitwall.json.tmpl`, `gitignore.tmpl` (to `.gitignore`), `editorconfig.tmpl` (to `.editorconfig`) and `gitattributes.tmpl` (to `.gitattributes`, which keeps line endings LF so scripts run on Windows too). The template holds no code: the code and the real `scripts/gate` arrive in epic E0, once the stack is chosen.
 
 ## Configuration
 
-`config/defaults.json` holds the process levels, risk classes, call budgets, review settings, maturity criteria for new dependencies and size limits for the docs.
+`config/defaults.json` holds the process levels, risk classes, call budgets, review and merge protection settings, the planning branch, the discovery and decide settings (counts, constraints, the list of decision areas), maturity criteria and registries for new dependencies, and size limits for the docs.
 
 ## License
 
