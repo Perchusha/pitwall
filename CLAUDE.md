@@ -35,4 +35,4 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 
 - Hardcode model IDs, prices or API limits in a skill or agent. They belong in `config/defaults.json` or the project's own config. The check rejects model IDs in skills and agents.
 - Weaken `scripts/check.mjs` or the validator's `--strict` mode to make a change pass.
-- Change the paths the template gives a project (`docs/EPICS.md`, `docs/adr/`, `scripts/gate`, ...) without a major version bump and a migration note: skills find them by convention.
+- Change the paths the template gives a project (`docs/EPICS.md`, `docs/adr/`, `scripts/gate`, `.claude/pitwall.json`, ...) or rename a `##` heading of a template document without a major version bump and a migration note: skills and the docs check find them by convention (ADR-0006).
