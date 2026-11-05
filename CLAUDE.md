@@ -4,7 +4,7 @@ pitwall is a Claude Code plugin and marketplace that takes a project from an ide
 
 ## Current epic
 
-The first epic in `docs/EPICS.md` whose status is not merged. That table is the only record of epic status; this file never repeats it.
+The first epic in `docs/EPICS.md` whose status is neither merged nor released. That table is the only record of epic status; this file never repeats it.
 
 ## Commands
 
@@ -26,7 +26,7 @@ The first epic in `docs/EPICS.md` whose status is not merged. That table is the 
 - pitwall is built with its own process: one epic, one branch `epic/T<n>-<slug>`, one PR, reviewed by a fresh-context agent before merge.
 - `main` is protected, so a merged epic is recorded (its status in `docs/EPICS.md`) in the first commit of the next epic's branch.
 - Skills hold process only. Knowledge goes in `docs/`, defaults in `config/defaults.json`. Never a second source of truth.
-- A skill or agent that is not built yet says so and stops: skills open with a status line, agents return `STATUS: NOT_IMPLEMENTED`. An unbuilt skill keeps `disable-model-invocation: true` so it never triggers by itself.
+- Every skill carries a `> Status:` line. Until it reads `> Status: built ...`, the skill keeps `disable-model-invocation: true` so it never triggers by itself; the check enforces both. An unbuilt agent says so in its description and returns `STATUS: NOT_IMPLEMENTED`.
 - The plugin never assumes a stack. It calls the project's `scripts/gate` and reads the docs by path.
 - A version bump changes `plugin.json`, the marketplace entry and the marketplace metadata in the same commit. The check enforces it.
 - Every file is in English, and no file holds an em dash: use a hyphen, a comma or a colon. The check rejects Cyrillic and em dashes; other languages are on the reviewer.

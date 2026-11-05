@@ -24,11 +24,12 @@
   },
   "riskClasses": {
     "appliesAt": "every process level",
-    "low": { "examples": "UI, copy", "implementer": "implementer", "merge": "auto" },
-    "normal": { "examples": "ordinary logic", "implementer": "implementer", "merge": "auto" },
+    "low": { "examples": "UI, copy", "implementer": "implementer", "effort": "high", "merge": "auto" },
+    "normal": { "examples": "ordinary logic", "implementer": "implementer", "effort": "high", "merge": "auto" },
     "high": {
       "examples": "auth, payments, data migrations and deletion, infrastructure, security",
       "implementer": "implementer-deep",
+      "effort": "xhigh",
       "merge": "owner"
     }
   },

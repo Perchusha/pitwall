@@ -40,7 +40,7 @@ The reviewer runs in your local session and publishes its verdict as the `ai-rev
 - on a public repository, branch protection enforces it;
 - on a private repository on GitHub Free, where branch protection is not available, a local hook refuses the merge.
 
-At every process level, low and normal risk PRs merge themselves; high-risk PRs (auth, payments, data migrations, infrastructure, security) wait for you.
+At every process level, low and normal risk PRs merge themselves; high-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) wait for you.
 
 ## The project template
 

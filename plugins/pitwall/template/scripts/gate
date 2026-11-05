@@ -39,11 +39,18 @@ is_docs() {
   return 1
 }
 
+listing="$(mktemp)"
+trap 'rm -f "$listing"' EXIT
+if ! git -c core.quotePath=false ls-files -z --cached --others --exclude-standard > "$listing"; then
+  echo "gate: FAIL - git could not list the files."
+  exit 1
+fi
+
 code_files=()
 while IFS= read -r -d '' f; do
-  [ -e "$f" ] || continue
+  [ -e "$f" ] || [ -L "$f" ] || continue
   is_docs "$f" || code_files+=("$f")
-done < <(git -c core.quotePath=false ls-files -z --cached --others --exclude-standard)
+done < "$listing"
 
 if [ "${#code_files[@]}" -gt 0 ]; then
   echo "gate: FAIL - the repository has code, but scripts/gate is still the template stub."

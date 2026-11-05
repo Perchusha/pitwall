@@ -50,7 +50,7 @@ Project docs are tens or hundreds of kilobytes and change with almost every comm
 3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping.
 4. **Gate.** `scripts/gate --full`. Red gate: no PR.
 5. **PR** with the acceptance criteria, ADR links and what was not done. CI runs the gate as the check `gate`.
-6. **Review** by `code-reviewer` in the local session with a fresh context: the diff, the epic, its ADRs and `docs/LESSONS.md`. Its verdict is the commit status `ai-review` (ADR-0002). When rejects on one epic reach `review.ownerDecidesAtReject` in `config/defaults.json` (3 by default), the owner decides.
+6. **Review** by `code-reviewer` in the local session with a fresh context: the diff, the epic, its ADRs and `docs/LESSONS.md`. Its verdict is the commit status `ai-review` (ADR-0002). When rejects on one epic reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides.
 7. **Merge** by risk class, at every process level: low and normal merge themselves when `gate` and `ai-review` are green; high waits for the owner.
 8. **Release and QA.** A semver tag with a changelog, a deploy to staging, QA against the acceptance criteria of every closed epic plus an exploratory pass, then production and a smoke check. Red QA files a bug and makes its fix the first item of the next loop.
 
@@ -90,7 +90,7 @@ The template is tested like a product: three systems of rising complexity walk t
 | Level | System | What it tests |
 | --- | --- | --- |
 | lite | A desktop move-reminder app for one user | That a small idea does not drown in process |
-| standard | A money tracker rebuilt from scratch: web, database, auth, two users | Decisions, ADRs, staging, auto-merge, QA |
-| full | Chosen after the standard run | Spike, plan review, owner merges, modules |
+| standard | A money tracker rebuilt from scratch: web, database, auth, two users | Decisions, ADRs, staging, merges by risk class, QA |
+| full | Chosen after the standard run | Spike, pre-mortem, many high-risk epics, modules |
 
 Measured per system: questions to the owner and how many were unnecessary; interventions outside the questions; calls, tokens and money per epic; blocking review findings and how many repeated a lesson; bugs found by QA after merge and bugs that reached production; what had to change in the plugin, each change released as a version before the next system.

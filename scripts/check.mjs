@@ -2,17 +2,19 @@
 // Every check CI runs for pitwall (T0-AC5). Exit 0 is a pass.
 //
 // It runs the official validator first, then the repository's own rules:
-// manifests parse and agree on the version, skills and agents are named after
-// their files and unbuilt ones cannot trigger, the template is complete, its
-// gate is executable in the git index, and it carries .tmpl suffixes where a
-// tool would load a file (L-1), relative links resolve, no file holds an em
-// dash or Cyrillic, and no skill or agent hardcodes a model ID. Characters
-// these checks look for are built from code points (L-3).
+// manifests parse and agree on the version, every skill carries a status line
+// and an unbuilt one cannot trigger, agents are named after their files, the
+// template is complete, its gate is executable in the git index and behaves
+// as L-2 says in a scratch project, and it carries .tmpl suffixes where a tool
+// would load a file (L-1), relative links resolve, no file holds an em dash or
+// Cyrillic, and no skill or agent hardcodes a model ID. Characters these
+// checks look for are built from code points (L-3).
 //
-// Needs Node 22 and the Claude Code CLI (`claude`) on the PATH.
+// Needs Node 22, git, bash and the Claude Code CLI (`claude`) on the PATH.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -108,10 +110,13 @@ step('skills', (report) => {
     }
     if (fm.name !== name) report(`skills/${name}: frontmatter name is "${fm.name}"`);
     if (!fm.description) report(`skills/${name}: no description`);
-    // Unbuilt = the status line, or any wording that says so. Either way it must not trigger by itself.
-    const unbuilt = /^> Status: planned/m.test(text) || /not (implemented|built)/i.test(text);
-    if (unbuilt && fm['disable-model-invocation'] !== 'true') {
-      report(`skills/${name}: not built yet but can trigger by itself (set disable-model-invocation: true)`);
+    // Every skill states its status in a quote line. Only "Status: built ..." may trigger by itself;
+    // anything else, however it is worded, needs disable-model-invocation: true.
+    const status = /^>\s*\**\s*status\s*\**\s*:\s*\**\s*(.*)$/im.exec(text);
+    if (!status) {
+      report(`skills/${name}: no status line ("> Status: built ..." or "> Status: planned ...")`);
+    } else if (!/^built\b/i.test(status[1].trim()) && fm['disable-model-invocation'] !== 'true') {
+      report(`skills/${name}: status is not "built" but it can trigger by itself (set disable-model-invocation: true)`);
     }
   }
 });
@@ -186,6 +191,44 @@ step('template', (report) => {
   }
 });
 
+// 6b. L-2: the template's gate stub, laid out as kickoff will lay it out, passes on docs only,
+// fails on code (tracked or not), fails closed outside git and rejects a bad flag.
+step('template gate behaviour', (report) => {
+  const dir = mkdtempSync(join(tmpdir(), 'pitwall-gate-'));
+  const env = { ...process.env, GIT_CEILING_DIRECTORIES: dir };
+  const run = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, env, encoding: 'utf8' });
+  const expect = (label, r, code) => {
+    if (r.error) report(`${label}: ${r.error.message}`);
+    else if (r.status !== code) report(`${label}: exit ${r.status}, expected ${code}\n${r.stdout}${r.stderr}`);
+  };
+  try {
+    const project = join(dir, 'project');
+    cpSync(join(plugin, 'template'), project, { recursive: true });
+    for (const p of files(project).filter((f) => f.endsWith('.tmpl'))) {
+      const base = p.split(/[\\/]/).pop().replace(/\.tmpl$/, '');
+      const name = ['gitignore', 'editorconfig', 'gitattributes'].includes(base) ? `.${base}` : base;
+      renameSync(p, join(dirname(p), name));
+    }
+    run('git', ['init', '-q'], project);
+    run('git', ['add', '-A'], project);
+    run('git', ['-c', 'user.email=check@pitwall', '-c', 'user.name=check', 'commit', '-qm', 'init'], project);
+
+    expect('docs only', run('bash', ['scripts/gate', '--full'], project), 0);
+    expect('run from docs/', run('bash', ['../scripts/gate'], join(project, 'docs')), 0);
+    expect('bad flag', run('bash', ['scripts/gate', '--nope'], project), 2);
+    mkdirSync(join(project, 'src'));
+    writeFileSync(join(project, 'src', 'main.ts'), 'export {};\n');
+    expect('untracked code', run('bash', ['scripts/gate', '--fast'], project), 1);
+
+    const nogit = join(dir, 'nogit');
+    mkdirSync(nogit);
+    cpSync(join(plugin, 'template', 'scripts', 'gate'), join(nogit, 'gate'));
+    expect('outside git', run('bash', ['gate'], nogit), 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // 7. Relative links in Markdown resolve.
 step('markdown links', (report) => {
   for (const p of textFiles.filter((f) => f.endsWith('.md'))) {
@@ -222,7 +265,7 @@ step('english only', (report) => {
 // 10. No hardcoded model IDs in skills or agents: they belong in config.
 step('no model ids in skills or agents', (report) => {
   const modelId = /\b(claude-(opus|sonnet|haiku|instant)[\w.-]*\d|claude-\d[\w.-]*|gpt-\d[\w.-]*|o\d-(mini|preview)|gemini-\d[\w.-]*)\b/i;
-  for (const p of files(plugin).filter((f) => /[\\/](skills|agents)[\\/]/.test(f) && f.endsWith('.md'))) {
+  for (const p of files(plugin).filter((f) => /^(skills|agents)[\\/]/.test(relative(plugin, f)) && f.endsWith('.md'))) {
     readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
       if (modelId.test(line)) report(`${rel(p)}:${i + 1}: ${line.trim()}`);
     });
