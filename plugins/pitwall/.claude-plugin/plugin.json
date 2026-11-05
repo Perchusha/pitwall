@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "pitwall",
+  "version": "0.1.0",
+  "description": "Idea to release with Claude Code: research, decisions recorded as ADRs, a plan in epics, and an epic loop with tests, PRs, a fresh-context reviewer and QA. You sit on the pit wall and make the calls.",
+  "author": {
+    "name": "Anton Perch",
+    "url": "https://github.com/Perchusha"
+  },
+  "homepage": "https://github.com/Perchusha/pitwall",
+  "repository": "https://github.com/Perchusha/pitwall",
+  "license": "MIT",
+  "keywords": ["workflow", "planning", "adr", "epics", "code-review", "qa", "agents"]
+}

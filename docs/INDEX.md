@@ -1,0 +1,11 @@
+# Index
+
+| Document | Holds | Read it when |
+| --- | --- | --- |
+| `SPEC.md` | The design: pipeline, levels, decisions, epic loop, agents, packaging, validation | Planning any change |
+| `EPICS.md` | The plan for building pitwall, epics T0 to T5 | Picking the next work |
+| `epics/` | One epic per file with acceptance criteria | Implementing or reviewing an epic |
+| `adr/` | Decisions about pitwall itself | Touching an area a decision covers |
+| `BUGS.md` | Open and fixed bugs | Selecting work, fixing a bug |
+| `LESSONS.md` | Rules learned from mistakes | Before writing or reviewing anything |
+| `JOURNAL.md` | One entry per epic | Reviewing progress |

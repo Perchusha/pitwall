@@ -1,0 +1,38 @@
+# pitwall
+
+pitwall is a Claude Code plugin and marketplace that takes a project from an idea to a release through checked stages. The design is `docs/SPEC.md`; read the sections your task touches before planning. `docs/INDEX.md` lists every document.
+
+## Current epic
+
+The first epic in `docs/EPICS.md` whose status is neither merged nor released. That table is the only record of epic status; this file never repeats it.
+
+## Commands
+
+- All checks, as CI runs them: `node scripts/check.mjs`
+- The official validator alone: `claude plugin validate --strict .` (marketplace) and `claude plugin validate --strict plugins/pitwall` (plugin)
+- Try the plugin from this checkout: `claude --plugin-dir plugins/pitwall`
+- Install it from the local marketplace in a scratch home: `export HOME=$(mktemp -d)`, then `claude plugin marketplace add <this checkout>`, `claude plugin install pitwall@pitwall` and `claude plugin details pitwall@pitwall` to list its parts
+- Tag a release (after the version bump is merged): `claude plugin tag plugins/pitwall` creates `pitwall--v<version>`
+
+## Layout
+
+- `.claude-plugin/marketplace.json`: the marketplace, one plugin.
+- `plugins/pitwall/`: the plugin. Only `plugin.json` and the icon live in its `.claude-plugin/`; skills, agents, config and the template sit at the plugin root.
+- `plugins/pitwall/template/`: the project skeleton `/pitwall:kickoff` copies. A file that a tool would load inside this repository carries a `.tmpl` suffix (`CLAUDE.md.tmpl`, `settings.json.tmpl`, `gitignore.tmpl`, `editorconfig.tmpl`, `gitattributes.tmpl`), and so does anything under the template's `.claude/`.
+- `docs/`: how pitwall itself is planned and built, in the same structure the template gives a project.
+
+## How to work
+
+- pitwall is built with its own process: one epic, one branch `epic/T<n>-<slug>`, one PR, reviewed by a fresh-context agent before merge.
+- `main` is protected, so a merged epic is recorded (its status in `docs/EPICS.md`) in the first commit of the next epic's branch.
+- Skills hold process only. Knowledge goes in `docs/`, defaults in `config/defaults.json`. Never a second source of truth.
+- Every skill carries a `> Status:` line. Until it reads `> Status: built ...`, the skill keeps `disable-model-invocation: true` so it never triggers by itself; the check enforces both. An unbuilt agent says so in its description and returns `STATUS: NOT_IMPLEMENTED`.
+- The plugin never assumes a stack. It calls the project's `scripts/gate` and reads the docs by path.
+- A version bump changes `plugin.json`, the marketplace entry and the marketplace metadata in the same commit. The check enforces it.
+- Every file is in English, and no file holds an em dash: use a hyphen, a comma or a colon. The check rejects Cyrillic and em dashes; other languages are on the reviewer.
+
+## Never
+
+- Hardcode model IDs, prices or API limits in a skill or agent. They belong in `config/defaults.json` or the project's own config. The check rejects model IDs in skills and agents.
+- Weaken `scripts/check.mjs` or the validator's `--strict` mode to make a change pass.
+- Change the paths the template gives a project (`docs/EPICS.md`, `docs/adr/`, `scripts/gate`, ...) without a major version bump and a migration note: skills find them by convention.
