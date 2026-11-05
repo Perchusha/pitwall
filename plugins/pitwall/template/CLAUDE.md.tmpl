@@ -6,7 +6,7 @@ The full spec is `docs/SPEC.md`. Read the sections your task touches before plan
 
 ## Current state
 
-Process level: {{PROCESS_LEVEL}}. The current epic and its status are in `docs/EPICS.md`. This project is built with pitwall: `/pitwall:continue` picks up the next epic.
+The process level, the merge protection mode and the template version are in `.claude/pitwall.json`; why this level is in `docs/IDEA.md`. The current epic and its status are in `docs/EPICS.md`. This project is built with pitwall: `/pitwall:continue` picks up the next epic.
 
 ## Commands
 
@@ -34,7 +34,7 @@ A task is done when all of these hold:
 ## How to work
 
 - Read `docs/LESSONS.md` before writing code.
-- One epic, one branch `epic/E<n>-<slug>`, one PR. Never push to `main`.
+- One epic, one branch `epic/E<n>-<slug>`, one PR. Never push to `main`. Until the plan is merged, stages 1 to 5 commit on `plan/initial`.
 - A decision that belongs to the owner is asked one question at a time, with the options compared.
 - Check package versions in the registry, never from memory. Model IDs, prices and API limits live only in the config that `docs/STACK.md` names.
 - Small conventional commits, each green on its own.

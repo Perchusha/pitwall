@@ -10,11 +10,17 @@
 // Cyrillic, and no skill or agent hardcodes a model ID. Characters these
 // checks look for are built from code points (L-3).
 //
+// The plugin's own scripts (T1) run here as a project gets them: layout.mjs
+// lays out scratch projects, docs-check.mjs must pass on them and fail on
+// broken copies (T1-AC5), and protect.mjs runs every branch against a fake
+// gh (T1-AC2). The headless skill runs (scripts/e2e.mjs) are not here: they
+// need a signed-in CLI and spend the subscription (T1-AC7).
+//
 // Needs Node 22, git, bash and the Claude Code CLI (`claude`) on the PATH, at least
 // the version in .claude-code-version (the one CI installs).
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +68,19 @@ function frontmatter(text) {
 }
 
 const all = files(root);
+const scripts = join(plugin, 'scripts');
+const runScript = (script, args, opts = {}) => spawnSync(process.execPath, [join(scripts, script), ...args], { encoding: 'utf8', ...opts });
+const layOut = (dir, extra = []) =>
+  runScript('layout.mjs', ['--target', dir, '--name', 'scratch', '--idea', 'A scratch project for the checks', '--level', 'lite', ...extra]);
+const docsCheck = (dir, extra = []) => runScript('docs-check.mjs', ['--root', dir, ...extra]);
+const scratch = (prefix, fn) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
 const textFiles = all.filter((p) => !['.png', '.jpg', '.jpeg', '.ico'].includes(extname(p)));
 
 // 0. The Claude Code CLI is at least the version CI pins in .claude-code-version.
@@ -164,6 +183,7 @@ step('template', (report) => {
     'gitignore.tmpl',
     'editorconfig.tmpl',
     'gitattributes.tmpl',
+    '.claude/pitwall.json.tmpl',
     '.github/workflows/ci.yml',
     '.github/pull_request_template.md',
     'scripts/gate',
@@ -218,12 +238,7 @@ step('template gate behaviour', (report) => {
   };
   try {
     const project = join(dir, 'project');
-    cpSync(join(plugin, 'template'), project, { recursive: true });
-    for (const p of files(project).filter((f) => f.endsWith('.tmpl'))) {
-      const base = p.split(/[\\/]/).pop().replace(/\.tmpl$/, '');
-      const name = ['gitignore', 'editorconfig', 'gitattributes'].includes(base) ? `.${base}` : base;
-      renameSync(p, join(dirname(p), name));
-    }
+    expect('layout', layOut(project), 0);
     run('git', ['init', '-q'], project);
     run('git', ['add', '-A'], project);
     run('git', ['-c', 'user.email=check@pitwall', '-c', 'user.name=check', 'commit', '-qm', 'init'], project);
@@ -242,6 +257,291 @@ step('template gate behaviour', (report) => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 6c. Every script parses, including the ones only the owner runs (scripts/e2e.mjs).
+step('scripts parse', (report) => {
+  for (const p of all.filter((f) => f.endsWith('.mjs'))) {
+    const r = spawnSync(process.execPath, ['--check', p], { encoding: 'utf8' });
+    if (r.status !== 0) report(`${rel(p)}\n${r.stderr}`);
+  }
+});
+
+// 6d. T1-AC1: layout.mjs lays the template out complete and filled, and refuses to overwrite.
+step('layout', (report) => {
+  scratch('pitwall-layout-', (dir) => {
+    const project = join(dir, 'p');
+    const r = layOut(project);
+    if (r.status !== 0) return report(`layout exit ${r.status}\n${r.stdout}${r.stderr}`);
+    const t = join(plugin, 'template');
+    for (const f of files(t).map((p) => relative(t, p).split('\\').join('/'))) {
+      const dest = f.endsWith('.tmpl') ? f.replace(/(^|\/)(gitignore|editorconfig|gitattributes)\.tmpl$/, '$1.$2').replace(/\.tmpl$/, '') : f;
+      if (!existsSync(join(project, dest))) report(`template/${f} was not laid out as ${dest}`);
+    }
+    for (const p of files(project)) {
+      if (p.endsWith('.tmpl')) report(`${relative(project, p)} kept its .tmpl suffix`);
+      if (/\{\{[A-Z_]+\}\}/.test(readFileSync(p, 'utf8'))) report(`${relative(project, p)} still holds a placeholder`);
+    }
+    const claude = readFileSync(join(project, 'CLAUDE.md'), 'utf8');
+    if (!claude.startsWith('# scratch\n\nA scratch project for the checks\n')) report(`CLAUDE.md does not start with the name and the idea:\n${claude.slice(0, 120)}`);
+    const settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8'));
+    const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending' };
+    if (JSON.stringify(settings) !== JSON.stringify(want)) report(`.claude/pitwall.json is ${JSON.stringify(settings)}, expected ${JSON.stringify(want)}`);
+
+    const again = layOut(project);
+    if (again.status !== 1 || !/REFUSED/.test(again.stderr)) report(`a second layout must be refused with exit 1, got ${again.status}\n${again.stderr}`);
+    if (readFileSync(join(project, 'CLAUDE.md'), 'utf8') !== claude) report('a refused layout changed CLAUDE.md');
+
+    const docsOnly = join(dir, 'docs-only');
+    mkdirSync(join(docsOnly, 'docs'), { recursive: true });
+    const r2 = layOut(docsOnly);
+    if (r2.status !== 1 || existsSync(join(docsOnly, 'CLAUDE.md'))) report(`a folder with docs/ must be refused and stay untouched, got exit ${r2.status}`);
+    const clash = join(dir, 'clash');
+    mkdirSync(clash);
+    writeFileSync(join(clash, '.gitignore'), 'mine\n');
+    const r3 = layOut(clash);
+    if (r3.status !== 1 || readFileSync(join(clash, '.gitignore'), 'utf8') !== 'mine\n' || existsSync(join(clash, 'docs'))) report(`a folder with its own .gitignore must be refused and stay untouched, got exit ${r3.status}`);
+
+    const usage = [
+      ['--level huge', layOut(join(dir, 'u1'), ['--level', 'huge'])],
+      ['no --idea', runScript('layout.mjs', ['--target', join(dir, 'u2'), '--name', 'x', '--level', 'lite'])],
+      ['unknown flag', layOut(join(dir, 'u3'), ['--force'])],
+    ];
+    for (const [label, u] of usage) if (u.status !== 2) report(`${label}: exit ${u.status}, expected 2`);
+  });
+});
+
+// Filled-in documents for a scratch project, as kickoff, discovery and decide would leave them.
+function fillStages(project) {
+  const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+  const put = (relPath, text) => writeFileSync(join(project, relPath), text);
+  put('docs/IDEA.md', '# Idea\n\n## Problem\n\nI sit for hours and forget to move.\n\n## Who it is for\n\nMe alone.\n\n## Out of scope\n\nTeams and phones.\n\n## Process level\n\nOne user, no money, no personal data: lite.\n');
+  const analogues = Array.from({ length: cfg.discovery.analogues.min }, (_, i) => `| App ${i} | Reminds | Free | Electron | Nags | https://example.com/${i} |`);
+  const constraints = cfg.discovery.constraints.map((c) => `| ${c} | Settled | 2026-11-05 |`);
+  const scenarios = Array.from({ length: cfg.discovery.scenarios.min }, (_, i) => `- Scenario ${i}`);
+  put(
+    'docs/DISCOVERY.md',
+    [
+      '# Discovery', '', '## Problem and user', '', 'One person at a desk.', '', '## Scenarios', '', ...scenarios, '', '## Non-goals', '', '- No phone app', '',
+      '## Analogues', '', '| Product | What it does | How it makes money | Stack | What it lacks | Link |', '| --- | --- | --- | --- | --- | --- |', ...analogues, '',
+      '## Owner constraints', '', '| Constraint | Answer | Confirmed on |', '| --- | --- | --- |', ...constraints, '',
+      '## Assumptions by risk', '', '| ID | Assumption | Risk | How to check it |', '| --- | --- | --- | --- |',
+      '| A-1 | Notifications fire over full-screen apps | high | Spike on both systems |', '| A-2 | A tray icon is enough | low | Ask two users |', '',
+    ].join('\n'),
+  );
+  const oneWay = cfg.decide.oneWay.map((a) => `| ${a} | Choice | - | - | ADR-0001 |`);
+  const twoWay = cfg.decide.areas.filter((a) => !cfg.decide.oneWay.includes(a)).map((a) => `| ${a} | Default | Fits one user |`);
+  put(
+    'docs/STACK.md',
+    [
+      '# Stack', '', '## Decisions', '', '| Area | Choice | Version | Source | ADR |', '| --- | --- | --- | --- | --- |', ...oneWay,
+      '| Test strategy | vitest | 3.2.4 | [npm](https://www.npmjs.com/package/vitest) 2026-11-05 | - |', '',
+      '## Models, prices and limits', '', 'None: the app calls no model and no paid API.', '', '## Two-way decisions', '', '| Area | Choice | Why, in one line |', '| --- | --- | --- |', ...twoWay, '',
+    ].join('\n'),
+  );
+  put(
+    'docs/adr/0001-stack.md',
+    '# ADR-0001: Stack\n\n- Status: accepted\n- Date: 2026-11-05\n- Class: one-way\n- Decided by: owner\n\n## Context\n\nA desktop app.\n\n## Options\n\n| Option | Pros | Cons | Maturity | Cost | Lock-in | Source |\n| --- | --- | --- | --- | --- | --- | --- |\n| Tauri | Small | Rust | Stable | Free | Low | https://tauri.app |\n| Electron | Known | Big | Stable | Free | Low | https://electronjs.org |\n\n## Decision\n\nTauri.\n\n## Consequences\n\nRust in the toolchain.\n',
+  );
+  const claude = readFileSync(join(project, 'CLAUDE.md'), 'utf8');
+  put('CLAUDE.md', claude.replace('## Architecture boundaries\n', '## Architecture boundaries\n\n- The UI never touches the file system directly: enforced by the Tauri allowlist.\n'));
+}
+
+// 6e. T1-AC5: the docs check passes on a fresh layout and on pitwall's own docs, and reports
+// a missing section, a broken ID, an oversized file and every stage Check it is given (L-2).
+step('docs check', (report) => {
+  const own = docsCheck(root, ['--only', 'ids,size']);
+  if (own.status !== 0) report(`pitwall's own docs:\n${own.stdout}${own.stderr}`);
+
+  scratch('pitwall-docs-', (dir) => {
+    const base = join(dir, 'base');
+    if (layOut(base).status !== 0) return report('layout failed');
+    const fresh = docsCheck(base);
+    if (fresh.status !== 0) report(`a fresh layout must pass:\n${fresh.stdout}`);
+    const unfilled = docsCheck(base, ['--stage', 'kickoff']);
+    if (unfilled.status !== 1 || !/IDEA\.md: section "## Problem" is not filled in/.test(unfilled.stdout)) report(`--stage kickoff must fail on an unfilled IDEA.md:\n${unfilled.stdout}`);
+
+    let n = 0;
+    // Copies the base project, breaks it, and expects the check to fail with these messages.
+    const broken = (label, breakIt, expected, extra = []) => {
+      const copy = join(dir, `case-${(n += 1)}`);
+      cpSync(base, copy, { recursive: true });
+      breakIt(copy);
+      const r = docsCheck(copy, extra);
+      const missing = expected.filter((e) => !e.test(r.stdout));
+      if (expected.length === 0 ? r.status !== 0 : r.status !== 1 || missing.length > 0) {
+        report(`${label}: exit ${r.status}, expected ${expected.length ? 1 : 0}${missing.length ? `, no line matching ${missing.join(', ')}` : ''}\n${r.stdout}${r.stderr}`);
+      }
+    };
+    const edit = (copy, relPath, fn) => writeFileSync(join(copy, relPath), fn(readFileSync(join(copy, relPath), 'utf8')));
+
+    broken('missing section', (c) => edit(c, 'docs/DISCOVERY.md', (t) => t.replace('## Non-goals\n', '')), [/DISCOVERY\.md: missing section "## Non-goals"/]);
+    broken('missing ADR section', (c) => writeFileSync(join(c, 'docs/adr/0001-x.md'), '# ADR-0001: X\n\n## Context\n\n## Decision\n'), [/0001-x\.md: missing section "## Options"/, /0001-x\.md: missing section "## Consequences"/]);
+    broken('missing file', (c) => rmSync(join(c, 'docs', 'IDEA.md')), [/docs\/IDEA\.md: missing/]);
+    broken('broken IDs', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\nSee ADR-0042, E7, E0-AC9, BUG-3, L-2, A-4 and R-1.\n'), [
+      /SPEC\.md:\d+: ADR-0042 points nowhere/, /E7 points nowhere/, /E0-AC9 points nowhere/, /BUG-3 points nowhere/, /L-2 points nowhere/, /A-4 points nowhere/, /R-1 points nowhere/,
+    ]);
+    broken('IDs that resolve', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE0 and E0-AC1 exist; `ADR-0042` is an example.\n\n```\nBUG-99 in a code block\n```\n'), []);
+    broken('state file too big', (c) => appendFileSync(join(c, 'docs', 'BUGS.md'), 'x'.repeat(51 * 1024)), [/BUGS\.md: [\d.]+ KB, over the 50 KB limit/]);
+    broken('CLAUDE.md too long', (c) => appendFileSync(join(c, 'CLAUDE.md'), '- line\n'.repeat(200)), [/CLAUDE\.md: \d+ lines, over the 200-line limit/]);
+
+    // Stage checks: a filled project passes every stage, and each kind of gap is reported.
+    broken('filled stages pass', (c) => fillStages(c), [], ['--stage', 'kickoff']);
+    broken('filled discovery passes', (c) => fillStages(c), [], ['--stage', 'discovery']);
+    broken('filled decide passes', (c) => fillStages(c), [], ['--stage', 'decide']);
+    broken('kickoff placeholders', (c) => {
+      fillStages(c);
+      edit(c, '.claude/pitwall.json', (t) => t.replace('"lite"', '"huge"'));
+      writeFileSync(join(c, 'notes.md.tmpl'), '{{PROJECT_NAME}}\n');
+      edit(c, 'CLAUDE.md', (t) => `{{PROJECT_NAME}}\n${t}`);
+    }, [/notes\.md\.tmpl: still carries the \.tmpl suffix/, /CLAUDE\.md: still holds a \{\{PLACEHOLDER\}\}/, /processLevel "huge"/], ['--stage', 'kickoff']);
+    broken('discovery gaps', (c) => {
+      fillStages(c);
+      edit(c, 'docs/DISCOVERY.md', (t) => t.replace('https://example.com/0', 'see the site').replace('| Licence | Settled | 2026-11-05 |', '| Licence | Settled | yes |').replace('full-screen apps | high |', 'full-screen apps | low |').replace('| A-2 | A tray icon is enough | low |', '| A-2 | A tray icon is enough | high |').replace('- Scenario 0\n', ''));
+    }, [/analogue "App 0" has no link/, /constraint "Licence" has no confirmation date/, /A-2: assumptions are not sorted by risk/, /2 scenarios, expected 3 to 7/], ['--stage', 'discovery']);
+    broken('decide gaps', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (t) => t.replace('| Database | Choice | - | - | ADR-0001 |\n', '').replace('[npm](https://www.npmjs.com/package/vitest) 2026-11-05', 'npm').replace('| i18n | Default | Fits one user |\n', ''));
+      edit(c, 'docs/adr/0001-stack.md', (t) => t.replace('- Decided by: owner', '- Decided by: agent'));
+    }, [/area "Database" is in neither table/, /area "i18n" is in neither table/, /vitest" 3\.2\.4 has no registry link with a date/, /one-way decision must be decided by the owner/], ['--stage', 'decide']);
+    broken('one-way area decided as two-way', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Passwords | Simple |\n'));
+    }, [/one-way area "Auth" has no ADR/], ['--stage', 'decide']);
+    broken('one-way area not needed', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Not needed | One local user |\n'));
+    }, [], ['--stage', 'decide']);
+  });
+
+  const usage = docsCheck(root, ['--stage', 'nope']);
+  if (usage.status !== 2) report(`--stage nope: exit ${usage.status}, expected 2`);
+});
+
+// 6f. T1-AC2: protect.mjs against a fake gh. It checks before it writes (L-5), writes the
+// protection ADR-0005 asks for, hands over instead of failing, and a dry run writes nothing.
+step('merge protection (fake gh)', (report) => {
+  scratch('pitwall-protect-', (dir) => {
+    const fake = join(dir, 'fake-gh.mjs');
+    writeFileSync(
+      fake,
+      `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+const s = JSON.parse(process.env.FAKE_GH);
+const args = process.argv.slice(2);
+let input = '';
+try { input = readFileSync(0, 'utf8'); } catch {}
+appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify({ args, input }) + '\\n');
+const out = (o) => { process.stdout.write(typeof o === 'string' ? o : JSON.stringify(o)); process.exit(0); };
+const err = (m) => { process.stderr.write(m + '\\n'); process.exit(1); };
+const state = process.env.FAKE_GH_STATE;
+if (args[0] === '--version') out('gh version 2.0.0 (fake)\\n');
+if (args[0] === 'auth') s.auth ? out('Logged in\\n') : err('You are not logged into any GitHub hosts.');
+if (args[0] === 'repo') s.repo ? out(s.repo) : err('no git remotes found');
+if (args[0] === 'api') {
+  const path = args.find((a) => a.startsWith('repos/'));
+  if (args.includes('PUT')) {
+    if (s.put !== 'ok') err('gh: Resource not accessible by integration (HTTP 403)');
+    const b = JSON.parse(input);
+    writeFileSync(state, JSON.stringify({ required_status_checks: { checks: b.required_status_checks.checks.map((c) => ({ context: c.context, app_id: c.app_id === -1 ? null : c.app_id })) }, enforce_admins: { enabled: b.enforce_admins } }));
+    out('{}');
+  }
+  if (path.endsWith('/protection')) {
+    if (existsSync(state)) out(readFileSync(state, 'utf8'));
+    if (s.protection) out(s.protection);
+    if (s.probe === 'free') err('gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)');
+    if (s.probe === 'denied') err('gh: Resource not accessible by integration (HTTP 403)');
+    err('gh: Branch not protected (HTTP 404)');
+  }
+  s.branch === false ? err('gh: Branch not found (HTTP 404)') : out('{"name":"main"}');
+}
+err('fake gh: unexpected call ' + args.join(' '));
+`,
+    );
+    const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+    const expectedBody = {
+      required_status_checks: { strict: cfg.mergeProtection.strict, checks: [{ context: cfg.review.gateContext, app_id: cfg.mergeProtection.githubActionsAppId }, { context: cfg.review.statusContext, app_id: -1 }] },
+      enforce_admins: cfg.mergeProtection.enforceAdmins,
+      required_pull_request_reviews: null,
+      restrictions: null,
+    };
+    // ADR-0005 in plain values, so a config edit cannot quietly weaken it.
+    if (expectedBody.enforce_admins !== true || cfg.review.gateContext !== 'gate' || cfg.review.statusContext !== 'ai-review' || cfg.mergeProtection.githubActionsAppId !== 15368) {
+      report('config/defaults.json no longer asks for gate (GitHub Actions) and ai-review with admins included (ADR-0005)');
+    }
+    const repo = (visibility, viewerPermission = 'ADMIN') => ({ nameWithOwner: 'o/r', visibility, viewerPermission });
+    const ok = { auth: true, repo: repo('PUBLIC'), branch: true, probe: '404', put: 'ok' };
+    let n = 0;
+    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [] }) => {
+      const project = join(dir, `p${(n += 1)}`);
+      mkdirSync(join(project, '.claude'), { recursive: true });
+      writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: 'pending' }));
+      const logFile = join(project, 'gh.log');
+      writeFileSync(logFile, '');
+      const env = { ...process.env, PITWALL_GH: JSON.stringify(gh ?? [process.execPath, fake]), FAKE_GH: JSON.stringify(scenario), FAKE_GH_LOG: logFile, FAKE_GH_STATE: join(project, 'state.json') };
+      const r = runScript('protect.mjs', ['--project', project, ...args], { env, cwd: project });
+      const calls = readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      const putCalls = calls.filter((c) => c.args.includes('PUT'));
+      const stored = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8')).mergeProtection;
+      const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
+      if (putCalls.length !== puts) fail(`${putCalls.length} writes, expected ${puts}`);
+      for (const c of putCalls) if (JSON.stringify(JSON.parse(c.input)) !== JSON.stringify(expectedBody)) fail(`wrote ${c.input}, expected ${JSON.stringify(expectedBody)}`);
+      if (stored !== setting) fail(`.claude/pitwall.json says ${stored}, expected ${setting}`);
+      for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+      // A handed-over command must build the same body, by gh's own rules for -F fields (L-6).
+      const handed = /gh api -X PUT repos\/o\/r\/branches\/main\/protection((?: -F "[^"]+")+)/.exec(r.stdout);
+      if (handed) {
+        const built = ghFields([...handed[1].matchAll(/-F "([^"]+)"/g)].map((m) => m[1]));
+        if (JSON.stringify(built) !== JSON.stringify(expectedBody)) fail(`the handed-over command writes ${JSON.stringify(built)}`);
+      }
+      if (/\| gh |--input -|<</.test(r.stdout)) fail('a handed-over command pipes stdin, which breaks in Windows PowerShell (L-6)');
+      return { r, calls, handed };
+    };
+    // What "gh api -F key[a][][b]=v ..." sends: typed values, and a repeated key starts a new array item.
+    function ghFields(fields) {
+      const body = {};
+      for (const f of fields) {
+        const at = f.indexOf('=');
+        const raw = f.slice(at + 1);
+        const value = raw === 'true' ? true : raw === 'false' ? false : raw === 'null' ? null : /^-?\d+$/.test(raw) ? Number(raw) : raw;
+        const keys = f.slice(0, at).replace(/\]/g, '').split('[');
+        let cur = body;
+        for (let i = 0; i < keys.length - 1; i += 1) {
+          if (keys[i + 1] === '') {
+            const list = (cur[keys[i]] ??= []);
+            if (list.length === 0 || keys[i + 2] in list[list.length - 1]) list.push({});
+            cur = list[list.length - 1];
+            i += 1;
+          } else {
+            cur = cur[keys[i]] ??= {};
+          }
+        }
+        cur[keys[keys.length - 1]] = value;
+      }
+      return body;
+    }
+
+    run('public', ok, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
+    run('private, paid plan', { ...ok, repo: repo('PRIVATE') }, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
+    run('dry run', ok, { args: ['--dry-run'], code: 0, result: 'branch-protection (dry run', puts: 0, setting: 'pending', says: ['"enforce_admins": true', 'would run gh api -X PUT'] });
+    run('private, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { code: 0, result: 'local-hook', puts: 0, setting: 'local-hook' });
+    run('dry run, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args: ['--dry-run'], code: 0, result: 'local-hook', puts: 0, setting: 'pending' });
+    run('already protected', { ...ok, protection: { required_status_checks: { checks: [{ context: 'gate', app_id: 15368 }, { context: 'ai-review', app_id: null }] }, enforce_admins: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('protected otherwise', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
+    const notAdmin = run('not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF', 'needs an admin'] });
+    if (!notAdmin.handed) report('not admin: no ready command handed over');
+    if (notAdmin.calls.some((c) => c.args.some((a) => a.endsWith('/protection')))) report('not admin: probed the protection API before checking the permission');
+    const refused = run('write refused', { ...ok, put: 'refuse' }, { code: 3, result: 'pending', puts: 1, setting: 'pending', says: ['HANDOFF', 'GitHub refused the write'] });
+    if (!refused.handed) report('write refused: no ready command handed over');
+    run('probe refused', { ...ok, probe: 'denied' }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
+    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh auth login'] });
+    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh repo create'] });
+    run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['git push -u origin main'] });
+    run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['cli.github.com'] });
+    run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
+  });
 });
 
 // 7. Relative links in Markdown resolve.
