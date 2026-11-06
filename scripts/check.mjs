@@ -615,6 +615,7 @@ if (args[0] === 'api') {
     err('gh: Branch not protected (HTTP 404)');
   }
   if (s.branch === false) err('gh: Branch not found (HTTP 404)');
+  if (s.branch === 'garbled') out('not json');
   // The branch endpoint: the protection summary any reader sees.
   out(stored
     ? { name: 'main', protected: true, protection: { enabled: true, required_status_checks: { checks: stored.required_status_checks.checks, enforcement_level: stored.enforce_admins?.enabled ? 'everyone' : 'non_admins' } } }
@@ -730,6 +731,8 @@ err('fake gh: unexpected call ' + args.join(' '));
     run('recorded local-hook, private paid plan, probe 404, write refused', { ...ok, repo: repo('PRIVATE'), put: 'refuse' }, { before: 'local-hook', code: 3, result: 'pending', puts: 1, setting: 'pending' });
     run('recorded local-hook, public, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
     run('recorded value that is not a mode', { ...ok, auth: false }, { before: 'bogus', code: 3, result: 'pending', puts: 0, setting: 'pending' });
+    run('dry run, recorded local-hook, public, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { args: ['--dry-run'], before: 'local-hook', code: 3, result: 'pending (dry run', puts: 0, setting: 'local-hook', says: ['would record pending'] });
+    run('recorded protection kept when nothing could be read', { ...ok, branch: 'garbled', probe: 'denied' }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('recorded local-hook, protection available', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });

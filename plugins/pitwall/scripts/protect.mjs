@@ -15,7 +15,8 @@
 // lines are ready commands for the owner, the same in bash and PowerShell
 // (L-6). It records "pending", but keeps a recorded mode this run could not check:
 // a recorded branch-protection goes once the branch's protection is read and falls
-// short, a recorded local-hook once the probe shows branch protection is available.
+// short, a recorded local-hook once the repository reads public or the probe shows
+// branch protection is available.
 // --dry-run makes the same reads, prints the writes and writes nothing, not
 // even .claude/pitwall.json.
 //
@@ -168,8 +169,9 @@ if (repo.viewerPermission !== 'ADMIN') {
 // 2. Read-only probe: is branch protection available, and is it already on?
 const probe = gh(['api', `repos/${name}/branches/${branch}/protection`]);
 // A probe that reads protection, or answers 404, shows that branch protection is available here.
-known.available = known.available || probe.ok || /HTTP 404/.test(probe.err);
-if (known.available) known.branchRead = true;
+const probed = probe.ok || /HTTP 404/.test(probe.err);
+known.available = known.available || probed;
+if (probed) known.branchRead = true;
 if (probe.ok) {
   if (satisfies(parse(probe.out))) done('branch-protection');
   handoff(
