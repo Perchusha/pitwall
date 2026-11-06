@@ -267,7 +267,8 @@ step('scripts parse', (report) => {
   }
 });
 
-// 6d. T1-AC1: layout.mjs lays the template out complete and filled, and refuses to overwrite.
+// 6d. T1-AC1: layout.mjs lays the template out complete and filled, and refuses any folder
+// that holds more than .git, so it can never overwrite or commit someone's files.
 step('layout', (report) => {
   scratch('pitwall-layout-', (dir) => {
     const project = join(dir, 'p');
@@ -302,8 +303,23 @@ step('layout', (report) => {
     writeFileSync(join(clash, '.gitignore'), 'mine\n');
     const r3 = layOut(clash);
     if (r3.status !== 1 || readFileSync(join(clash, '.gitignore'), 'utf8') !== 'mine\n' || existsSync(join(clash, 'docs'))) report(`a folder with its own .gitignore must be refused and stay untouched, got exit ${r3.status}`);
+    const code = join(dir, 'code');
+    mkdirSync(join(code, 'src'), { recursive: true });
+    writeFileSync(join(code, 'src', 'main.ts'), 'export {};\n');
+    const r4 = layOut(code);
+    if (r4.status !== 1 || existsSync(join(code, 'CLAUDE.md'))) report(`a folder with code must be refused and stay untouched, got exit ${r4.status}`);
+    if (!claude.includes(`commit on \`${JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8')).planning.branch}\``)) report('CLAUDE.md does not name the planning branch from the config');
+
+    // --check: the preflight question alone, answered without writing.
+    const empty = join(dir, 'empty');
+    mkdirSync(join(empty, '.git'), { recursive: true });
+    const c1 = runScript('layout.mjs', ['--check', '--target', empty]);
+    if (c1.status !== 0 || readdirSync(empty).length !== 1) report(`--check on a folder with only .git: exit ${c1.status}, expected 0 and nothing written`);
+    const c2 = runScript('layout.mjs', ['--check', '--target', code]);
+    if (c2.status !== 1) report(`--check on a folder with code: exit ${c2.status}, expected 1`);
 
     const usage = [
+      ['--check with --name', runScript('layout.mjs', ['--check', '--target', join(dir, 'u0'), '--name', 'x'])],
       ['--level huge', layOut(join(dir, 'u1'), ['--level', 'huge'])],
       ['no --idea', runScript('layout.mjs', ['--target', join(dir, 'u2'), '--name', 'x', '--level', 'lite'])],
       ['unknown flag', layOut(join(dir, 'u3'), ['--force'])],
@@ -409,6 +425,40 @@ step('docs check', (report) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Passwords | Simple |\n'));
     }, [/one-way area "Auth" has no ADR/], ['--stage', 'decide']);
+    // B1 of the T1 review: a one-way area must cite an accepted one-way ADR the owner decided.
+    broken('one-way area cites a two-way ADR', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('- Class: one-way', '- Class: two-way').replace('- Decided by: owner', '- Decided by: agent'));
+    }, [/one-way area "Database" cites ADR-0001, which is not an accepted one-way decision by the owner/], ['--stage', 'decide']);
+    broken('one-way ADR only proposed', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('- Status: accepted', '- Status: proposed'));
+    }, [/cites ADR-0001, which is not an accepted one-way decision/], ['--stage', 'decide']);
+    broken('option without a source', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('| Low | https://tauri.app |', '| Low | the website |').replace('| Electron | Known | Big |', '| Electron |  | Big |'));
+    }, [/option "Tauri" has no source link/, /option "Electron" has an empty cell/], ['--stage', 'decide']);
+    broken('two-way area without its reason', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('| Test strategy | Default | Fits one user |\n', ''));
+    }, [/two-way area "Test strategy" has no line with its reason/], ['--stage', 'decide']);
+    broken('ADR cited as a link', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('| Database | Choice | - | - | ADR-0001 |', '| Database | Choice | - | - | [ADR-0001](adr/0001-stack.md) |'));
+    }, [], ['--stage', 'decide']);
+    broken('duplicate analogues', (c) => {
+      fillStages(c);
+      edit(c, 'docs/DISCOVERY.md', (x) => x.replace('| App 1 | Reminds | Free | Electron | Nags | https://example.com/1 |', '| App 0 | Reminds | Free | Electron | Nags | https://example.com/0 |'));
+    }, [/analogue "App 0" is listed twice/], ['--stage', 'discovery']);
+    broken('settings that are not an object', (c) => {
+      fillStages(c);
+      writeFileSync(join(c, '.claude', 'pitwall.json'), 'null\n');
+    }, [/pitwall\.json: is not a JSON object/], ['--stage', 'kickoff']);
+    broken('a template version with junk', (c) => {
+      fillStages(c);
+      edit(c, '.claude/pitwall.json', (x) => x.replace(/"templateVersion": "[^"]+"/, '"templateVersion": "0.2.0garbage"'));
+    }, [/templateVersion "0\.2\.0garbage" is not a version/], ['--stage', 'kickoff']);
+    broken('IDs in longer code spans and escaped pipes', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\n``ADR-0042 with a ` inside`` is an example.\n'), []);
     broken('one-way area not needed', (c) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Not needed | One local user |\n'));
@@ -417,6 +467,8 @@ step('docs check', (report) => {
 
   const usage = docsCheck(root, ['--stage', 'nope']);
   if (usage.status !== 2) report(`--stage nope: exit ${usage.status}, expected 2`);
+  const noRoot = docsCheck(join(root, 'no-such-folder'), ['--stage', 'kickoff']);
+  if (noRoot.status !== 2 || /at .+\.mjs/.test(noRoot.stderr)) report(`a missing --root: exit ${noRoot.status}, expected 2 without a stack trace\n${noRoot.stderr}`);
 });
 
 // 6f. T1-AC2: protect.mjs against a fake gh. It checks before it writes (L-5), writes the
@@ -440,20 +492,25 @@ if (args[0] === 'auth') s.auth ? out('Logged in\\n') : err('You are not logged i
 if (args[0] === 'repo') s.repo ? out(s.repo) : err('no git remotes found');
 if (args[0] === 'api') {
   const path = args.find((a) => a.startsWith('repos/'));
+  const stored = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : s.protection ?? null;
   if (args.includes('PUT')) {
-    if (s.put !== 'ok') err('gh: Resource not accessible by integration (HTTP 403)');
+    if (s.put === 'refuse') err('gh: Resource not accessible by integration (HTTP 403)');
     const b = JSON.parse(input);
-    writeFileSync(state, JSON.stringify({ required_status_checks: { checks: b.required_status_checks.checks.map((c) => ({ context: c.context, app_id: c.app_id === -1 ? null : c.app_id })) }, enforce_admins: { enabled: b.enforce_admins } }));
+    // "lost": GitHub answers OK but the protection never shows up.
+    if (s.put === 'ok') writeFileSync(state, JSON.stringify({ required_status_checks: { checks: b.required_status_checks.checks.map((c) => ({ context: c.context, app_id: c.app_id === -1 ? null : c.app_id })) }, enforce_admins: { enabled: b.enforce_admins } }));
     out('{}');
   }
   if (path.endsWith('/protection')) {
-    if (existsSync(state)) out(readFileSync(state, 'utf8'));
-    if (s.protection) out(s.protection);
     if (s.probe === 'free') err('gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)');
+    if (stored) out(stored);
     if (s.probe === 'denied') err('gh: Resource not accessible by integration (HTTP 403)');
     err('gh: Branch not protected (HTTP 404)');
   }
-  s.branch === false ? err('gh: Branch not found (HTTP 404)') : out('{"name":"main"}');
+  if (s.branch === false) err('gh: Branch not found (HTTP 404)');
+  // The branch endpoint: the protection summary any reader sees.
+  out(stored
+    ? { name: 'main', protected: true, protection: { enabled: true, required_status_checks: { checks: stored.required_status_checks.checks, enforcement_level: stored.enforce_admins?.enabled ? 'everyone' : 'non_admins' } } }
+    : { name: 'main', protected: false, protection: { enabled: false } });
 }
 err('fake gh: unexpected call ' + args.join(' '));
 `,
@@ -472,17 +529,18 @@ err('fake gh: unexpected call ' + args.join(' '));
     const repo = (visibility, viewerPermission = 'ADMIN') => ({ nameWithOwner: 'o/r', visibility, viewerPermission });
     const ok = { auth: true, repo: repo('PUBLIC'), branch: true, probe: '404', put: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [] }) => {
+    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending' }) => {
       const project = join(dir, `p${(n += 1)}`);
       mkdirSync(join(project, '.claude'), { recursive: true });
-      writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: 'pending' }));
+      if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
       const logFile = join(project, 'gh.log');
       writeFileSync(logFile, '');
       const env = { ...process.env, PITWALL_GH: JSON.stringify(gh ?? [process.execPath, fake]), FAKE_GH: JSON.stringify(scenario), FAKE_GH_LOG: logFile, FAKE_GH_STATE: join(project, 'state.json') };
       const r = runScript('protect.mjs', ['--project', project, ...args], { env, cwd: project });
       const calls = readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
       const putCalls = calls.filter((c) => c.args.includes('PUT'));
-      const stored = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8')).mergeProtection;
+      const settingsFile = join(project, '.claude', 'pitwall.json');
+      const stored = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')).mergeProtection : null;
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
       if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
@@ -496,7 +554,10 @@ err('fake gh: unexpected call ' + args.join(' '));
         const built = ghFields([...handed[1].matchAll(/-F "([^"]+)"/g)].map((m) => m[1]));
         if (JSON.stringify(built) !== JSON.stringify(expectedBody)) fail(`the handed-over command writes ${JSON.stringify(built)}`);
       }
-      if (/\| gh |--input -|<</.test(r.stdout)) fail('a handed-over command pipes stdin, which breaks in Windows PowerShell (L-6)');
+      // Every line the owner is told to run works unchanged in bash and PowerShell: no pipes, redirects or placeholders (L-6).
+      const commands = [...r.stdout.matchAll(/^ {2}(?:run|then): (.+)$/gm)].map((m) => m[1]);
+      for (const c of commands) if (/[<>|]|--input -/.test(c)) fail(`a handed-over command would not run as written in both shells (L-6): ${c}`);
+      if (r.stdout.includes('HANDOFF') && commands.length === 0) fail('a handoff without a ready command');
       return { r, calls, handed };
     };
     // What "gh api -F key[a][][b]=v ..." sends: typed values, and a repeated key starts a new array item.
@@ -523,23 +584,31 @@ err('fake gh: unexpected call ' + args.join(' '));
       return body;
     }
 
+    const protectedOk = { required_status_checks: { checks: [{ context: 'gate', app_id: 15368 }, { context: 'ai-review', app_id: null }] }, enforce_admins: { enabled: true } };
     run('public', ok, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     run('private, paid plan', { ...ok, repo: repo('PRIVATE') }, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     run('dry run', ok, { args: ['--dry-run'], code: 0, result: 'branch-protection (dry run', puts: 0, setting: 'pending', says: ['"enforce_admins": true', 'would run gh api -X PUT'] });
     run('private, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { code: 0, result: 'local-hook', puts: 0, setting: 'local-hook' });
     run('dry run, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args: ['--dry-run'], code: 0, result: 'local-hook', puts: 0, setting: 'pending' });
-    run('already protected', { ...ok, protection: { required_status_checks: { checks: [{ context: 'gate', app_id: 15368 }, { context: 'ai-review', app_id: null }] }, enforce_admins: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('already protected', { ...ok, protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('not admin, already protected', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
     run('protected otherwise', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
+    run('admins excluded', { ...ok, protection: { ...protectedOk, enforce_admins: { enabled: false } } }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['other settings'] });
     const notAdmin = run('not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF', 'needs an admin'] });
     if (!notAdmin.handed) report('not admin: no ready command handed over');
     if (notAdmin.calls.some((c) => c.args.some((a) => a.endsWith('/protection')))) report('not admin: probed the protection API before checking the permission');
     const refused = run('write refused', { ...ok, put: 'refuse' }, { code: 3, result: 'pending', puts: 1, setting: 'pending', says: ['HANDOFF', 'GitHub refused the write'] });
     if (!refused.handed) report('write refused: no ready command handed over');
+    run('write not read back', { ...ok, put: 'lost' }, { code: 3, result: 'pending', puts: 1, setting: 'pending', says: ['reading it back'] });
     run('probe refused', { ...ok, probe: 'denied' }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
-    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh auth login'] });
-    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh repo create'] });
-    run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['git push -u origin main'] });
+    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: gh auth login'] });
+    run('recorded mode kept', { ...ok, auth: false }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
+    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: gh repo create --private --source . --remote origin', '  run: git push -u origin main'] });
+    run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: git push -u origin main'] });
     run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['cli.github.com'] });
+    run('no settings file', ok, { before: null, code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not recorded'] });
+    const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
+    if (!named.calls.some((c) => c.args[0] === 'repo' && c.args.includes('o/r'))) report('--repo: the repository was not passed to gh repo view');
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });
 });

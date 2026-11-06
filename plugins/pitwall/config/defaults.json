@@ -8,21 +8,24 @@
       "spike": "optional",
       "planReview": "short checklist",
       "staging": "local build",
-      "productionSmoke": false
+      "productionSmoke": false,
+      "decisions": "3 to 5 one-way decisions; every other area two-way or Not needed"
     },
     "standard": {
       "when": "users, a database, auth, a deployment",
       "spike": "when an assumption is unproven",
       "planReview": "full",
       "staging": "required",
-      "productionSmoke": true
+      "productionSmoke": true,
+      "decisions": "every one-way area"
     },
     "full": {
       "when": "several services, realtime, payments, AI pipelines, a high cost of error",
       "spike": "required",
       "planReview": "full with pre-mortem",
       "staging": "required",
-      "productionSmoke": true
+      "productionSmoke": true,
+      "decisions": "every one-way area"
     }
   },
   "riskClasses": {
@@ -62,6 +65,12 @@
     "gateContext": "gate",
     "runs": "local session",
     "ownerDecidesAtReject": 3
+  },
+  "kickoff": {
+    "questions": {
+      "min": 3,
+      "max": 5
+    }
   },
   "mergeProtection": {
     "public": "branch protection with required checks, admins included; also private repositories on a paid plan",
@@ -152,11 +161,32 @@
     "maxMonthsSinceLastRelease": 6
   },
   "registries": {
-    "npm": "https://registry.npmjs.org/<package>/latest",
-    "pypi": "https://pypi.org/pypi/<package>/json",
-    "crates": "https://crates.io/api/v1/crates/<crate>",
-    "go": "https://proxy.golang.org/<module>/@latest",
-    "runtimes": "https://endoflife.date/api/<product>.json"
+    "npm": {
+      "url": "https://registry.npmjs.org/-/v1/search?text=<package>&size=1",
+      "name": "objects[0].package.name",
+      "version": "objects[0].package.version",
+      "date": "objects[0].package.date"
+    },
+    "pypi": {
+      "url": "https://pypi.org/pypi/<package>/json",
+      "version": "info.version",
+      "date": "urls[0].upload_time"
+    },
+    "crates": {
+      "url": "https://crates.io/api/v1/crates/<crate>",
+      "version": "crate.max_stable_version",
+      "date": "crate.updated_at"
+    },
+    "go": {
+      "url": "https://proxy.golang.org/<module>/@latest",
+      "version": "Version",
+      "date": "Time"
+    },
+    "runtimes": {
+      "url": "https://endoflife.date/api/<product>.json",
+      "version": "[0].latest",
+      "date": "[0].latestReleaseDate"
+    }
   },
   "docsLimits": {
     "claudeMdMaxLines": 200,

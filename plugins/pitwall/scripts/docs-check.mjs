@@ -29,6 +29,10 @@ if (kinds.some((k) => !KINDS.includes(k)) || (args.stage && !STAGES.includes(arg
   process.exit(2);
 }
 const root = resolve(args.root ?? '.');
+if (!existsSync(root) || !statSync(root).isDirectory()) {
+  console.error(`docs-check: ${root} is not a folder\nusage: ${usage}`);
+  process.exit(2);
+}
 const cfg = config();
 const problems = [];
 const report = (where, msg) => problems.push(`${where}: ${msg}`);
@@ -50,7 +54,7 @@ function stripCode(text) {
         fence = !fence;
         return '';
       }
-      return fence ? '' : line.replace(/`[^`\n]*`/g, (m) => ' '.repeat(m.length));
+      return fence ? '' : line.replace(/(`+).*?\1/g, (m) => ' '.repeat(m.length));
     })
     .join('\n');
 }
@@ -76,7 +80,7 @@ function sections(text) {
 }
 
 const isSeparator = (cells) => cells.every((c) => /^:?-{3,}:?$/.test(c));
-const splitRow = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+const splitRow = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
 
 // Data rows of the first table in some lines: header and separator dropped.
 function tableRows(lines) {
@@ -217,8 +221,12 @@ function checkKickoff() {
     } catch (err) {
       report(file, `does not parse: ${err.message}`);
     }
+    if (s !== undefined && (s === null || typeof s !== 'object' || Array.isArray(s))) {
+      report(file, 'is not a JSON object');
+      s = undefined;
+    }
     if (s) {
-      if (!/^\d+\.\d+\.\d+/.test(s.templateVersion ?? '')) report(file, `templateVersion "${s.templateVersion}" is not a version`);
+      if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(s.templateVersion ?? ''))) report(file, `templateVersion "${s.templateVersion}" is not a version`);
       if (!Object.keys(cfg.processLevels).includes(s.processLevel)) report(file, `processLevel "${s.processLevel}" is not one of ${Object.keys(cfg.processLevels).join(', ')}`);
       if (!cfg.mergeProtection.modes.includes(s.mergeProtection)) report(file, `mergeProtection "${s.mergeProtection}" is not one of ${cfg.mergeProtection.modes.join(', ')}`);
     }
@@ -237,7 +245,15 @@ function checkDiscovery() {
 
   const analogues = tableRows(s.get('Analogues') ?? []);
   if (analogues.length < d.analogues.min || analogues.length > d.analogues.max) report(rel, `${analogues.length} analogues, expected ${d.analogues.min} to ${d.analogues.max}`);
-  for (const row of analogues) if (!LINK.test(row[row.length - 1] ?? '')) report(rel, `analogue "${row[0]}" has no link in its last column`);
+  const seenAnalogues = new Set();
+  for (const row of analogues) {
+    const link = LINK.exec(row[row.length - 1] ?? '')?.[0];
+    if (!link) report(rel, `analogue "${row[0]}" has no link in its last column`);
+    for (const key of [row[0].toLowerCase(), link]) {
+      if (key && seenAnalogues.has(key)) report(rel, `analogue "${row[0]}" is listed twice (${key})`);
+      if (key) seenAnalogues.add(key);
+    }
+  }
 
   const constraints = tableRows(s.get('Owner constraints') ?? []);
   for (const want of d.constraints) {
@@ -272,10 +288,26 @@ function checkDecide() {
   const decisions = tableRows(s.get('Decisions') ?? []);
   const twoWay = tableRows(s.get('Two-way decisions') ?? []);
   const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  const adrId = (cell) => /ADR-\d{4}/.exec(cell ?? '')?.[0];
+  const adrFields = (id) => {
+    const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+    if (!f) return null;
+    const text = read(`docs/adr/${f}`);
+    const field = (name) => new RegExp(`^- ${name}: *(.+)$`, 'm').exec(text)?.[1].trim() ?? '';
+    return { status: field('Status'), cls: field('Class'), by: field('Decided by') };
+  };
   for (const area of d.areas) {
-    const withAdr = decisions.find((r) => same(r[0], area) && /^ADR-\d{4}$/.test(r[4] ?? ''));
+    const withAdr = decisions.find((r) => same(r[0], area) && adrId(r[4]));
     const anywhere = withAdr || decisions.find((r) => same(r[0], area)) || twoWay.find((r) => same(r[0], area));
     if (!anywhere) report(rel, `area "${area}" is in neither table`);
+    else if (!withAdr && !d.oneWay.includes(area) && !twoWay.find((r) => same(r[0], area))) report(rel, `two-way area "${area}" has no line with its reason in the Two-way table`);
+    if (withAdr && d.oneWay.includes(area)) {
+      const id = adrId(withAdr[4]);
+      const f = adrFields(id);
+      if (f && !(f.cls === 'one-way' && f.by.startsWith('owner') && f.status.startsWith('accepted'))) {
+        report(rel, `one-way area "${area}" cites ${id}, which is not an accepted one-way decision by the owner (Status: ${f.status || '-'}, Class: ${f.cls || '-'}, Decided by: ${f.by || '-'})`);
+      }
+    }
     else if (d.oneWay.includes(area) && !withAdr && !twoWay.find((r) => same(r[0], area) && r[1].toLowerCase().startsWith(d.notNeeded.toLowerCase()))) {
       report(rel, `one-way area "${area}" has no ADR (or a two-way line "${d.notNeeded}" with the reason)`);
     }
@@ -283,7 +315,7 @@ function checkDecide() {
   for (const [area, choice, version, source, adr] of decisions) {
     if (!version) report(rel, `"${area}: ${choice}" has no version (use - when there is none)`);
     else if (version !== '-' && !(LINK.test(source ?? '') && DATE.test(source ?? ''))) report(rel, `"${area}: ${choice}" ${version} has no registry link with a date`);
-    if (!/^(ADR-\d{4}|-)$/.test(adr ?? '')) report(rel, `"${area}: ${choice}" has ADR "${adr}", expected ADR-NNNN or -`);
+    if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice}" has ADR "${adr}", expected ADR-NNNN or -`);
   }
   for (const [area, choice, why] of twoWay) if (!why) report(rel, `two-way "${area}: ${choice}" has no reason`);
 
@@ -300,8 +332,12 @@ function checkDecide() {
     const body = requireFilled(adr, 'docs/adr/0000-template.md', ['Context', 'Options', 'Decision', 'Consequences']);
     if (cls === 'one-way') {
       if (!by.startsWith('owner')) report(adr, 'a one-way decision must be decided by the owner');
-      const options = tableRows(body?.get('Options') ?? []).length;
-      if (options < d.options.min || options > d.options.max) report(adr, `${options} options compared, expected ${d.options.min} to ${d.options.max}`);
+      const rows = tableRows(body?.get('Options') ?? []);
+      if (rows.length < d.options.min || rows.length > d.options.max) report(adr, `${rows.length} options compared, expected ${d.options.min} to ${d.options.max}`);
+      for (const row of rows) {
+        if (row.some((c) => !c)) report(adr, `option "${row[0]}" has an empty cell (write unknown when it is not known)`);
+        if (!LINK.test(row[row.length - 1] ?? '')) report(adr, `option "${row[0]}" has no source link in its last column`);
+      }
     }
   }
 }

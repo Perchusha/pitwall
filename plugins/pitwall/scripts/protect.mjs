@@ -3,25 +3,29 @@
 //
 //   node protect.mjs [--project <dir>] [--repo <owner/name>] [--dry-run]
 //
-// First it checks that it may (L-5): gh is installed and signed in, the
-// account is admin, the branch is on GitHub. Then a read-only probe of the
-// protection API picks the mode:
+// First it checks that it may (L-5): gh is installed and signed in, there is a
+// repository, the branch is on GitHub, and the account is admin. The branch's
+// protection summary, which any reader can see, shows when the job is already
+// done. For an admin, a read-only probe of the protection API picks the mode:
 //   available (public, or private on a paid plan) -> branch protection that
 //     requires gate (GitHub Actions) and ai-review, admins included;
 //   "Upgrade to GitHub Pro" (private on GitHub Free) -> local-hook: recorded,
 //     the hook itself ships with the epic loop.
-// A failed precondition or a refused write records "pending" and prints a
-// HANDOFF block with a ready command for the owner. --dry-run makes the same
-// reads, prints the writes and writes nothing, not even .claude/pitwall.json.
+// A failed precondition or a refused write prints a HANDOFF block: "run:"
+// lines are ready commands for the owner, the same in bash and PowerShell
+// (L-6). It records "pending", but never overwrites a mode already recorded.
+// --dry-run makes the same reads, prints the writes and writes nothing, not
+// even .claude/pitwall.json.
 //
 // The last line is "RESULT: <mode>". Exit 0 protected or local-hook, 3 handed
 // to the owner, 2 usage. Set PITWALL_GH to a JSON array to run another gh
 // binary (the checks use a fake one).
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { config, parseArgs, readJson, requireNode, writeJson } from './lib.mjs';
+import { fileURLToPath } from 'node:url';
+import { config, parseArgs, requireNode, writeJson } from './lib.mjs';
 
 requireNode();
 const args = parseArgs(process.argv.slice(2), { project: 'value', repo: 'value', 'dry-run': 'switch' }, 'node protect.mjs [--project <dir>] [--repo <owner/name>] [--dry-run]');
@@ -33,12 +37,20 @@ const branch = mp.branch;
 const gateContext = cfg.review.gateContext;
 const reviewContext = cfg.review.statusContext;
 const ghCmd = process.env.PITWALL_GH ? JSON.parse(process.env.PITWALL_GH) : ['gh'];
+const settingsFile = join(project, '.claude', 'pitwall.json');
+const rerun = `node "${fileURLToPath(import.meta.url)}" --project "${project}"${args.repo ? ` --repo ${args.repo}` : ''}`;
 
 function gh(ghArgs, input) {
   const r = spawnSync(ghCmd[0], [...ghCmd.slice(1), ...ghArgs], { cwd: project, input, encoding: 'utf8' });
-  return { ok: !r.error && r.status === 0, missing: Boolean(r.error), out: r.stdout ?? '', err: `${r.stderr ?? ''}${r.error?.message ?? ''}` };
+  return { ok: !r.error && r.status === 0, out: r.stdout ?? '', err: `${r.stderr ?? ''}${r.error?.message ?? ''}` };
 }
-
+const parse = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
 const log = (msg) => console.log(`protect: ${msg}`);
 
 function body() {
@@ -70,13 +82,17 @@ function putCommand(repo) {
   return `gh api -X PUT repos/${repo}/branches/${branch}/protection ${fields.map((f) => `-F "${f}"`).join(' ')}`;
 }
 
+const recorded = () => (existsSync(settingsFile) ? parse(readFileSync(settingsFile, 'utf8')) : null);
+
 function record(mode) {
-  const file = join(project, '.claude', 'pitwall.json');
   if (dry) return log(`dry run: .claude/pitwall.json not changed (would record ${mode})`);
-  if (!existsSync(file)) return log(`no .claude/pitwall.json in ${project}: mode ${mode} not recorded`);
-  const settings = readJson(file);
+  const settings = recorded();
+  if (!settings) return log(`no .claude/pitwall.json in ${project}: mode ${mode} not recorded`);
   if (settings.mergeProtection === mode) return;
-  writeJson(file, { ...settings, mergeProtection: mode });
+  if (mode === 'pending' && settings.mergeProtection && settings.mergeProtection !== 'pending') {
+    return log(`kept the recorded mode "${settings.mergeProtection}"; this run could not confirm it`);
+  }
+  writeJson(settingsFile, { ...settings, mergeProtection: mode });
   log(`recorded mergeProtection "${mode}" in .claude/pitwall.json`);
 }
 
@@ -86,60 +102,61 @@ function done(mode) {
   process.exit(0);
 }
 
+// steps: { run } is a ready command, { note } is plain text for the owner.
 function handoff(reason, steps) {
   record('pending');
   console.log(`HANDOFF: ${reason}`);
-  for (const s of steps) console.log(`  ${s}`);
+  for (const s of steps) console.log(s.run ? `  run: ${s.run}` : `  note: ${s.note}`);
+  console.log(`  then: ${rerun}`);
   console.log('RESULT: pending');
   process.exit(3);
 }
 
-// Does an existing protection already hold what pitwall needs?
+// Is a protection, in the full form (admins) or the summary every reader sees, what pitwall needs?
 function satisfies(p) {
-  const checks = p.required_status_checks?.checks ?? [];
+  const checks = p?.required_status_checks?.checks ?? [];
   const gate = checks.find((c) => c.context === gateContext);
   const review = checks.find((c) => c.context === reviewContext);
-  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && p.enforce_admins?.enabled === true);
+  const admins = p?.enforce_admins ? p.enforce_admins.enabled === true : p?.required_status_checks?.enforcement_level === 'everyone';
+  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && admins);
 }
 
-// 1. May we? gh, a signed-in account, a repository, admin rights, the branch on GitHub.
-const version = gh(['--version']);
-if (!version.ok) {
-  handoff('the GitHub CLI is not installed or does not run.', ['Install it from https://cli.github.com, then run: gh auth login', 'Then run protect.mjs again.']);
+// 1. May we? gh, a signed-in account, a repository, the branch on GitHub, admin rights.
+if (!gh(['--version']).ok) {
+  handoff('the GitHub CLI is not installed or does not run.', [{ note: 'install it from https://cli.github.com' }, { run: 'gh auth login' }]);
 }
-if (!gh(['auth', 'status']).ok) handoff('gh is not signed in.', ['gh auth login', 'Then run protect.mjs again.']);
+if (!gh(['auth', 'status', '--hostname', 'github.com']).ok) handoff('gh is not signed in to github.com.', [{ run: 'gh auth login' }]);
 
 const view = gh(['repo', 'view', ...(args.repo ? [args.repo] : []), '--json', 'nameWithOwner,visibility,viewerPermission']);
-if (!view.ok) {
+const repo = view.ok ? parse(view.out) : null;
+if (!repo?.nameWithOwner) {
   handoff(`no GitHub repository for ${args.repo ?? project}.`, [
-    'Create one from the project folder: gh repo create <name> --private --source . --remote origin --push',
-    '(or --public), then run protect.mjs again.',
+    { note: 'from the project folder, create one named after the folder (use --public for a public repository), then push main' },
+    { run: 'gh repo create --private --source . --remote origin' },
+    { run: `git push -u origin ${branch}` },
   ]);
 }
-const repo = JSON.parse(view.out);
 const name = repo.nameWithOwner;
-log(`repository ${name} (${repo.visibility.toLowerCase()}), your permission: ${repo.viewerPermission}`);
+log(`repository ${name} (${String(repo.visibility).toLowerCase()}), your permission: ${repo.viewerPermission}`);
 
-if (repo.viewerPermission !== 'ADMIN') {
-  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, [
-    `An admin runs: ${putCommand(name)}`,
-    'Then run protect.mjs again to record it.',
-  ]);
+const onGitHub = gh(['api', `repos/${name}/branches/${branch}`]);
+if (!onGitHub.ok) handoff(`${branch} is not on GitHub yet.`, [{ run: `git push -u origin ${branch}` }]);
+const summary = parse(onGitHub.out);
+if (summary?.protected && satisfies(summary.protection)) {
+  log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
+  done('branch-protection');
 }
-if (!gh(['api', `repos/${name}/branches/${branch}`]).ok) {
-  handoff(`${branch} is not on GitHub yet.`, [`git push -u origin ${branch}`, 'Then run protect.mjs again.']);
+if (repo.viewerPermission !== 'ADMIN') {
+  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, [{ note: 'an admin runs' }, { run: putCommand(name) }]);
 }
 
 // 2. Read-only probe: is branch protection available, and is it already on?
 const probe = gh(['api', `repos/${name}/branches/${branch}/protection`]);
 if (probe.ok) {
-  if (satisfies(JSON.parse(probe.out))) {
-    log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
-    done('branch-protection');
-  }
+  if (satisfies(parse(probe.out))) done('branch-protection');
   handoff(`${branch} already has branch protection with other settings; pitwall does not replace them.`, [
-    `To replace them with pitwall's (${gateContext} from GitHub Actions, ${reviewContext}, admins included): ${putCommand(name)}`,
-    'Then run protect.mjs again to record it.',
+    { note: `to replace them with pitwall's (${gateContext} from GitHub Actions, ${reviewContext}, admins included)` },
+    { run: putCommand(name) },
   ]);
 }
 if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
@@ -149,7 +166,7 @@ if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
   done('local-hook');
 }
 if (!/HTTP 404/.test(probe.err)) {
-  handoff(`could not read the branch protection of ${name}: ${probe.err.trim()}`, [`Run where gh has admin rights: ${putCommand(name)}`, 'Then run protect.mjs again to record it.']);
+  handoff(`could not read the branch protection of ${name}: ${probe.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }]);
 }
 log('branch protection is available and not set yet');
 
@@ -160,12 +177,10 @@ if (dry) {
   done('branch-protection');
 }
 const put = gh(['api', '-X', 'PUT', `repos/${name}/branches/${branch}/protection`, '--input', '-'], JSON.stringify(body()));
-if (!put.ok) {
-  handoff(`GitHub refused the write: ${put.err.trim()}`, [`Run where gh has admin rights: ${putCommand(name)}`, 'Then run protect.mjs again to record it.']);
-}
+if (!put.ok) handoff(`GitHub refused the write: ${put.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }]);
 const after = gh(['api', `repos/${name}/branches/${branch}/protection`]);
-if (!after.ok || !satisfies(JSON.parse(after.out))) {
-  handoff('the write went through but reading it back does not show the required checks.', [`Check: gh api repos/${name}/branches/${branch}/protection`, 'Then run protect.mjs again.']);
+if (!after.ok || !satisfies(parse(after.out))) {
+  handoff('the write went through, but reading it back does not show the required checks.', [{ run: `gh api repos/${name}/branches/${branch}/protection` }]);
 }
 log(`${branch} now requires ${gateContext} (GitHub Actions) and ${reviewContext}, admins included`);
 done('branch-protection');
