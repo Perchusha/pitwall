@@ -13,7 +13,9 @@
 //     the hook itself ships with the epic loop.
 // A failed precondition or a refused write prints a HANDOFF block: "run:"
 // lines are ready commands for the owner, the same in bash and PowerShell
-// (L-6). It records "pending", but never overwrites a mode already recorded.
+// (L-6). It records "pending", but keeps a recorded mode this run could not check:
+// a recorded branch-protection goes once the branch's protection is read and falls
+// short, a recorded local-hook once the probe shows branch protection is available.
 // --dry-run makes the same reads, prints the writes and writes nothing, not
 // even .claude/pitwall.json.
 //
@@ -82,17 +84,22 @@ function putCommand(repo) {
   return `gh api -X PUT repos/${repo}/branches/${branch}/protection ${fields.map((f) => `-F "${f}"`).join(' ')}`;
 }
 
-// seen: this run read the branch's protection and found it short of pitwall's, so a recorded
-// branch-protection no longer holds. A recorded local-hook is about the plan, not the branch, and stays.
-function record(mode, seen = false) {
-  if (dry) return log(`dry run: .claude/pitwall.json not changed (would record ${mode})`);
+// What this run has learned, for record(): the branch's protection was read and falls short
+// (a recorded branch-protection no longer holds), or branch protection is available (a
+// recorded local-hook no longer holds).
+const known = { branchRead: false, available: false };
+
+function record(mode) {
   if (!existsSync(settingsFile)) return log(`no .claude/pitwall.json in ${project}: mode ${mode} not recorded`);
   const settings = parse(readFileSync(settingsFile, 'utf8'));
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return log(`.claude/pitwall.json is not a JSON object: mode ${mode} not recorded`);
-  if (settings.mergeProtection === mode) return;
-  if (mode === 'pending' && settings.mergeProtection && settings.mergeProtection !== 'pending' && !(seen && settings.mergeProtection === 'branch-protection')) {
-    return log(`kept the recorded mode "${settings.mergeProtection}"; this run could not check it`);
+  const was = settings.mergeProtection;
+  const stale = (was === 'branch-protection' && known.branchRead) || (was === 'local-hook' && known.available);
+  if (mode === 'pending' && was && was !== 'pending' && !stale) {
+    return log(`${dry ? 'dry run: would keep' : 'kept'} the recorded mode "${was}"; this run could not check it`);
   }
+  if (was === mode) return;
+  if (dry) return log(`dry run: .claude/pitwall.json not changed (would record ${mode})`);
   writeJson(settingsFile, { ...settings, mergeProtection: mode });
   log(`recorded mergeProtection "${mode}" in .claude/pitwall.json`);
 }
@@ -104,8 +111,8 @@ function done(mode) {
 }
 
 // steps: { run } is a ready command, { note } is plain text for the owner.
-function handoff(reason, steps, seen = false) {
-  record('pending', seen);
+function handoff(reason, steps) {
+  record('pending');
   console.log(`HANDOFF: ${reason}`);
   for (const s of steps) console.log(s.run ? `  run: ${s.run}` : `  note: ${s.note}`);
   console.log(`  then: ${rerun}`);
@@ -149,21 +156,23 @@ if (summary?.protected && satisfies(summary.protection)) {
   done('branch-protection');
 }
 // From here on the branch's protection has been read, and it is not what pitwall needs.
-const seen = summary !== null;
+known.branchRead = summary !== null;
 if (repo.viewerPermission !== 'ADMIN') {
   const steps = [{ note: 'an admin runs' }, { run: putCommand(name) }];
   if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the then: line below, run by the admin, records it' });
-  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, steps, seen);
+  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, steps);
 }
 
 // 2. Read-only probe: is branch protection available, and is it already on?
 const probe = gh(['api', `repos/${name}/branches/${branch}/protection`]);
+// A probe that reads protection, or answers 404, shows that branch protection is available here.
+known.available = probe.ok || /HTTP 404/.test(probe.err);
+if (known.available) known.branchRead = true;
 if (probe.ok) {
   if (satisfies(parse(probe.out))) done('branch-protection');
   handoff(
     `${branch} already has branch protection with other settings; pitwall does not replace them.`,
     [{ note: `to replace them with pitwall's (${gateContext} from GitHub Actions, ${reviewContext}, admins included)` }, { run: putCommand(name) }],
-    seen,
   );
 }
 if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
@@ -173,7 +182,7 @@ if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
   done('local-hook');
 }
 if (!/HTTP 404/.test(probe.err)) {
-  handoff(`could not read the branch protection of ${name}: ${probe.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }], seen);
+  handoff(`could not read the branch protection of ${name}: ${probe.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }]);
 }
 log('branch protection is available and not set yet');
 
@@ -184,10 +193,10 @@ if (dry) {
   done('branch-protection');
 }
 const put = gh(['api', '-X', 'PUT', `repos/${name}/branches/${branch}/protection`, '--input', '-'], JSON.stringify(body()));
-if (!put.ok) handoff(`GitHub refused the write: ${put.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }], seen);
+if (!put.ok) handoff(`GitHub refused the write: ${put.err.trim()}`, [{ note: 'where gh has admin rights' }, { run: putCommand(name) }]);
 const after = gh(['api', `repos/${name}/branches/${branch}/protection`]);
 if (!after.ok || !satisfies(parse(after.out))) {
-  handoff('the write went through, but reading it back does not show the required checks.', [{ run: `gh api repos/${name}/branches/${branch}/protection` }], seen);
+  handoff('the write went through, but reading it back does not show the required checks.', [{ run: `gh api repos/${name}/branches/${branch}/protection` }]);
 }
 log(`${branch} now requires ${gateContext} (GitHub Actions) and ${reviewContext}, admins included`);
 done('branch-protection');

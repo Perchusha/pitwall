@@ -49,4 +49,4 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`decide`, `proc
 
 ## Check
 
-`docs-check.mjs --stage decide` passes: every area of `decide.areas` is in a table, every one-way area has an ADR or a `Not needed` line (or, where the level allows it, a two-way line), every one-way ADR was decided by the owner and compares `decide.options` options in the template's columns, and every version has a registry link with a date.
+`docs-check.mjs --stage decide` passes: every area of `decide.areas` is in a table, every one-way area has an ADR or a `Not needed` line (or, where the level allows it, a two-way line, while one-way areas still cite at least `decisions.askOwner.min` owner ADRs), every one-way ADR was decided by the owner and compares `decide.options` options in the template's columns, and every version has a registry link with a date.

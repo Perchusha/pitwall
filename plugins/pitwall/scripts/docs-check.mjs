@@ -344,8 +344,7 @@ function checkDecide() {
     if (withAdr) {
       const id = adrId(withAdr[4]);
       const f = adrFields(id);
-      if (!f) report(rel, `one-way area "${area}" cites ${id}, which has no file in docs/adr/`);
-      else if (!(f.cls === 'one-way' && byOwner(f.by) && f.status.startsWith('accepted'))) {
+      if (f && !(f.cls === 'one-way' && byOwner(f.by) && f.status.startsWith('accepted'))) {
         report(rel, `one-way area "${area}" cites ${id}, which is not an accepted one-way decision by the owner (Status: ${f.status || '-'}, Class: ${f.cls || '-'}, Decided by: ${f.by || '-'})`);
       }
     } else if (!(line && (notNeeded(line) || restMayBeTwoWay))) {
@@ -354,16 +353,22 @@ function checkDecide() {
   }
   // Where the rest may be two-way, the owner still answers at least askOwner.min one-way questions.
   const applicable = d.oneWay.filter((a) => !twoWay.some((r) => same(r[0], a) && notNeeded(r)));
-  const accepted = adrFiles.filter((f) => {
-    const x = adrFields(`ADR-${f.slice(0, 4)}`);
-    return x && x.cls === 'one-way' && byOwner(x.by) && x.status.startsWith('accepted');
-  }).length;
+  // Counted are the distinct ADRs that STACK.md cites for one-way areas and that hold an accepted owner decision.
+  const accepted = new Set(
+    decisions
+      .filter((r) => d.oneWay.some((a) => same(r[0], a)))
+      .map((r) => adrId(r[4]))
+      .filter((id) => {
+        const x = id && adrFields(id);
+        return x && x.cls === 'one-way' && byOwner(x.by) && x.status.startsWith('accepted');
+      }),
+  ).size;
   const least = typeof rule.askOwner?.min === 'number' ? Math.min(rule.askOwner.min, applicable.length) : 0;
-  if (accepted < least) report('docs/adr', `${accepted} accepted one-way decisions by the owner; the ${level} level asks for at least ${least}`);
-  // Every ADR a row cites must exist, whatever its area.
+  if (accepted < least) report(rel, `one-way areas cite ${accepted} accepted one-way decisions by the owner; the ${level} level asks for at least ${least}`);
+  // Every ADR a row cites must exist, in every row, whatever its area.
   for (const r of decisions) {
     const id = adrId(r[4]);
-    if (id && !adrFields(id) && !d.oneWay.includes(r[0])) report(rel, `"${r[0]}" cites ${id}, which has no file in docs/adr/`);
+    if (id && !adrFields(id)) report(rel, `"${r[0]}" cites ${id}, which has no file in docs/adr/`);
   }
   const numbers = adrFiles.map((f) => f.slice(0, 4));
   for (const n of new Set(numbers.filter((x, i) => numbers.indexOf(x) !== i))) report('docs/adr', `two ADR files share the number ${n}`);
@@ -372,7 +377,7 @@ function checkDecide() {
     else if (version !== '-' && !(LINK.test(source ?? '') && DATE.test(source ?? ''))) report(rel, `"${area}: ${choice}" ${version} has no registry link with a date`);
     if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice}" has ADR "${adr ?? ''}", expected ADR-NNNN or -`);
   }
-  for (const [area, choice, why] of twoWay) if (!why) report(rel, `two-way "${area}: ${choice}" has no reason`);
+  for (const [area, choice, why] of twoWay) if (!why) report(rel, `two-way "${area}: ${choice ?? ''}" has no reason`);
 
   for (const f of adrFiles) {
     const adr = `docs/adr/${f}`;
