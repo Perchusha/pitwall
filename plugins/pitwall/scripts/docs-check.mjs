@@ -326,9 +326,10 @@ function checkDecide() {
   } catch {
     level = undefined;
   }
-  const restMayBeTwoWay = cfg.processLevels[level]?.decisions?.restMayBeTwoWay === true;
+  const rule = cfg.processLevels[level]?.decisions ?? {};
+  const restMayBeTwoWay = rule.restMayBeTwoWay === true;
   const byOwner = (by) => /^owner\b/.test(by);
-  const notNeeded = (r) => r[1].toLowerCase().startsWith(d.notNeeded.toLowerCase());
+  const notNeeded = (r) => (r[1] ?? '').toLowerCase().startsWith(d.notNeeded.toLowerCase());
   for (const area of d.areas) {
     const withAdr = decisions.find((r) => same(r[0], area) && adrId(r[4]));
     const line = twoWay.find((r) => same(r[0], area));
@@ -351,12 +352,25 @@ function checkDecide() {
       report(rel, `one-way area "${area}" has no ADR (or a two-way line "${d.notNeeded}" with the reason${restMayBeTwoWay ? '' : `; at the ${level ?? 'unknown'} level every other one-way area needs an ADR`})`);
     }
   }
+  // Where the rest may be two-way, the owner still answers at least askOwner.min one-way questions.
+  const applicable = d.oneWay.filter((a) => !twoWay.some((r) => same(r[0], a) && notNeeded(r)));
+  const accepted = adrFiles.filter((f) => {
+    const x = adrFields(`ADR-${f.slice(0, 4)}`);
+    return x && x.cls === 'one-way' && byOwner(x.by) && x.status.startsWith('accepted');
+  }).length;
+  const least = typeof rule.askOwner?.min === 'number' ? Math.min(rule.askOwner.min, applicable.length) : 0;
+  if (accepted < least) report('docs/adr', `${accepted} accepted one-way decisions by the owner; the ${level} level asks for at least ${least}`);
+  // Every ADR a row cites must exist, whatever its area.
+  for (const r of decisions) {
+    const id = adrId(r[4]);
+    if (id && !adrFields(id) && !d.oneWay.includes(r[0])) report(rel, `"${r[0]}" cites ${id}, which has no file in docs/adr/`);
+  }
   const numbers = adrFiles.map((f) => f.slice(0, 4));
   for (const n of new Set(numbers.filter((x, i) => numbers.indexOf(x) !== i))) report('docs/adr', `two ADR files share the number ${n}`);
   for (const [area, choice, version, source, adr] of decisions) {
     if (!version) report(rel, `"${area}: ${choice}" has no version (use - when there is none)`);
     else if (version !== '-' && !(LINK.test(source ?? '') && DATE.test(source ?? ''))) report(rel, `"${area}: ${choice}" ${version} has no registry link with a date`);
-    if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice}" has ADR "${adr}", expected ADR-NNNN or -`);
+    if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice}" has ADR "${adr ?? ''}", expected ADR-NNNN or -`);
   }
   for (const [area, choice, why] of twoWay) if (!why) report(rel, `two-way "${area}: ${choice}" has no reason`);
 

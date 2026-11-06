@@ -92,7 +92,10 @@ writeFileSync(
   ].join('\n'),
 );
 writeFileSync(ghLog, '');
-const env = { ...process.env, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog };
+// The commit identity comes from the environment, so a fresh run starts from a folder with
+// nothing in it, and kickoff's preflight has to set up git itself.
+const identity = { GIT_AUTHOR_NAME: 'pitwall e2e', GIT_AUTHOR_EMAIL: 'e2e@pitwall.invalid', GIT_COMMITTER_NAME: 'pitwall e2e', GIT_COMMITTER_EMAIL: 'e2e@pitwall.invalid' };
+const env = { ...process.env, ...identity, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog, GIT_CEILING_DIRECTORIES: scratch };
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete env[k];
 if (run('gh', ['auth', 'status'], { env }).status === 0) {
   console.error('e2e: gh is still signed in with an empty GH_CONFIG_DIR; refusing to run so nothing reaches GitHub.');
@@ -108,11 +111,7 @@ if (seed) {
     if (r.status !== 0) throw new Error(`seed: git ${step.join(' ')} failed: ${r.stderr}`);
   }
   console.log(`seeded from ${seed} at ${git('log', '--oneline', '-1').stdout.trim()}`);
-} else {
-  git('init', '-q', '-b', 'main');
 }
-git('config', 'user.name', 'pitwall e2e');
-git('config', 'user.email', 'e2e@pitwall.invalid');
 
 const allowed = ['Bash(node *)', 'Bash(git *)', 'Bash(gh *)', 'Bash(ls *)', 'Bash(cd *)', 'Bash(echo *)', 'Bash(cat *)', 'Bash(pwd)', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent'];
 

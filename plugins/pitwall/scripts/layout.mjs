@@ -54,7 +54,7 @@ if (args.check) {
   const git = (...a) => spawnSync('git', ['-C', target, ...a], { encoding: 'utf8' });
   if (spawnSync('git', ['--version'], { encoding: 'utf8' }).error) refuse('git is not installed: install it from https://git-scm.com and run kickoff again');
   const same = (a, b) => {
-    const norm = (p) => realpathSync(p).replace(/\\/g, '/').replace(/\/$/, '');
+    const norm = (p) => realpathSync.native(p).replace(/\\/g, '/').replace(/\/$/, '');
     return process.platform === 'win32' ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
   };
   const top = existsSync(target) ? git('rev-parse', '--show-toplevel') : { status: 1 };

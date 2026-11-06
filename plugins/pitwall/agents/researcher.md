@@ -27,4 +27,4 @@ NOTES: what could not be confirmed, and why
 NEEDS_OWNER: <questions for the owner, or "none">
 ```
 
-The brief gives the header row of the table to fill, copied from the project's template; keep it exactly, because the docs check reads it. Without one, return NEEDS_OWNER asking the main conversation for it.
+The brief gives the header row of the table to fill, copied from the project's template; keep it exactly, because the docs check reads it. Without one, return STATUS: PARTIAL with a NOTES line that says the brief had no header row; that is a gap in the brief, not a question for the owner.

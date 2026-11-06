@@ -328,6 +328,15 @@ step('layout', (report) => {
     const keep = readFileSync(join(fresh, '.claude', 'settings.local.json'), 'utf8');
     const l1 = layOut(fresh);
     if (l1.status !== 0 || readFileSync(join(fresh, '.claude', 'settings.local.json'), 'utf8') !== keep) report(`layout next to .claude/settings.local.json: exit ${l1.status}, expected 0 with the file untouched\n${l1.stderr}`);
+    const litter = join(dir, 'litter');
+    mkdirSync(litter);
+    git(litter, 'init', '-q', '-b', 'main');
+    for (const f of ['.DS_Store', 'Thumbs.db', 'desktop.ini']) writeFileSync(join(litter, f), 'x');
+    if (layOut(litter).status !== 0) report('layout next to OS files was refused');
+    git(litter, 'add', '-A');
+    git(litter, 'commit', '-q', '-m', 'kickoff');
+    const litterGate = spawnSync('bash', ['scripts/gate', '--full'], { cwd: litter, encoding: 'utf8', env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } });
+    if (litterGate.status !== 0) report(`the gate fails after a layout next to OS files:\n${litterGate.stdout}`);
     const c2 = preflight(code);
     if (c2.status !== 1) report(`--check on a folder with code: exit ${c2.status}, expected 1`);
     const committed = join(dir, 'committed');
@@ -386,6 +395,9 @@ function fillStages(project) {
     'docs/adr/0001-stack.md',
     '# ADR-0001: Stack\n\n- Status: accepted\n- Date: 2026-11-05\n- Class: one-way\n- Decided by: owner\n\n## Context\n\nA desktop app.\n\n## Options\n\n| Option | Pros | Cons | Maturity | Cost | Lock-in | Source |\n| --- | --- | --- | --- | --- | --- | --- |\n| Tauri | Small | Rust | Stable | Free | Low | https://tauri.app |\n| Electron | Known | Big | Stable | Free | Low | https://electronjs.org |\n\n## Decision\n\nTauri.\n\n## Consequences\n\nRust in the toolchain.\n',
   );
+  const adr = readFileSync(join(project, 'docs/adr/0001-stack.md'), 'utf8');
+  put('docs/adr/0002-language.md', adr.replace('# ADR-0001: Stack', '# ADR-0002: Language'));
+  put('docs/adr/0003-hosting.md', adr.replace('# ADR-0001: Stack', '# ADR-0003: Hosting'));
   const claude = readFileSync(join(project, 'CLAUDE.md'), 'utf8');
   put('CLAUDE.md', claude.replace('## Architecture boundaries\n', '## Architecture boundaries\n\n- The UI never touches the file system directly: enforced by the Tauri allowlist.\n'));
 }
@@ -527,12 +539,30 @@ step('docs check', (report) => {
       fillStages(c);
       edit(c, 'docs/DISCOVERY.md', (x) => x.replace('| Constraint | Answer | Confirmed on |', '| Constraint | Answer | When |'));
     }, [/the table in "## Owner constraints" must keep the template's columns/], ['--stage', 'discovery']);
+    broken('lite with no one-way decision asked', (c) => {
+      fillStages(c);
+      const cfgNow = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+      edit(c, 'docs/STACK.md', (x) => {
+        for (const a of cfgNow.decide.oneWay) x = x.replace(`| ${a} | Choice | - | - | ADR-0001 |\n`, '');
+        return x.replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, (m) => m + cfgNow.decide.oneWay.map((a) => `| ${a} | Default | Simple |\n`).join(''));
+      });
+      for (const f of ['0001-stack.md', '0002-language.md', '0003-hosting.md']) rmSync(join(c, 'docs', 'adr', f));
+    }, [/0 accepted one-way decisions by the owner; the lite level asks for at least 3/], ['--stage', 'decide']);
+    broken('a two-way area cites an ADR with no file', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('2026-11-05 | - |', '2026-11-05 | `ADR-0042` |'));
+    }, [/"Test strategy" cites ADR-0042, which has no file in docs\/adr\//], ['--stage', 'decide']);
+    broken('a short two-way row', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('| i18n | Default | Fits one user |', '| i18n |'));
+    }, [/the row "i18n" has 1 cells/], ['--stage', 'decide']);
     broken('one-way area not needed', (c) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Not needed | One local user |\n'));
     }, [], ['--stage', 'decide']);
   });
 
+  // A crash is not a report: no case may end in a stack trace.
   const usage = docsCheck(root, ['--stage', 'nope']);
   if (usage.status !== 2) report(`--stage nope: exit ${usage.status}, expected 2`);
   const noRoot = docsCheck(join(root, 'no-such-folder'), ['--stage', 'kickoff']);
@@ -682,6 +712,10 @@ err('fake gh: unexpected call ' + args.join(' '));
     run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
     run('not admin, private', { ...ok, repo: repo('PRIVATE', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['Upgrade to GitHub Pro'] });
     run('settings that are not an object', ok, { raw: '[1]\n', code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not a JSON object'] });
+    run('recorded protection gone, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
+    run('recorded protection, write refused', { ...ok, put: 'refuse' }, { before: 'branch-protection', code: 3, result: 'pending', puts: 1, setting: 'pending' });
+    run('recorded local-hook, not admin', { ...ok, repo: repo('PRIVATE', 'WRITE') }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'local-hook', says: ['kept the recorded mode'] });
+    run('dry run that hands over', { ...ok, auth: false }, { args: ['--dry-run'], code: 3, result: 'pending (dry run', puts: 0, setting: 'pending' });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });
 });

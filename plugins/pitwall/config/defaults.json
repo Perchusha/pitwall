@@ -10,7 +10,10 @@
       "staging": "local build",
       "productionSmoke": false,
       "decisions": {
-        "askOwner": "the 3 to 5 one-way areas that matter most",
+        "askOwner": {
+          "min": 3,
+          "max": 5
+        },
         "restMayBeTwoWay": true
       }
     },
@@ -21,7 +24,7 @@
       "staging": "required",
       "productionSmoke": true,
       "decisions": {
-        "askOwner": "every one-way area",
+        "askOwner": "all",
         "restMayBeTwoWay": false
       }
     },
@@ -32,7 +35,7 @@
       "staging": "required",
       "productionSmoke": true,
       "decisions": {
-        "askOwner": "every one-way area",
+        "askOwner": "all",
         "restMayBeTwoWay": false
       }
     }

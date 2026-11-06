@@ -18,7 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 - Run each command in the steps as written, from the project root, one command per call.
 - One question per message, then wait for the answer. Use the question tool when it is there, plain text otherwise. Never answer for the owner.
 - Never overwrite a file, never delete one, and never adopt an existing project: that is a later pitwall epic. Say so and stop.
-- The skeleton commit is the only commit that goes to `main` directly. Every GitHub write after it goes through `protect.mjs`.
+- The skeleton commit is the only commit that goes to `main` directly. Every change to GitHub settings goes through `protect.mjs`.
 - When a script hands a step over, show its HANDOFF lines to the owner verbatim. Never retry a refused write another way.
 
 ## Steps
@@ -33,7 +33,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
    - what is out of scope for the first version;
    - the project name, offering the folder name as the default.
 3. **The level.** Read `processLevels` in the config. Propose the lowest level whose `when` covers every answer, in one message: the level, the two or three answers that decide it, and what the level means for the later stages (`spike`, `planReview`, `staging`). The owner confirms it or picks another.
-4. **Lay out.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --name '<name>' --idea '<the idea in one line>' --level <level>`, with the values in single quotes (rephrase an idea that holds a single quote). Any exit other than 0 wrote nothing: show its message to the owner and stop.
+4. **Lay out.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --name '<name>' --idea '<the idea in one line>' --level <level>`, with the values in single quotes (rephrase a name or an idea that holds a single quote). Any exit other than 0 wrote nothing: show its message to the owner and stop.
 5. **Write `docs/IDEA.md`.** Fill every section from the answers, in the owner's terms, and keep the headings exactly as they are:
    - Problem: one paragraph;
    - Who it is for;
@@ -43,7 +43,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 7. **Docs check.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage kickoff`. Fix what it reports and run it again until it passes.
 8. **Commit the skeleton** on `main`: `git add -A`, then `git update-index --chmod=+x scripts/gate` (the gate must stay executable when the project is laid out on Windows), then `git commit -m "chore: kickoff from pitwall <templateVersion>"`, with `templateVersion` from `.claude/pitwall.json`. If git refuses because it has no user name or email, show its message and wait for the owner to set them.
 9. **GitHub**, still on `main`. Run `git remote get-url origin`.
-   - No remote: ask the owner one question: create the GitHub repository now, public or private, or later. Now: `gh repo create <name> --public` or `--private`, followed by `--source . --remote origin --push`. Later: go on to step 10 anyway.
+   - No remote: ask the owner one question: create the GitHub repository now, public or private, or later. Now: `gh repo create <repository> --public` or `--private`, followed by `--source . --remote origin --push`, where `<repository>` is the project name in lower case with every character other than letters, digits, `-`, `.` and `_` turned into `-`. Later: go on to step 10 anyway.
    - A remote: `git push -u origin main`.
    A failed create or push is not retried: show the error and go on to step 10.
 10. **Merge protection.** Always run `node "${CLAUDE_PLUGIN_ROOT}/scripts/protect.mjs"`, even when there is no repository yet: it checks first that it may, then protects `main`, records why it cannot, or says what to do. Its last line is `RESULT: <mode>`. Relay what it printed in a few lines, without restating the rules it applies:
