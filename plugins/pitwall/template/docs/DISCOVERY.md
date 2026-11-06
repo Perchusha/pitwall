@@ -8,7 +8,7 @@ Who it is for, the job it does for them, and what they use today.
 
 ## Scenarios
 
-3 to 7 key scenarios, one list item each. QA walks these later.
+The key scenarios, one list item each, as many as pitwall's `discovery.scenarios` asks. QA walks these later.
 
 ## Non-goals
 
@@ -26,11 +26,11 @@ Every row links a page that was actually opened.
 | Constraint | Answer | Confirmed on |
 | --- | --- | --- |
 
-Monthly budget, platforms, hosting, personal data, licence and time for reviews, each asked one at a time and confirmed by the owner on the date given.
+One row per item of pitwall's `discovery.constraints`, each asked one at a time and confirmed by the owner on the date given.
 
 ## Assumptions by risk
 
 | ID | Assumption | Risk | How to check it |
 | --- | --- | --- | --- |
 
-IDs run `A-1`, `A-2`, and so on. Risk is high, medium or low, highest first. The riskiest goes to a spike.
+IDs run `A-1`, `A-2`, and so on. Risk is one of pitwall's `discovery.riskOrder`, highest first. The riskiest goes to a spike.

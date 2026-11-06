@@ -13,7 +13,7 @@ pitwall is a Claude Code plugin and a project template. It takes a new project f
 /plugin install pitwall@pitwall
 ```
 
-The plugin's scripts need Node.js 20 or later on the PATH (ADR-0004); your project's stack can be anything. Merge protection uses the GitHub CLI (`gh`).
+The plugin's scripts need Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of [config/defaults.json](plugins/pitwall/config/defaults.json) (ADR-0004); your project's stack can be anything. Merge protection uses the GitHub CLI (`gh`).
 
 What the plugin does, stage by stage: [plugins/pitwall/README.md](plugins/pitwall/README.md).
 

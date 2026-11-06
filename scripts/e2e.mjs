@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 // Headless runs of pitwall's stage skills with a scripted owner (T1-AC7).
 //
-//   node scripts/e2e.mjs [--stages kickoff,discovery,decide] [--max-turns 30]
+//   node scripts/e2e.mjs [--until kickoff|discovery|decide] [--max-turns 30]
 //
 // Not part of scripts/check.mjs or CI: it needs a signed-in Claude Code CLI and
-// spends the subscription. The owner runs it before a PR.
+// spends the subscription. The owner runs it before a PR. Like scripts/check.mjs,
+// it needs `claude` on the PATH as an executable (the native install).
 //
 // In a scratch folder it starts each stage as a fresh headless session with
 // the plugin loaded from this checkout, and a second, tool-less session plays
 // the owner of the lite system in SPEC 10 and answers each question. gh runs
-// signed out, so nothing reaches GitHub: kickoff's protection step must hand
-// over. A stage passes when its files pass `docs-check.mjs --stage` and the git
+// signed out, so nothing reaches GitHub, and protect.mjs runs a logging fake gh
+// that is signed out too: kickoff must run it, and it must hand over. A stage passes when its files pass `docs-check.mjs --stage` and the git
 // state it promises holds. It never looks at the wording of the model's replies.
 // The scratch folder is kept for inspection and its path printed.
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,10 +31,11 @@ const opt = (name, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 const STAGES = ['kickoff', 'discovery', 'decide'];
-const stages = opt('stages', STAGES.join(',')).split(',');
+const until = opt('until', 'decide');
+const stages = STAGES.slice(0, STAGES.indexOf(until) + 1);
 const maxTurns = Number(opt('max-turns', '30'));
-if (stages.some((s) => !STAGES.includes(s)) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !['--stages', '--max-turns'].includes(a))) {
-  console.error('usage: node scripts/e2e.mjs [--stages kickoff,discovery,decide] [--max-turns 30]');
+if (!STAGES.includes(until) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !['--until', '--max-turns'].includes(a))) {
+  console.error('usage: node scripts/e2e.mjs [--until kickoff|discovery|decide] [--max-turns 30]');
   process.exit(2);
 }
 
@@ -64,7 +66,23 @@ const project = join(scratch, 'move-reminder');
 const ghConfig = join(scratch, 'gh');
 const ownerDir = join(scratch, 'owner');
 for (const d of [project, ghConfig, ownerDir]) mkdirSync(d, { recursive: true });
-const env = { ...process.env, GH_CONFIG_DIR: ghConfig };
+// protect.mjs gets a fake gh that logs every call and is signed out, so the kickoff check can see it ran.
+const fakeGh = join(scratch, 'fake-gh.mjs');
+const ghLog = join(scratch, 'protect-gh.log');
+writeFileSync(
+  fakeGh,
+  [
+    "import { appendFileSync } from 'node:fs';",
+    'const a = process.argv.slice(2);',
+    "appendFileSync(process.env.E2E_GH_LOG, a.join(' ') + '\\n');",
+    "if (a[0] === '--version') { console.log('gh version 0.0.0 (e2e fake)'); process.exit(0); }",
+    "console.error('You are not logged into any GitHub hosts.');",
+    'process.exit(1);',
+    '',
+  ].join('\n'),
+);
+writeFileSync(ghLog, '');
+const env = { ...process.env, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog };
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete env[k];
 if (run('gh', ['auth', 'status'], { env }).status === 0) {
   console.error('e2e: gh is still signed in with an empty GH_CONFIG_DIR; refusing to run so nothing reaches GitHub.');
@@ -130,6 +148,9 @@ const promises = {
       unmet.push('.claude/pitwall.json does not parse');
     }
     if (run('bash', ['scripts/gate', '--full'], { cwd: project, env }).status !== 0) unmet.push('scripts/gate --full fails');
+    const calls = readFileSync(ghLog, 'utf8');
+    if (!/^auth status/m.test(calls)) unmet.push('protect.mjs did not run (no gh auth status call in its log)');
+    if (/PUT/.test(calls)) unmet.push('protect.mjs tried to write with a signed-out gh');
     return unmet;
   },
   discovery: () => {
