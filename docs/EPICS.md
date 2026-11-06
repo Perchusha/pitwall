@@ -5,7 +5,7 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | Epic | Goal | Risk | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | [T0](epics/T0-skeleton.md) | Marketplace, plugin skeleton, project template, checks and CI | normal | - | merged (#1) |
-| [T1](epics/T1-stages-0-2.md) | Stages 0 to 2: kickoff, discovery, decide, researcher | normal | T0 | in progress |
+| [T1](epics/T1-stages-0-2.md) | Stages 0 to 2: kickoff, discovery, decide, researcher | normal | T0 | in review |
 | [T2](epics/T2-stages-3-5.md) | Stages 3 to 5: spike, plan, plan-reviewer | normal | T1 | planned |
 | [T3](epics/T3-epic-loop.md) | The epic loop: conductor, implementers, gate, hooks, budgets, reviewer, merge protection | high | T2 | planned |
 | [T4](epics/T4-release-qa.md) | Release and QA: tags, changelog, staging, qa agent, bugs and lessons | normal | T3 | planned |
