@@ -733,6 +733,8 @@ err('fake gh: unexpected call ' + args.join(' '));
     run('recorded value that is not a mode', { ...ok, auth: false }, { before: 'bogus', code: 3, result: 'pending', puts: 0, setting: 'pending' });
     run('dry run, recorded local-hook, public, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { args: ['--dry-run'], before: 'local-hook', code: 3, result: 'pending (dry run', puts: 0, setting: 'local-hook', says: ['would record pending'] });
     run('recorded protection kept when nothing could be read', { ...ok, branch: 'garbled', probe: 'denied' }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
+    run('summary not JSON, probe shows the protection', { ...ok, branch: 'garbled', protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('recorded local-hook, private, not admin, protection visible', { ...ok, repo: repo('PRIVATE', 'WRITE'), protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
     run('recorded local-hook, protection available', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });

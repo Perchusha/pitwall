@@ -15,8 +15,8 @@
 // lines are ready commands for the owner, the same in bash and PowerShell
 // (L-6). It records "pending", but keeps a recorded mode this run could not check:
 // a recorded branch-protection goes once the branch's protection is read and falls
-// short, a recorded local-hook once the repository reads public or the probe shows
-// branch protection is available.
+// short, a recorded local-hook once the repository reads public or the branch summary
+// or the probe shows branch protection is available.
 // --dry-run makes the same reads, prints the writes and writes nothing, not
 // even .claude/pitwall.json.
 //
@@ -158,8 +158,10 @@ if (summary?.protected && satisfies(summary.protection)) {
   log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
   done('branch-protection');
 }
-// From here on the branch's protection has been read, and it is not what pitwall needs.
+// From here on the job is not done. The branch's protection counts as read if the summary
+// parsed, and a summary that shows any protection proves branch protection is available.
 known.branchRead = summary !== null;
+if (summary?.protected) known.available = true;
 if (repo.viewerPermission !== 'ADMIN') {
   const steps = [{ note: 'an admin runs' }, { run: putCommand(name) }];
   if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the then: line below, run by the admin, records it' });
