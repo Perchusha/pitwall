@@ -95,7 +95,7 @@ function record(mode) {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return log(`.claude/pitwall.json is not a JSON object: mode ${mode} not recorded`);
   const was = settings.mergeProtection;
   const stale = (was === 'branch-protection' && known.branchRead) || (was === 'local-hook' && known.available);
-  if (mode === 'pending' && was && was !== 'pending' && !stale) {
+  if (mode === 'pending' && mp.modes.includes(was) && was !== 'pending' && !stale) {
     return log(`${dry ? 'dry run: would keep' : 'kept'} the recorded mode "${was}"; this run could not check it`);
   }
   if (was === mode) return;
@@ -146,6 +146,8 @@ if (!repo?.nameWithOwner && !args.repo && /no git remotes|not a git repository/i
 }
 if (!repo?.nameWithOwner) handoff(`gh could not read the repository: ${view.err.trim() || view.out.trim()}`, [{ note: 'fix what gh reports (the remote, the network, the name), then' }, { run: 'gh repo view' }]);
 const name = repo.nameWithOwner;
+// A public repository can always have branch protection, so a recorded local-hook cannot hold there.
+known.available = String(repo.visibility).toUpperCase() === 'PUBLIC';
 log(`repository ${name} (${String(repo.visibility).toLowerCase()}), your permission: ${repo.viewerPermission}`);
 
 const onGitHub = gh(['api', `repos/${name}/branches/${branch}`]);
@@ -166,7 +168,7 @@ if (repo.viewerPermission !== 'ADMIN') {
 // 2. Read-only probe: is branch protection available, and is it already on?
 const probe = gh(['api', `repos/${name}/branches/${branch}/protection`]);
 // A probe that reads protection, or answers 404, shows that branch protection is available here.
-known.available = probe.ok || /HTTP 404/.test(probe.err);
+known.available = known.available || probe.ok || /HTTP 404/.test(probe.err);
 if (known.available) known.branchRead = true;
 if (probe.ok) {
   if (satisfies(parse(probe.out))) done('branch-protection');

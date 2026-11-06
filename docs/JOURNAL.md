@@ -6,7 +6,7 @@ One entry per epic, newest first.
 
 `/pitwall:kickoff`, `/pitwall:discovery` and `/pitwall:decide` are built, with the `researcher` agent, and the plugin gained its first scripts, in Node (ADR-0004): `layout.mjs` lays a new project out and never overwrites, `docs-check.mjs` reports missing sections, IDs that point nowhere and oversized files, plus the Check of each stage, and `protect.mjs` protects `main` with admins included (ADR-0005) or hands the owner ready commands. `.claude/pitwall.json` and the template's headings joined the contract (ADR-0006). The owner answered three one-way questions and accepted the two-way list with edits; one of them became a new epic, T6, for adopting an existing project.
 
-**Numbers.** `scripts/check.mjs` grew from 12 to 17 steps; the protection step runs 31 scenarios against a fake `gh`, the docs check 39 broken or filled copies of a laid-out project. The headless run of the lite system from SPEC 10 (`scripts/e2e.mjs`, a scripted owner, `gh` signed out) passed all three stages before the review, and the changed stages again after it:
+**Numbers.** `scripts/check.mjs` grew from 12 to 17 steps; the protection step runs 34 scenarios against a fake `gh`, the docs check 39 broken or filled copies of a laid-out project. The headless run of the lite system from SPEC 10 (`scripts/e2e.mjs`, a scripted owner, `gh` signed out) passed all three stages before the review, and the changed stages again after it:
 
 | Stage | Turns | Minutes | Cost at API prices | Output |
 | --- | --- | --- | --- | --- |

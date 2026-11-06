@@ -373,9 +373,9 @@ function checkDecide() {
   const numbers = adrFiles.map((f) => f.slice(0, 4));
   for (const n of new Set(numbers.filter((x, i) => numbers.indexOf(x) !== i))) report('docs/adr', `two ADR files share the number ${n}`);
   for (const [area, choice, version, source, adr] of decisions) {
-    if (!version) report(rel, `"${area}: ${choice}" has no version (use - when there is none)`);
+    if (!version) report(rel, `"${area}: ${choice ?? ''}" has no version (use - when there is none)`);
     else if (version !== '-' && !(LINK.test(source ?? '') && DATE.test(source ?? ''))) report(rel, `"${area}: ${choice}" ${version} has no registry link with a date`);
-    if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice}" has ADR "${adr ?? ''}", expected ADR-NNNN or -`);
+    if (!(adrId(adr) || adr === '-')) report(rel, `"${area}: ${choice ?? ''}" has ADR "${adr ?? ''}", expected ADR-NNNN or -`);
   }
   for (const [area, choice, why] of twoWay) if (!why) report(rel, `two-way "${area}: ${choice ?? ''}" has no reason`);
 
