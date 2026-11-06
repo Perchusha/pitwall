@@ -9,6 +9,8 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 ## Commands
 
 - All checks, as CI runs them: `node scripts/check.mjs`
+- Headless runs of the stage skills, before a PR (signed-in CLI, spends the subscription, not in CI): `node scripts/e2e.mjs`
+- The docs check on any project: `node plugins/pitwall/scripts/docs-check.mjs --root <dir> [--stage kickoff|discovery|decide]`
 - The official validator alone: `claude plugin validate --strict .` (marketplace) and `claude plugin validate --strict plugins/pitwall` (plugin)
 - Try the plugin from this checkout: `claude --plugin-dir plugins/pitwall`
 - Install it from the local marketplace in a scratch home: `export HOME=$(mktemp -d)`, then `claude plugin marketplace add <this checkout>`, `claude plugin install pitwall@pitwall` and `claude plugin details pitwall@pitwall` to list its parts
@@ -17,8 +19,9 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 ## Layout
 
 - `.claude-plugin/marketplace.json`: the marketplace, one plugin.
-- `plugins/pitwall/`: the plugin. Only `plugin.json` and the icon live in its `.claude-plugin/`; skills, agents, config and the template sit at the plugin root.
-- `plugins/pitwall/template/`: the project skeleton `/pitwall:kickoff` copies. A file that a tool would load inside this repository carries a `.tmpl` suffix (`CLAUDE.md.tmpl`, `settings.json.tmpl`, `gitignore.tmpl`, `editorconfig.tmpl`, `gitattributes.tmpl`), and so does anything under the template's `.claude/`.
+- `plugins/pitwall/`: the plugin. Only `plugin.json` and the icon live in its `.claude-plugin/`; skills, agents, config, scripts and the template sit at the plugin root.
+- `plugins/pitwall/scripts/`: the Node scripts skills call (ADR-0004): `layout.mjs`, `docs-check.mjs`, `protect.mjs`. `scripts/check.mjs` runs each of them as a project gets them.
+- `plugins/pitwall/template/`: the project skeleton `/pitwall:kickoff` copies. A file that a tool would load inside this repository carries a `.tmpl` suffix (`CLAUDE.md.tmpl`, `settings.json.tmpl`, `pitwall.json.tmpl`, `gitignore.tmpl`, `editorconfig.tmpl`, `gitattributes.tmpl`), and so does anything under the template's `.claude/`.
 - `docs/`: how pitwall itself is planned and built, in the same structure the template gives a project.
 
 ## How to work
@@ -35,4 +38,4 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 
 - Hardcode model IDs, prices or API limits in a skill or agent. They belong in `config/defaults.json` or the project's own config. The check rejects model IDs in skills and agents.
 - Weaken `scripts/check.mjs` or the validator's `--strict` mode to make a change pass.
-- Change the paths the template gives a project (`docs/EPICS.md`, `docs/adr/`, `scripts/gate`, ...) without a major version bump and a migration note: skills find them by convention.
+- Change the paths the template gives a project (`docs/EPICS.md`, `docs/adr/`, `scripts/gate`, `.claude/pitwall.json`, ...) or rename a `##` heading of a template document without a major version bump and a migration note: skills and the docs check find them by convention (ADR-0006).

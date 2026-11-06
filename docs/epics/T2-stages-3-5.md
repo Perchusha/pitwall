@@ -10,3 +10,4 @@ Risk class: normal
 - [ ] T2-AC2: `/pitwall:plan` writes `docs/EPICS.md` and one file per epic with acceptance criteria and a risk class, E0 first.
 - [ ] T2-AC3: A plan check refuses an epic without acceptance criteria or a risk class, a broken ADR link and a dependency cycle.
 - [ ] T2-AC4: The plan-reviewer, from the documents only, writes `docs/PLAN-REVIEW.md` with a pre-mortem, the non-functional checklist, launch questions and epic sizing.
+- [ ] T2-AC5: The plan PR from `plan/initial` gets its `ai-review` status from the plan reviewer once every finding is closed or accepted, so the first PR of a new project can merge under branch protection that includes admins (decided in T1).

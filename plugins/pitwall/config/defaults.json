@@ -1,31 +1,59 @@
 {
+  "runtime": {
+    "nodeMinMajor": 20
+  },
   "processLevels": {
     "lite": {
       "when": "one user, no money or personal data, 1 to 3 epics",
       "spike": "optional",
       "planReview": "short checklist",
       "staging": "local build",
-      "productionSmoke": false
+      "productionSmoke": false,
+      "decisions": {
+        "askOwner": {
+          "min": 3,
+          "max": 5
+        },
+        "restMayBeTwoWay": true
+      }
     },
     "standard": {
       "when": "users, a database, auth, a deployment",
       "spike": "when an assumption is unproven",
       "planReview": "full",
       "staging": "required",
-      "productionSmoke": true
+      "productionSmoke": true,
+      "decisions": {
+        "askOwner": "all",
+        "restMayBeTwoWay": false
+      }
     },
     "full": {
       "when": "several services, realtime, payments, AI pipelines, a high cost of error",
       "spike": "required",
       "planReview": "full with pre-mortem",
       "staging": "required",
-      "productionSmoke": true
+      "productionSmoke": true,
+      "decisions": {
+        "askOwner": "all",
+        "restMayBeTwoWay": false
+      }
     }
   },
   "riskClasses": {
     "appliesAt": "every process level",
-    "low": { "examples": "UI, copy", "implementer": "implementer", "effort": "high", "merge": "auto" },
-    "normal": { "examples": "ordinary logic", "implementer": "implementer", "effort": "high", "merge": "auto" },
+    "low": {
+      "examples": "UI, copy",
+      "implementer": "implementer",
+      "effort": "high",
+      "merge": "auto"
+    },
+    "normal": {
+      "examples": "ordinary logic",
+      "implementer": "implementer",
+      "effort": "high",
+      "merge": "auto"
+    },
     "high": {
       "examples": "auth, payments, data migrations and deletion, infrastructure, security",
       "implementer": "implementer-deep",
@@ -34,8 +62,14 @@
     }
   },
   "budgets": {
-    "subagentToolCalls": { "warn": 100, "stop": 120 },
-    "sessionToolCalls": { "warn": 250, "stop": 300 },
+    "subagentToolCalls": {
+      "warn": 100,
+      "stop": 120
+    },
+    "sessionToolCalls": {
+      "warn": 250,
+      "stop": 300
+    },
     "epicsPerSession": 3
   },
   "review": {
@@ -44,17 +78,138 @@
     "runs": "local session",
     "ownerDecidesAtReject": 3
   },
+  "kickoff": {
+    "questions": {
+      "min": 3,
+      "max": 5
+    }
+  },
   "mergeProtection": {
-    "public": "branch protection with required checks",
-    "privateFree": "local hook refuses merge until checks are green"
+    "public": "branch protection with required checks, admins included; also private repositories on a paid plan",
+    "privateFree": "mode local-hook: a local hook refuses the merge until both checks are green",
+    "branch": "main",
+    "enforceAdmins": true,
+    "strict": false,
+    "githubActionsAppId": 15368,
+    "modes": [
+      "pending",
+      "branch-protection",
+      "local-hook"
+    ]
+  },
+  "planning": {
+    "branch": "plan/initial"
+  },
+  "discovery": {
+    "scenarios": {
+      "min": 3,
+      "max": 7
+    },
+    "analogues": {
+      "min": 5,
+      "max": 10
+    },
+    "researchers": {
+      "min": 2,
+      "max": 3
+    },
+    "constraints": [
+      "Monthly budget",
+      "Platforms",
+      "Hosting",
+      "Personal data",
+      "Licence",
+      "Time for reviews"
+    ],
+    "riskOrder": [
+      "high",
+      "medium",
+      "low"
+    ]
+  },
+  "decide": {
+    "options": {
+      "min": 2,
+      "max": 4
+    },
+    "areas": [
+      "Platform and runtime",
+      "Language",
+      "Framework",
+      "Database",
+      "Data model",
+      "Auth",
+      "Repository layout",
+      "Monolith or services",
+      "Folder structure and module boundaries",
+      "Architecture patterns",
+      "API",
+      "Client state",
+      "UI kit",
+      "Lint and format",
+      "Test strategy",
+      "CI/CD",
+      "Hosting and staging",
+      "Observability",
+      "i18n",
+      "Accessibility",
+      "AI models and external APIs"
+    ],
+    "oneWay": [
+      "Platform and runtime",
+      "Language",
+      "Framework",
+      "Database",
+      "Data model",
+      "Auth",
+      "Repository layout",
+      "Monolith or services",
+      "Hosting and staging"
+    ],
+    "notNeeded": "Not needed"
   },
   "maturity": {
     "stableReleaseOnly": true,
     "maxMonthsSinceLastRelease": 6
   },
+  "registries": {
+    "npm": {
+      "url": "https://registry.npmjs.org/-/v1/search?text=<package>&size=1",
+      "name": "objects[0].package.name",
+      "version": "objects[0].package.version",
+      "date": "objects[0].package.date"
+    },
+    "pypi": {
+      "url": "https://pypi.org/pypi/<package>/json",
+      "version": "info.version",
+      "date": "urls[0].upload_time"
+    },
+    "crates": {
+      "url": "https://crates.io/api/v1/crates/<crate>",
+      "version": "crate.max_stable_version",
+      "date": "versions[] entry whose num is crate.max_stable_version: created_at"
+    },
+    "go": {
+      "url": "https://proxy.golang.org/<module>/@latest",
+      "version": "Version",
+      "date": "Time"
+    },
+    "runtimes": {
+      "url": "https://endoflife.date/api/<product>.json",
+      "version": "[0].latest",
+      "date": "[0].latestReleaseDate"
+    }
+  },
   "docsLimits": {
     "claudeMdMaxLines": 200,
-    "stateFileMaxKB": 50
+    "stateFileMaxKB": 50,
+    "stateFiles": [
+      "docs/EPICS.md",
+      "docs/BUGS.md",
+      "docs/LESSONS.md",
+      "docs/JOURNAL.md",
+      "docs/RISKS.md"
+    ]
   },
   "rag": {
     "projectDocsThresholdKB": 1024

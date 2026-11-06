@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging.
 
-> **Status: v0.1.0, skeleton.** The marketplace, the plugin with its commands and agents, and the project template are in place. Every command still answers that its stage is not built yet. The stages arrive epic by epic, see [docs/EPICS.md](docs/EPICS.md).
+> **Status: v0.2.0, stages 0 to 2.** `/pitwall:kickoff`, `/pitwall:discovery` and `/pitwall:decide` work, with the `researcher` agent: a new project goes from a one-line idea to recorded decisions. The later stages still answer that they are not built yet; they arrive epic by epic, see [docs/EPICS.md](docs/EPICS.md).
 
 ## Install
 
@@ -12,6 +12,8 @@ pitwall is a Claude Code plugin and a project template. It takes a new project f
 /plugin marketplace add Perchusha/pitwall
 /plugin install pitwall@pitwall
 ```
+
+The plugin's scripts need Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of [config/defaults.json](plugins/pitwall/config/defaults.json) (ADR-0004); your project's stack can be anything. Merge protection uses the GitHub CLI (`gh`).
 
 What the plugin does, stage by stage: [plugins/pitwall/README.md](plugins/pitwall/README.md).
 
@@ -34,10 +36,12 @@ plugins/pitwall/                  the plugin
   .claude-plugin/plugin.json
   skills/                         one folder per stage and helper
   agents/                         researcher, plan-reviewer, implementers, code-reviewer, qa
-  config/defaults.json            process levels, risk classes, budgets, limits
+  config/defaults.json            process levels, risk classes, budgets, limits, stage settings
+  scripts/                        layout, docs check and merge protection, in Node
   template/                       the project skeleton that /pitwall:kickoff copies
 docs/                             how pitwall itself is planned and built
 scripts/check.mjs                 every check CI runs
+scripts/e2e.mjs                   headless runs of the stage skills, run by hand before a PR
 ```
 
 ## Development

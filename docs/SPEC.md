@@ -15,7 +15,7 @@ Stages 0 to 5 run once and produce an approved plan. Stage 6 repeats for every e
 
 | Stage | Skill or agent | Output | Check |
 | --- | --- | --- | --- |
-| 0. Idea and process level | `kickoff` | Template laid out, `docs/IDEA.md`, merge protection | The owner confirms the idea and the level |
+| 0. Idea and process level | `kickoff` | Template laid out, `docs/IDEA.md`, `.claude/pitwall.json`, merge protection | The owner confirms the idea and the level |
 | 1. Discovery | `discovery`, `researcher` | `docs/DISCOVERY.md` | Every analogue linked, every assumption checkable, every constraint confirmed |
 | 2. Decisions | `decide`, `researcher` | `docs/adr/*`, `docs/STACK.md` | Every area has an ADR or a two-way line; one-way decisions confirmed by the owner |
 | 3. Spike | `spike` | `docs/spikes/<topic>.md` | A measured number against a criterion written in advance |
@@ -41,7 +41,7 @@ One-way decisions (database, data model, monorepo, monolith or services, auth, h
 
 ## 5. Finding project knowledge: no RAG by default
 
-Project docs are tens or hundreds of kilobytes and change with almost every commit, so agents search them with grep and glob instead of a vector index (ADR-0003). Docs are findable by design: an ID on every entity (ADR-0007, E3, E3-AC2, BUG-12, L-5), `docs/INDEX.md`, `CLAUDE.md` under 200 lines, size limits on state files and an archive for closed rows. RAG is an optional module: a docs MCP for the stack's libraries, or a RAG over `docs/` once grep by ID stops finding things.
+Project docs are tens or hundreds of kilobytes and change with almost every commit, so agents search them with grep and glob instead of a vector index (ADR-0003). Docs are findable by design: an ID on every entity (`ADR-0007`, `E3`, `E3-AC2`, `BUG-12`, `L-5`, `A-2` for an assumption, `R-4` for a risk), `docs/INDEX.md`, `CLAUDE.md` within 200 lines, size limits on state files and an archive for closed rows. `scripts/docs-check.mjs` reports a missing section, an ID that points nowhere and a file over its limit; an ID inside a code span is an example and is not checked. RAG is an optional module: a docs MCP for the stack's libraries, or a RAG over `docs/` once grep by ID stops finding things.
 
 ## 6. The epic loop
 
@@ -79,9 +79,11 @@ Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversatio
 
 - **The plugin** holds the process: skills, agents, hooks, scripts and defaults. Improving the process ships as a new plugin version to every project.
 - **The template** (`plugins/pitwall/template/`) is copied into a new project by `kickoff` (ADR-0001). It holds no code; E0 adds the code and the real `scripts/gate` once the stack is chosen.
-- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/LESSONS.md`, `docs/BUGS.md` and `scripts/gate --fast|--changed|--full`. Changing it is a major version.
+- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json` and `scripts/gate --fast|--changed|--full`, plus the `##` headings of the template's documents (ADR-0006). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode and `templateVersion`, the plugin version the project was laid out from.
+- **Plugin scripts** run on Node.js (ADR-0004): the layout, the docs check and merge protection now, the hooks from T3. A project's stack needs no Node.
 - **MCP** is for data outside the repository: library docs for the stack, GitHub, a browser for QA, hosting and databases. Project state stays in files, and the process stays in skills.
-- **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review` on public repositories, a local hook that refuses the merge on private repositories on GitHub Free.
+- **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review`, admins included (ADR-0005), wherever GitHub offers it, and a local hook that refuses the merge on private repositories on GitHub Free.
+- **Planning** happens on one branch: the skeleton is the only direct commit on `main`, stages 1 to 5 commit on `plan/initial`, and the plan reaches `main` in one PR after stage 5.
 
 ## 10. Validation on three systems
 
