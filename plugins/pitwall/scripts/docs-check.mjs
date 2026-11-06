@@ -110,14 +110,34 @@ function filled(lines, templateLines = []) {
   });
 }
 
-// Checks that the named sections of a project file are present and filled in.
+// The header cells of the first table in some lines, or null.
+const tableHeader = (lines) => {
+  const line = lines.find((l) => l.trim().startsWith('|'));
+  return line ? splitRow(line) : null;
+};
+
+// Checks that the named sections of a project file are present and filled in, and
+// that a table the template's section holds keeps the template's columns in every row.
 function requireFilled(rel, templateRel, names) {
   if (!has(rel)) return report(rel, 'missing');
   const mine = sections(read(rel));
   const tpl = sections(readTemplate(templateRel));
   for (const name of names) {
-    if (!mine.has(name)) report(rel, `missing section "## ${name}"`);
-    else if (!filled(mine.get(name), tpl.get(name))) report(rel, `section "## ${name}" is not filled in`);
+    if (!mine.has(name)) {
+      report(rel, `missing section "## ${name}"`);
+      continue;
+    }
+    if (!filled(mine.get(name), tpl.get(name))) report(rel, `section "## ${name}" is not filled in`);
+    const want = tableHeader(tpl.get(name) ?? []);
+    if (!want) continue;
+    const got = tableHeader(mine.get(name));
+    if (!got || got.join('|').toLowerCase() !== want.join('|').toLowerCase()) {
+      report(rel, `the table in "## ${name}" must keep the template's columns: | ${want.join(' | ')} |`);
+      continue;
+    }
+    for (const row of tableRows(mine.get(name))) {
+      if (row.length !== want.length) report(rel, `"## ${name}": the row "${row[0]}" has ${row.length} cells, the table has ${want.length} columns`);
+    }
   }
   return mine;
 }
@@ -267,6 +287,9 @@ function checkDiscovery() {
   if (assumptions.length === 0) report(rel, 'no assumptions');
   const seen = new Set();
   let last = 0;
+  assumptions.forEach(([id], i) => {
+    if (/^A-\d+$/.test(id ?? '') && id !== `A-${i + 1}`) report(rel, `assumption ${id} is row ${i + 1}: number them A-1, A-2, ... in their order`);
+  });
   for (const [id, text, risk, how] of assumptions) {
     if (!/^A-\d+$/.test(id ?? '')) report(rel, `assumption "${text}" has ID "${id}", expected A-n`);
     else if (seen.has(id)) report(rel, `assumption ID ${id} is used twice`);
@@ -296,22 +319,40 @@ function checkDecide() {
     const field = (name) => new RegExp(`^- ${name}: *(.+)$`, 'm').exec(text)?.[1].trim() ?? '';
     return { status: field('Status'), cls: field('Class'), by: field('Decided by') };
   };
+  // The process level decides whether a one-way area may end as a two-way line the owner accepted in the list.
+  let level;
+  try {
+    level = JSON.parse(read('.claude/pitwall.json')).processLevel;
+  } catch {
+    level = undefined;
+  }
+  const restMayBeTwoWay = cfg.processLevels[level]?.decisions?.restMayBeTwoWay === true;
+  const byOwner = (by) => /^owner\b/.test(by);
+  const notNeeded = (r) => r[1].toLowerCase().startsWith(d.notNeeded.toLowerCase());
   for (const area of d.areas) {
     const withAdr = decisions.find((r) => same(r[0], area) && adrId(r[4]));
-    const anywhere = withAdr || decisions.find((r) => same(r[0], area)) || twoWay.find((r) => same(r[0], area));
-    if (!anywhere) report(rel, `area "${area}" is in neither table`);
-    else if (!withAdr && !d.oneWay.includes(area) && !twoWay.find((r) => same(r[0], area))) report(rel, `two-way area "${area}" has no line with its reason in the Two-way table`);
-    if (withAdr && d.oneWay.includes(area)) {
+    const line = twoWay.find((r) => same(r[0], area));
+    const anywhere = withAdr || decisions.find((r) => same(r[0], area)) || line;
+    if (!anywhere) {
+      report(rel, `area "${area}" is in neither table`);
+      continue;
+    }
+    if (withAdr && line && notNeeded(line)) report(rel, `area "${area}" has an ADR and a "${d.notNeeded}" line`);
+    if (!withAdr && !line) report(rel, `area "${area}" has neither an ADR nor a line with its reason in the Two-way table`);
+    if (!d.oneWay.includes(area)) continue;
+    if (withAdr) {
       const id = adrId(withAdr[4]);
       const f = adrFields(id);
-      if (f && !(f.cls === 'one-way' && f.by.startsWith('owner') && f.status.startsWith('accepted'))) {
+      if (!f) report(rel, `one-way area "${area}" cites ${id}, which has no file in docs/adr/`);
+      else if (!(f.cls === 'one-way' && byOwner(f.by) && f.status.startsWith('accepted'))) {
         report(rel, `one-way area "${area}" cites ${id}, which is not an accepted one-way decision by the owner (Status: ${f.status || '-'}, Class: ${f.cls || '-'}, Decided by: ${f.by || '-'})`);
       }
-    }
-    else if (d.oneWay.includes(area) && !withAdr && !twoWay.find((r) => same(r[0], area) && r[1].toLowerCase().startsWith(d.notNeeded.toLowerCase()))) {
-      report(rel, `one-way area "${area}" has no ADR (or a two-way line "${d.notNeeded}" with the reason)`);
+    } else if (!(line && (notNeeded(line) || restMayBeTwoWay))) {
+      report(rel, `one-way area "${area}" has no ADR (or a two-way line "${d.notNeeded}" with the reason${restMayBeTwoWay ? '' : `; at the ${level ?? 'unknown'} level every other one-way area needs an ADR`})`);
     }
   }
+  const numbers = adrFiles.map((f) => f.slice(0, 4));
+  for (const n of new Set(numbers.filter((x, i) => numbers.indexOf(x) !== i))) report('docs/adr', `two ADR files share the number ${n}`);
   for (const [area, choice, version, source, adr] of decisions) {
     if (!version) report(rel, `"${area}: ${choice}" has no version (use - when there is none)`);
     else if (version !== '-' && !(LINK.test(source ?? '') && DATE.test(source ?? ''))) report(rel, `"${area}: ${choice}" ${version} has no registry link with a date`);
@@ -331,7 +372,7 @@ function checkDecide() {
     if (!by) report(adr, 'no "- Decided by:" line');
     const body = requireFilled(adr, 'docs/adr/0000-template.md', ['Context', 'Options', 'Decision', 'Consequences']);
     if (cls === 'one-way') {
-      if (!by.startsWith('owner')) report(adr, 'a one-way decision must be decided by the owner');
+      if (!/^owner\b/.test(by)) report(adr, 'a one-way decision must be decided by the owner');
       const rows = tableRows(body?.get('Options') ?? []);
       if (rows.length < d.options.min || rows.length > d.options.max) report(adr, `${rows.length} options compared, expected ${d.options.min} to ${d.options.max}`);
       for (const row of rows) {

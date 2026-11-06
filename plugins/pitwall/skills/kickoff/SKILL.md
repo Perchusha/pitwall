@@ -1,6 +1,6 @@
 ---
 name: kickoff
-description: Stage 0 of pitwall. Starts a new project from a one-line idea - asks about it one question at a time, proposes a process level, lays out the project template, writes docs/IDEA.md and sets up merge protection on GitHub. Use when the owner says "kickoff", "start a new project" or "new app from this idea".
+description: Stage 0 of pitwall. Starts a new project from a one-line idea - asks about it one question at a time, proposes a process level, lays out the project template, writes docs/IDEA.md and sets up merge protection on GitHub. The owner runs it as /pitwall:kickoff, with the idea as the argument.
 argument-hint: "[one-line idea]"
 disable-model-invocation: true
 ---
@@ -25,8 +25,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 
 1. **Preflight**, before any question. The working folder becomes the project root.
    - Run `node --version`. If it fails or the major version is below `runtime.nodeMinMajor`, stop: the owner installs the Node LTS release from https://nodejs.org and runs kickoff again.
-   - Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --check`. It refuses (exit 1) a folder that holds anything but `.git`: show its list to the owner and stop. Kickoff starts new projects only.
-   - Run `git rev-parse --is-inside-work-tree`. Not a repository: run `git init -b main`. A repository: run `git rev-parse --verify -q HEAD`; if it prints a commit, stop, because the skeleton must be the first commit on `main`. Otherwise run `git symbolic-ref HEAD refs/heads/main`, so the first commit lands on `main`.
+   - Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --check`. It looks at the folder, git and the repository the folder is in, and writes nothing. Exit 1 (a folder with files in it, a repository with commits, no git): show its message to the owner and stop; kickoff starts new projects only. Exit 0: run the command on its `NEXT:` line as written, and pass any `NOTE:` line on to the owner.
 2. **The idea.** Start from the arguments, `$ARGUMENTS`; when they are empty, the first question asks for the idea in one line. Then ask `kickoff.questions` (min to max) questions, one per message, each built on the answers so far, and skip any the idea already answers:
    - the problem: what is wrong today, and for whom;
    - who uses it, and how many: one person, a team, the public;
@@ -34,7 +33,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
    - what is out of scope for the first version;
    - the project name, offering the folder name as the default.
 3. **The level.** Read `processLevels` in the config. Propose the lowest level whose `when` covers every answer, in one message: the level, the two or three answers that decide it, and what the level means for the later stages (`spike`, `planReview`, `staging`). The owner confirms it or picks another.
-4. **Lay out.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --name "<name>" --idea "<the idea in one line>" --level <level>`. Any exit other than 0 wrote nothing: show its message to the owner and stop.
+4. **Lay out.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --name '<name>' --idea '<the idea in one line>' --level <level>`, with the values in single quotes (rephrase an idea that holds a single quote). Any exit other than 0 wrote nothing: show its message to the owner and stop.
 5. **Write `docs/IDEA.md`.** Fill every section from the answers, in the owner's terms, and keep the headings exactly as they are:
    - Problem: one paragraph;
    - Who it is for;
@@ -42,7 +41,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
    - Process level: why this level, against its `when` in the config. The level itself lives only in `.claude/pitwall.json`.
 6. **Confirm.** Show the owner `docs/IDEA.md` and the level in one message, and say what happens on confirmation: the skeleton is committed to `main`, pushed if there is a GitHub repository, and `main` gets merge protection. Edit until the owner confirms. This is the stage's check.
 7. **Docs check.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage kickoff`. Fix what it reports and run it again until it passes.
-8. **Commit the skeleton** on `main`: `git add -A`, then `git update-index --chmod=+x scripts/gate` (the gate must stay executable when the project is laid out on Windows), then `git commit -m "chore: kickoff from pitwall <templateVersion>"`, with `templateVersion` from `.claude/pitwall.json`.
+8. **Commit the skeleton** on `main`: `git add -A`, then `git update-index --chmod=+x scripts/gate` (the gate must stay executable when the project is laid out on Windows), then `git commit -m "chore: kickoff from pitwall <templateVersion>"`, with `templateVersion` from `.claude/pitwall.json`. If git refuses because it has no user name or email, show its message and wait for the owner to set them.
 9. **GitHub**, still on `main`. Run `git remote get-url origin`.
    - No remote: ask the owner one question: create the GitHub repository now, public or private, or later. Now: `gh repo create <name> --public` or `--private`, followed by `--source . --remote origin --push`. Later: go on to step 10 anyway.
    - A remote: `git push -u origin main`.

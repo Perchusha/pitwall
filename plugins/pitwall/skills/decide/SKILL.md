@@ -1,6 +1,6 @@
 ---
 name: decide
-description: Stage 2 of pitwall. Walks every architecture and stack area, asks the owner about each one-way decision with a comparison of options, accepts the two-way decisions as one list, and records each one-way decision as an ADR and the result in docs/STACK.md. Use when choosing a stack, database, monorepo or services, folder structure, patterns, UI kit, tests or CI.
+description: Stage 2 of pitwall. Walks every architecture and stack area, asks the owner about each one-way decision with a comparison of options, accepts the two-way decisions as one list, and records each one-way decision as an ADR and the result in docs/STACK.md. The owner runs it as /pitwall:decide after discovery.
 disable-model-invocation: true
 ---
 
@@ -23,7 +23,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`decide`, `proc
 ## Steps
 
 1. **Preflight.** Read `.claude/pitwall.json`; without it, stop: run `/pitwall:kickoff` first. Switch to the planning branch (`planning.branch`). If `mergeProtection` is `pending`, tell the owner once and offer to run `node "${CLAUDE_PLUGIN_ROOT}/scripts/protect.mjs"`. Read `docs/IDEA.md`, `docs/DISCOVERY.md` (constraints and assumptions above all) and the existing `docs/adr/`. Without a filled `docs/DISCOVERY.md`, stop: run `/pitwall:discovery` first.
-2. **Sort the areas.** Read `processLevel` from `.claude/pitwall.json` and that level's `decisions` in the config: it says how many decisions the owner is asked. Go through `decide.areas` in order, even where the answer looks obvious. An area in `decide.oneWay` is one-way. An area that does not apply to this project (no database for a single local file, no auth for one local user) becomes a two-way line `Not needed` (the value of `decide.notNeeded`) with the reason. Everything else is two-way unless the agent doubts it.
+2. **Sort the areas.** Read `processLevel` from `.claude/pitwall.json` and that level's `decisions` in the config: `askOwner` says which one-way areas the owner is asked one at a time, and `restMayBeTwoWay` whether the other one-way areas may go into the two-way list instead. Go through `decide.areas` in order, even where the answer looks obvious. An area in `decide.oneWay` is one-way. An area that does not apply to this project (no database for a single local file, no auth for one local user) becomes a two-way line `Not needed` (the value of `decide.notNeeded`) with the reason. Everything else is two-way unless the agent doubts it.
 3. **Research the one-way areas.** For the areas with real options, dispatch `researcher` agents in one message so they run in parallel, one per area or a few related areas each. Brief each with the area, the owner's constraints from `docs/DISCOVERY.md`, the maturity rule above, the registry APIs in `registries`, and the header row of the Options table in `docs/adr/0000-template.md`, copied as it is.
 4. **Ask each one-way decision**, one per message, in this format:
    - the context in two sentences;
@@ -49,4 +49,4 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`decide`, `proc
 
 ## Check
 
-`docs-check.mjs --stage decide` passes: every area of `decide.areas` is in a table, every one-way area has an ADR or a `Not needed` line, every one-way ADR was decided by the owner and compares 2 to 4 options, and every version has a registry link with a date.
+`docs-check.mjs --stage decide` passes: every area of `decide.areas` is in a table, every one-way area has an ADR or a `Not needed` line (or, where the level allows it, a two-way line), every one-way ADR was decided by the owner and compares `decide.options` options in the template's columns, and every version has a registry link with a date.

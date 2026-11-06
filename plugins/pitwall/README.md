@@ -42,7 +42,7 @@ Helpers: `/pitwall:gate`, `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`,
 
 - `.claude/pitwall.json`: the process level, the merge protection mode and `templateVersion`, the plugin version the project was laid out from.
 - `docs/IDEA.md`, `docs/DISCOVERY.md` (analogues with links, constraints with the date you confirmed them, assumptions `A-1`, `A-2` by risk), one ADR per one-way decision and `docs/STACK.md` with registry-checked versions.
-- One commit on `main` (the skeleton), and everything after it on `plan/initial` until the plan is reviewed and merged in one PR.
+- One commit on `main` (the skeleton), and everything after it on the planning branch (`planning.branch` in the config) until the plan is reviewed and merged in one PR.
 
 Each stage ends with `scripts/docs-check.mjs --stage <stage>` from the plugin, which also reports a missing section, an ID that points nowhere and a state file over its size limit.
 

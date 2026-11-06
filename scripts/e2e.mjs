@@ -2,6 +2,12 @@
 // Headless runs of pitwall's stage skills with a scripted owner (T1-AC7).
 //
 //   node scripts/e2e.mjs [--until kickoff|discovery|decide] [--max-turns 30]
+//   node scripts/e2e.mjs --from discovery|decide --seed <earlier e2e project> [--seed-ref <commit>] [--until ...]
+//
+// --from starts at a later stage from a copy of an earlier run's project: the
+// seed is cloned, main and the planning branch are set from it (the planning
+// branch at --seed-ref, by default the seed's own), and the clone's remote is
+// removed so nothing is pushed back.
 //
 // Not part of scripts/check.mjs or CI: it needs a signed-in Claude Code CLI and
 // spends the subscription. The owner runs it before a PR. Like scripts/check.mjs,
@@ -32,10 +38,14 @@ const opt = (name, fallback) => {
 };
 const STAGES = ['kickoff', 'discovery', 'decide'];
 const until = opt('until', 'decide');
-const stages = STAGES.slice(0, STAGES.indexOf(until) + 1);
+const from = opt('from', 'kickoff');
+const seed = opt('seed', '');
+const seedRef = opt('seed-ref', '');
+const stages = STAGES.slice(STAGES.indexOf(from), STAGES.indexOf(until) + 1);
 const maxTurns = Number(opt('max-turns', '30'));
-if (!STAGES.includes(until) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !['--until', '--max-turns'].includes(a))) {
-  console.error('usage: node scripts/e2e.mjs [--until kickoff|discovery|decide] [--max-turns 30]');
+const flags = ['--until', '--max-turns', '--from', '--seed', '--seed-ref'];
+if (!STAGES.includes(until) || !STAGES.includes(from) || stages.length === 0 || (from !== 'kickoff') !== Boolean(seed) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
+  console.error('usage: node scripts/e2e.mjs [--until kickoff|discovery|decide] [--max-turns 30]\n       node scripts/e2e.mjs --from discovery|decide --seed <earlier e2e project> [--seed-ref <commit>] [--until ...]');
   process.exit(2);
 }
 
@@ -89,7 +99,18 @@ if (run('gh', ['auth', 'status'], { env }).status === 0) {
   process.exit(1);
 }
 const git = (...args) => run('git', args, { cwd: project, env });
-git('init', '-q', '-b', 'main');
+if (seed) {
+  const plan = cfg.planning.branch;
+  const cloned = run('git', ['clone', '-q', '--no-checkout', resolve(seed), project], { env });
+  if (cloned.status !== 0) throw new Error(`cannot clone the seed ${seed}: ${cloned.stderr}`);
+  for (const step of [['checkout', '-q', '-B', 'main', 'origin/main'], ['checkout', '-q', '-B', plan, seedRef || `origin/${plan}`], ['remote', 'remove', 'origin']]) {
+    const r = git(...step);
+    if (r.status !== 0) throw new Error(`seed: git ${step.join(' ')} failed: ${r.stderr}`);
+  }
+  console.log(`seeded from ${seed} at ${git('log', '--oneline', '-1').stdout.trim()}`);
+} else {
+  git('init', '-q', '-b', 'main');
+}
 git('config', 'user.name', 'pitwall e2e');
 git('config', 'user.email', 'e2e@pitwall.invalid');
 

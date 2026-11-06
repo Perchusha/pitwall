@@ -47,12 +47,13 @@ export function parseArgs(argv, spec, usage) {
   }
 }
 
-// Every file under dir, as paths relative to it with forward slashes. Skips .git and node_modules.
-export function listFiles(dir, base = dir, out = []) {
+// Every file under dir, as paths relative to it with forward slashes. Skips the
+// folders named in skip: .git and node_modules unless told otherwise.
+export function listFiles(dir, skip = ['.git', 'node_modules'], base = dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    if (skip.includes(entry.name)) continue;
     const p = join(dir, entry.name);
-    if (entry.isDirectory()) listFiles(p, base, out);
+    if (entry.isDirectory()) listFiles(p, skip, base, out);
     else out.push(p.slice(base.length + 1).split('\\').join('/'));
   }
   return out;

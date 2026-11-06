@@ -296,8 +296,9 @@ step('layout', (report) => {
 
     const docsOnly = join(dir, 'docs-only');
     mkdirSync(join(docsOnly, 'docs'), { recursive: true });
+    writeFileSync(join(docsOnly, 'docs', 'notes.md'), '# Notes\n');
     const r2 = layOut(docsOnly);
-    if (r2.status !== 1 || existsSync(join(docsOnly, 'CLAUDE.md'))) report(`a folder with docs/ must be refused and stay untouched, got exit ${r2.status}`);
+    if (r2.status !== 1 || existsSync(join(docsOnly, 'CLAUDE.md'))) report(`a folder with a file in docs/ must be refused and stay untouched, got exit ${r2.status}`);
     const clash = join(dir, 'clash');
     mkdirSync(clash);
     writeFileSync(join(clash, '.gitignore'), 'mine\n');
@@ -310,13 +311,38 @@ step('layout', (report) => {
     if (r4.status !== 1 || existsSync(join(code, 'CLAUDE.md'))) report(`a folder with code must be refused and stay untouched, got exit ${r4.status}`);
     if (!claude.includes(`commit on \`${JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8')).planning.branch}\``)) report('CLAUDE.md does not name the planning branch from the config');
 
-    // --check: the preflight question alone, answered without writing.
-    const empty = join(dir, 'empty');
-    mkdirSync(join(empty, '.git'), { recursive: true });
-    const c1 = runScript('layout.mjs', ['--check', '--target', empty]);
-    if (c1.status !== 0 || readdirSync(empty).length !== 1) report(`--check on a folder with only .git: exit ${c1.status}, expected 0 and nothing written`);
-    const c2 = runScript('layout.mjs', ['--check', '--target', code]);
+    // --check: kickoff's preflight, answered without writing.
+    const git = (cwd, ...a) => spawnSync('git', ['-c', 'user.email=check@pitwall', '-c', 'user.name=check', ...a], { cwd, encoding: 'utf8', env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } });
+    const preflight = (target) => runScript('layout.mjs', ['--check', '--target', target], { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } });
+    const bare = join(dir, 'bare');
+    mkdirSync(bare);
+    const c0 = preflight(bare);
+    if (c0.status !== 0 || !c0.stdout.includes('NEXT: git init -b main') || readdirSync(bare).length !== 0) report(`--check on an empty folder: exit ${c0.status}, expected 0, "NEXT: git init -b main" and nothing written\n${c0.stdout}${c0.stderr}`);
+    const fresh = join(dir, 'fresh');
+    mkdirSync(join(fresh, '.claude'), { recursive: true });
+    git(fresh, 'init', '-q', '-b', 'master');
+    writeFileSync(join(fresh, '.claude', 'settings.local.json'), '{"permissions":{"allow":["Bash(git init *)"]}}\n');
+    writeFileSync(join(fresh, '.DS_Store'), 'x');
+    const c1 = preflight(fresh);
+    if (c1.status !== 0 || !c1.stdout.includes('NEXT: git symbolic-ref HEAD refs/heads/main')) report(`--check on a fresh repository with Claude Code's local settings: exit ${c1.status}, expected 0 and the symbolic-ref step\n${c1.stdout}${c1.stderr}`);
+    const keep = readFileSync(join(fresh, '.claude', 'settings.local.json'), 'utf8');
+    const l1 = layOut(fresh);
+    if (l1.status !== 0 || readFileSync(join(fresh, '.claude', 'settings.local.json'), 'utf8') !== keep) report(`layout next to .claude/settings.local.json: exit ${l1.status}, expected 0 with the file untouched\n${l1.stderr}`);
+    const c2 = preflight(code);
     if (c2.status !== 1) report(`--check on a folder with code: exit ${c2.status}, expected 1`);
+    const committed = join(dir, 'committed');
+    mkdirSync(committed);
+    git(committed, 'init', '-q', '-b', 'main');
+    git(committed, 'commit', '-q', '--allow-empty', '-m', 'first');
+    const c3 = preflight(committed);
+    if (c3.status !== 1 || !/already has commits/.test(c3.stderr)) report(`--check on a repository with commits: exit ${c3.status}, expected 1\n${c3.stderr}`);
+    const nested = join(committed, 'sub');
+    mkdirSync(nested);
+    const c4 = preflight(nested);
+    if (c4.status !== 0 || !c4.stdout.includes('NEXT: git init -b main') || !/inside the repository at/.test(c4.stdout)) report(`--check in a folder inside another repository: exit ${c4.status}, expected 0 with its own git init\n${c4.stdout}${c4.stderr}`);
+    writeFileSync(join(dir, 'a-file'), 'x');
+    const c5 = runScript('layout.mjs', ['--check', '--target', join(dir, 'a-file')]);
+    if (c5.status !== 2) report(`--check on a file: exit ${c5.status}, expected 2`);
 
     const usage = [
       ['--check with --name', runScript('layout.mjs', ['--check', '--target', join(dir, 'u0'), '--name', 'x'])],
@@ -421,8 +447,14 @@ step('docs check', (report) => {
       edit(c, 'docs/STACK.md', (t) => t.replace('| Database | Choice | - | - | ADR-0001 |\n', '').replace('[npm](https://www.npmjs.com/package/vitest) 2026-11-05', 'npm').replace('| i18n | Default | Fits one user |\n', ''));
       edit(c, 'docs/adr/0001-stack.md', (t) => t.replace('- Decided by: owner', '- Decided by: agent'));
     }, [/area "Database" is in neither table/, /area "i18n" is in neither table/, /vitest" 3\.2\.4 has no registry link with a date/, /one-way decision must be decided by the owner/], ['--stage', 'decide']);
+    // At lite a one-way area may end in the accepted two-way list (processLevels.lite.decisions); above lite it may not.
+    broken('one-way area as a two-way line at lite', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Passwords | Simple |\n'));
+    }, [], ['--stage', 'decide']);
     broken('one-way area decided as two-way', (c) => {
       fillStages(c);
+      edit(c, '.claude/pitwall.json', (x) => x.replace('"lite"', '"standard"'));
       edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Passwords | Simple |\n'));
     }, [/one-way area "Auth" has no ADR/], ['--stage', 'decide']);
     // B1 of the T1 review: a one-way area must cite an accepted one-way ADR the owner decided.
@@ -441,7 +473,7 @@ step('docs check', (report) => {
     broken('two-way area without its reason', (c) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (x) => x.replace('| Test strategy | Default | Fits one user |\n', ''));
-    }, [/two-way area "Test strategy" has no line with its reason/], ['--stage', 'decide']);
+    }, [/area "Test strategy" has neither an ADR nor a line with its reason/], ['--stage', 'decide']);
     broken('ADR cited as a link', (c) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (x) => x.replace('| Database | Choice | - | - | ADR-0001 |', '| Database | Choice | - | - | [ADR-0001](adr/0001-stack.md) |'));
@@ -458,7 +490,43 @@ step('docs check', (report) => {
       fillStages(c);
       edit(c, '.claude/pitwall.json', (x) => x.replace(/"templateVersion": "[^"]+"/, '"templateVersion": "0.2.0garbage"'));
     }, [/templateVersion "0\.2\.0garbage" is not a version/], ['--stage', 'kickoff']);
-    broken('IDs in longer code spans and escaped pipes', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\n``ADR-0042 with a ` inside`` is an example.\n'), []);
+    broken('IDs in longer code spans', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\n``ADR-0042 with a ` inside`` is an example.\n'), []);
+    broken('an escaped pipe inside a cell', (c) => {
+      fillStages(c);
+      edit(c, 'docs/DISCOVERY.md', (x) => x.replace('| App 0 | Reminds |', '| App 0 | Reminds \\| nags |'));
+    }, [], ['--stage', 'discovery']);
+    broken('a one-way area cites an ADR with no file', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace('| Database | Choice | - | - | ADR-0001 |', '| Database | Choice | - | - | `ADR-0042` |'));
+    }, [/one-way area "Database" cites ADR-0042, which has no file in docs\/adr\//], ['--stage', 'decide']);
+    broken('options without the compared columns', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('| Option | Pros | Cons | Maturity | Cost | Lock-in | Source |\n| --- | --- | --- | --- | --- | --- | --- |', '| Option | Source |\n| --- | --- |'));
+    }, [/0001-stack\.md: the table in "## Options" must keep the template's columns/], ['--stage', 'decide']);
+    broken('an option row short of cells', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('| Electron | Known | Big | Stable | Free | Low | https://electronjs.org |', '| Electron | Known | https://electronjs.org |'));
+    }, [/the row "Electron" has 3 cells, the table has 7 columns/], ['--stage', 'decide']);
+    broken('an ADR and a Not needed line for one area', (c) => {
+      fillStages(c);
+      edit(c, 'docs/STACK.md', (x) => x.replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Database | Not needed | One file |\n'));
+    }, [/area "Database" has an ADR and a "Not needed" line/], ['--stage', 'decide']);
+    broken('two ADRs with one number', (c) => {
+      fillStages(c);
+      writeFileSync(join(c, 'docs', 'adr', '0001-again.md'), readFileSync(join(c, 'docs', 'adr', '0001-stack.md'), 'utf8'));
+    }, [/two ADR files share the number 0001/], ['--stage', 'decide']);
+    broken('decided by "ownerless"', (c) => {
+      fillStages(c);
+      edit(c, 'docs/adr/0001-stack.md', (x) => x.replace('- Decided by: owner', '- Decided by: ownerless'));
+    }, [/a one-way decision must be decided by the owner/], ['--stage', 'decide']);
+    broken('assumptions numbered out of order', (c) => {
+      fillStages(c);
+      edit(c, 'docs/DISCOVERY.md', (x) => x.replace('| A-1 | Notifications', '| A-2 | Notifications').replace('| A-2 | A tray icon', '| A-1 | A tray icon'));
+    }, [/assumption A-2 is row 1/], ['--stage', 'discovery']);
+    broken('a discovery table with other columns', (c) => {
+      fillStages(c);
+      edit(c, 'docs/DISCOVERY.md', (x) => x.replace('| Constraint | Answer | Confirmed on |', '| Constraint | Answer | When |'));
+    }, [/the table in "## Owner constraints" must keep the template's columns/], ['--stage', 'discovery']);
     broken('one-way area not needed', (c) => {
       fillStages(c);
       edit(c, 'docs/STACK.md', (t) => t.replace('| Auth | Choice | - | - | ADR-0001 |\n', '').replace(/(\| Area \| Choice \| Why, in one line \|\n\| --- \| --- \| --- \|\n)/, '$1| Auth | Not needed | One local user |\n'));
@@ -529,10 +597,11 @@ err('fake gh: unexpected call ' + args.join(' '));
     const repo = (visibility, viewerPermission = 'ADMIN') => ({ nameWithOwner: 'o/r', visibility, viewerPermission });
     const ok = { auth: true, repo: repo('PUBLIC'), branch: true, probe: '404', put: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending' }) => {
+    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending', raw }) => {
       const project = join(dir, `p${(n += 1)}`);
       mkdirSync(join(project, '.claude'), { recursive: true });
-      if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
+      if (raw !== undefined) writeFileSync(join(project, '.claude', 'pitwall.json'), raw);
+      else if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
       const logFile = join(project, 'gh.log');
       writeFileSync(logFile, '');
       const env = { ...process.env, PITWALL_GH: JSON.stringify(gh ?? [process.execPath, fake]), FAKE_GH: JSON.stringify(scenario), FAKE_GH_LOG: logFile, FAKE_GH_STATE: join(project, 'state.json') };
@@ -540,7 +609,7 @@ err('fake gh: unexpected call ' + args.join(' '));
       const calls = readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
       const putCalls = calls.filter((c) => c.args.includes('PUT'));
       const settingsFile = join(project, '.claude', 'pitwall.json');
-      const stored = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')).mergeProtection : null;
+      const stored = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8'))?.mergeProtection ?? null : null;
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
       if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
@@ -609,6 +678,10 @@ err('fake gh: unexpected call ' + args.join(' '));
     run('no settings file', ok, { before: null, code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not recorded'] });
     const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     if (!named.calls.some((c) => c.args[0] === 'repo' && c.args.includes('o/r'))) report('--repo: the repository was not passed to gh repo view');
+    run('recorded mode dropped on weaker protection', { ...ok, protection: { ...protectedOk, enforce_admins: { enabled: false } } }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
+    run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
+    run('not admin, private', { ...ok, repo: repo('PRIVATE', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['Upgrade to GitHub Pro'] });
+    run('settings that are not an object', ok, { raw: '[1]\n', code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not a JSON object'] });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });
 });

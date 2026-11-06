@@ -1,6 +1,6 @@
 ---
 name: discovery
-description: Stage 1 of pitwall. Researches the problem, the analogues and the owner's constraints, and lists the technical assumptions by risk in docs/DISCOVERY.md. Use after kickoff, or when the owner asks to research an idea, find analogues or check feasibility.
+description: Stage 1 of pitwall. Researches the problem, the analogues and the owner's constraints, and lists the technical assumptions by risk in docs/DISCOVERY.md. The owner runs it as /pitwall:discovery after kickoff.
 disable-model-invocation: true
 ---
 

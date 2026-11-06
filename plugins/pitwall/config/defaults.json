@@ -9,7 +9,10 @@
       "planReview": "short checklist",
       "staging": "local build",
       "productionSmoke": false,
-      "decisions": "3 to 5 one-way decisions; every other area two-way or Not needed"
+      "decisions": {
+        "askOwner": "the 3 to 5 one-way areas that matter most",
+        "restMayBeTwoWay": true
+      }
     },
     "standard": {
       "when": "users, a database, auth, a deployment",
@@ -17,7 +20,10 @@
       "planReview": "full",
       "staging": "required",
       "productionSmoke": true,
-      "decisions": "every one-way area"
+      "decisions": {
+        "askOwner": "every one-way area",
+        "restMayBeTwoWay": false
+      }
     },
     "full": {
       "when": "several services, realtime, payments, AI pipelines, a high cost of error",
@@ -25,7 +31,10 @@
       "planReview": "full with pre-mortem",
       "staging": "required",
       "productionSmoke": true,
-      "decisions": "every one-way area"
+      "decisions": {
+        "askOwner": "every one-way area",
+        "restMayBeTwoWay": false
+      }
     }
   },
   "riskClasses": {
@@ -175,7 +184,7 @@
     "crates": {
       "url": "https://crates.io/api/v1/crates/<crate>",
       "version": "crate.max_stable_version",
-      "date": "crate.updated_at"
+      "date": "versions[] entry whose num is crate.max_stable_version: created_at"
     },
     "go": {
       "url": "https://proxy.golang.org/<module>/@latest",

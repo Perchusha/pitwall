@@ -82,15 +82,15 @@ function putCommand(repo) {
   return `gh api -X PUT repos/${repo}/branches/${branch}/protection ${fields.map((f) => `-F "${f}"`).join(' ')}`;
 }
 
-const recorded = () => (existsSync(settingsFile) ? parse(readFileSync(settingsFile, 'utf8')) : null);
-
-function record(mode) {
+// seen: this run read the protection and found it short, so a recorded mode no longer holds.
+function record(mode, seen = false) {
   if (dry) return log(`dry run: .claude/pitwall.json not changed (would record ${mode})`);
-  const settings = recorded();
-  if (!settings) return log(`no .claude/pitwall.json in ${project}: mode ${mode} not recorded`);
+  if (!existsSync(settingsFile)) return log(`no .claude/pitwall.json in ${project}: mode ${mode} not recorded`);
+  const settings = parse(readFileSync(settingsFile, 'utf8'));
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return log(`.claude/pitwall.json is not a JSON object: mode ${mode} not recorded`);
   if (settings.mergeProtection === mode) return;
-  if (mode === 'pending' && settings.mergeProtection && settings.mergeProtection !== 'pending') {
-    return log(`kept the recorded mode "${settings.mergeProtection}"; this run could not confirm it`);
+  if (mode === 'pending' && !seen && settings.mergeProtection && settings.mergeProtection !== 'pending') {
+    return log(`kept the recorded mode "${settings.mergeProtection}"; this run could not check it`);
   }
   writeJson(settingsFile, { ...settings, mergeProtection: mode });
   log(`recorded mergeProtection "${mode}" in .claude/pitwall.json`);
@@ -103,8 +103,8 @@ function done(mode) {
 }
 
 // steps: { run } is a ready command, { note } is plain text for the owner.
-function handoff(reason, steps) {
-  record('pending');
+function handoff(reason, steps, seen = false) {
+  record('pending', seen);
   console.log(`HANDOFF: ${reason}`);
   for (const s of steps) console.log(s.run ? `  run: ${s.run}` : `  note: ${s.note}`);
   console.log(`  then: ${rerun}`);
@@ -129,13 +129,14 @@ if (!gh(['auth', 'status', '--hostname', 'github.com']).ok) handoff('gh is not s
 
 const view = gh(['repo', 'view', ...(args.repo ? [args.repo] : []), '--json', 'nameWithOwner,visibility,viewerPermission']);
 const repo = view.ok ? parse(view.out) : null;
-if (!repo?.nameWithOwner) {
-  handoff(`no GitHub repository for ${args.repo ?? project}.`, [
+if (!repo?.nameWithOwner && !args.repo && /no git remotes|not a git repository/i.test(view.err)) {
+  handoff(`no GitHub repository for ${project}.`, [
     { note: 'from the project folder, create one named after the folder (use --public for a public repository), then push main' },
     { run: 'gh repo create --private --source . --remote origin' },
     { run: `git push -u origin ${branch}` },
   ]);
 }
+if (!repo?.nameWithOwner) handoff(`gh could not read the repository: ${view.err.trim() || view.out.trim()}`, [{ note: 'fix what gh reports (the remote, the network, the name), then' }, { run: 'gh repo view' }]);
 const name = repo.nameWithOwner;
 log(`repository ${name} (${String(repo.visibility).toLowerCase()}), your permission: ${repo.viewerPermission}`);
 
@@ -146,18 +147,22 @@ if (summary?.protected && satisfies(summary.protection)) {
   log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
   done('branch-protection');
 }
+const weaker = Boolean(summary?.protected);
 if (repo.viewerPermission !== 'ADMIN') {
-  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, [{ note: 'an admin runs' }, { run: putCommand(name) }]);
+  const steps = [{ note: 'an admin runs' }, { run: putCommand(name) }];
+  if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the then: line below, run by the admin, records it' });
+  handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, steps, weaker);
 }
 
 // 2. Read-only probe: is branch protection available, and is it already on?
 const probe = gh(['api', `repos/${name}/branches/${branch}/protection`]);
 if (probe.ok) {
   if (satisfies(parse(probe.out))) done('branch-protection');
-  handoff(`${branch} already has branch protection with other settings; pitwall does not replace them.`, [
-    { note: `to replace them with pitwall's (${gateContext} from GitHub Actions, ${reviewContext}, admins included)` },
-    { run: putCommand(name) },
-  ]);
+  handoff(
+    `${branch} already has branch protection with other settings; pitwall does not replace them.`,
+    [{ note: `to replace them with pitwall's (${gateContext} from GitHub Actions, ${reviewContext}, admins included)` }, { run: putCommand(name) }],
+    true,
+  );
 }
 if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
   log('branch protection is not available: a private repository on GitHub Free');
