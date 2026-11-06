@@ -41,7 +41,7 @@ One-way decisions (database, data model, monorepo, monolith or services, auth, h
 
 ## 5. Finding project knowledge: no RAG by default
 
-Project docs are tens or hundreds of kilobytes and change with almost every commit, so agents search them with grep and glob instead of a vector index (ADR-0003). Docs are findable by design: an ID on every entity (`ADR-0007`, `E3`, `E3-AC2`, `BUG-12`, `L-5`, `A-2` for an assumption, `R-4` for a risk), `docs/INDEX.md`, `CLAUDE.md` under 200 lines, size limits on state files and an archive for closed rows. `scripts/docs-check.mjs` reports a missing section, an ID that points nowhere and a file over its limit; an ID inside a code span is an example and is not checked. RAG is an optional module: a docs MCP for the stack's libraries, or a RAG over `docs/` once grep by ID stops finding things.
+Project docs are tens or hundreds of kilobytes and change with almost every commit, so agents search them with grep and glob instead of a vector index (ADR-0003). Docs are findable by design: an ID on every entity (`ADR-0007`, `E3`, `E3-AC2`, `BUG-12`, `L-5`, `A-2` for an assumption, `R-4` for a risk), `docs/INDEX.md`, `CLAUDE.md` within 200 lines, size limits on state files and an archive for closed rows. `scripts/docs-check.mjs` reports a missing section, an ID that points nowhere and a file over its limit; an ID inside a code span is an example and is not checked. RAG is an optional module: a docs MCP for the stack's libraries, or a RAG over `docs/` once grep by ID stops finding things.
 
 ## 6. The epic loop
 
