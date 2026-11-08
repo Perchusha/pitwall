@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// The docs check of a pitwall project (T1-AC5, ADR-0003, ADR-0006).
+// The docs check of a pitwall project (T1-AC5, T2-AC1, T2-AC3, T2-AC4, ADR-0003, ADR-0006).
 //
-//   node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide] [--only sections,ids,size]
+//   node docs-check.mjs [--root <dir>] [--stage <stage>[,<stage>...]] [--only sections,ids,size]
+//
+// Stages: kickoff, discovery, decide, spike, plan, plan-review.
 //
 // Always, unless --only narrows it:
 //   sections  every "## " heading of a template document is in the project's copy,
@@ -11,20 +13,23 @@
 //             A-n (assumptions) and R-n (risks); an ID in a code span is an example;
 //   size      CLAUDE.md and the state files stay within docsLimits in config/defaults.json.
 // --stage adds the Check of that skill: what the stage writes is there and filled in.
+// spike reads git history (ADR-0009): it runs locally only and fails closed on a
+// shallow clone or outside git. plan-review includes plan.
 //
 // Exit 0 pass, 1 problems found (each printed), 2 usage.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { config, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
+import { config, gitRunner, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
 
 requireNode();
-const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide] [--only sections,ids,size]';
+const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike|plan|plan-review[,...]] [--only sections,ids,size]';
 const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', only: 'value' }, usage);
 const KINDS = ['sections', 'ids', 'size'];
-const STAGES = ['kickoff', 'discovery', 'decide'];
+const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan', 'plan-review'];
 const kinds = args.only ? args.only.split(',').map((k) => k.trim()) : KINDS;
-if (kinds.some((k) => !KINDS.includes(k)) || (args.stage && !STAGES.includes(args.stage))) {
+const stages = args.stage ? args.stage.split(',').map((s) => s.trim()) : [];
+if (kinds.some((k) => !KINDS.includes(k)) || stages.some((s) => !STAGES.includes(s))) {
   console.error(`docs-check: bad --only or --stage\nusage: ${usage}`);
   process.exit(2);
 }
@@ -159,11 +164,13 @@ function requireHeadings(rel, templateRel) {
 const filesIn = (rel) => (has(rel) && statSync(join(root, rel)).isDirectory() ? readdirSync(join(root, rel)) : []);
 const adrFiles = filesIn('docs/adr').filter((f) => /^\d{4}-.+\.md$/.test(f) && !f.startsWith('0000-'));
 const epicFiles = filesIn('docs/epics').filter((f) => f.endsWith('.md'));
+const spikeFiles = filesIn('docs/spikes').filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md');
 
 if (kinds.includes('sections')) {
   for (const { rel, dest } of templateDocs) requireHeadings(dest, rel);
   for (const f of adrFiles) requireHeadings(`docs/adr/${f}`, 'docs/adr/0000-template.md');
   for (const f of epicFiles.filter((f) => f !== 'E0-skeleton.md')) requireHeadings(`docs/epics/${f}`, 'docs/epics/E0-skeleton.md');
+  for (const f of spikeFiles) requireHeadings(`docs/spikes/${f}`, 'docs/spikes/template.md');
 }
 
 // ---------- ids ----------
@@ -226,6 +233,18 @@ if (kinds.includes('size')) {
 
 const DATE = /\b\d{4}-\d{2}-\d{2}\b/;
 const LINK = /https?:\/\/[^\s)]+/;
+// "- Name: value" (ADRs, spikes) or "Name: value" (epics): the first one in the text.
+const field = (text, name, dash = true) => new RegExp(`^${dash ? '- ' : ''}${name}: *(.*)$`, 'm').exec(text)?.[1].trim() ?? '';
+const same = (a, b) => (a ?? '').toLowerCase() === (b ?? '').toLowerCase();
+// IDs written outside code spans: an ID in a code span is an example.
+const plainIds = (cell, re) => [...stripCode(cell ?? '').matchAll(re)].map((m) => m[0]);
+function projectLevel() {
+  try {
+    return JSON.parse(read('.claude/pitwall.json')).processLevel;
+  } catch {
+    return undefined;
+  }
+}
 
 function checkKickoff() {
   for (const f of listFiles(root)) if (f.endsWith('.tmpl')) report(f, 'still carries the .tmpl suffix');
@@ -310,7 +329,6 @@ function checkDecide() {
   if (!s) return;
   const decisions = tableRows(s.get('Decisions') ?? []);
   const twoWay = tableRows(s.get('Two-way decisions') ?? []);
-  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
   const adrId = (cell) => /ADR-\d{4}/.exec(cell ?? '')?.[0];
   const adrFields = (id) => {
     const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
@@ -320,12 +338,7 @@ function checkDecide() {
     return { status: field('Status'), cls: field('Class'), by: field('Decided by') };
   };
   // The process level decides whether a one-way area may end as a two-way line the owner accepted in the list.
-  let level;
-  try {
-    level = JSON.parse(read('.claude/pitwall.json')).processLevel;
-  } catch {
-    level = undefined;
-  }
+  const level = projectLevel();
   const rule = cfg.processLevels[level]?.decisions ?? {};
   const restMayBeTwoWay = rule.restMayBeTwoWay === true;
   const byOwner = (by) => /^owner\b/.test(by);
@@ -402,15 +415,323 @@ function checkDecide() {
   }
 }
 
-if (args.stage === 'kickoff') checkKickoff();
-if (args.stage === 'discovery') checkDiscovery();
-if (args.stage === 'decide') checkDecide();
+// ---------- spike (T2-AC1, ADR-0009) ----------
 
-const what = `${kinds.join(',')}${args.stage ? `, stage ${args.stage}` : ''}`;
+const SPIKE_TEMPLATE = 'docs/spikes/template.md';
+
+// The non-empty lines of a section, trimmed, so whitespace alone is no change.
+const sectionText = (text, name) => (sections(text).get(name) ?? []).map((l) => l.trim()).filter(Boolean).join('\n');
+
+function checkSpike() {
+  const d = cfg.spike;
+  if (spikeFiles.length === 0) return report('docs/spikes', 'no spike: a spike is docs/spikes/<topic>.md, copied from docs/spikes/template.md');
+  const git = gitRunner(root);
+  // Without the whole history nothing below can be shown, so the check fails, never passes (ADR-0009).
+  let history = git('rev-parse', '--is-inside-work-tree').out === 'true';
+  if (!history) report('docs/spikes', 'not inside a git repository: the spike check reads git history (ADR-0009)');
+  else if (git('rev-parse', '--is-shallow-repository').out !== 'false') {
+    report('docs/spikes', 'the clone is shallow: run git fetch --unshallow, the spike check reads the whole history (ADR-0009)');
+    history = false;
+  }
+  const hasRef = (ref) => git('rev-parse', '--verify', '-q', `${ref}^{commit}`).ok;
+  const ancestor = (a, b) => git('merge-base', '--is-ancestor', a, b).ok;
+  const remote = history && git('remote').out.split('\n').includes('origin');
+  for (const f of spikeFiles) {
+    const rel = `docs/spikes/${f}`;
+    const topic = f.slice(0, -3);
+    const s = requireFilled(rel, SPIKE_TEMPLATE, ['Hypothesis', 'Criterion', 'Result', 'Conclusion']);
+    if (!s) continue;
+    const text = read(rel);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(topic)) report(rel, `the topic "${topic}" is not lower-case words joined by hyphens`);
+    if (plainIds(field(text, 'Assumption'), /\bA-\d+\b/g).length === 0) report(rel, 'names no assumption A-n in "- Assumption:"');
+    const branch = d.branch.replace('<topic>', topic);
+    if (field(text, 'Branch') !== branch) report(rel, `"- Branch:" is "${field(text, 'Branch')}", expected ${branch}`);
+    if (!DATE.test(field(text, 'Date'))) report(rel, 'no "- Date:" line');
+    const outcome = field(text, 'Outcome');
+    if (!d.outcomes.includes(outcome)) report(rel, `"- Outcome:" is "${outcome}": a finished spike is ${d.outcomes.join(' or ')}`);
+    const criterion = tableRows(s.get('Criterion') ?? []);
+    if (criterion.length === 0) report(rel, 'the criterion has no row');
+    for (const row of criterion) if (!/\d/.test(row[row.length - 1] ?? '')) report(rel, `criterion "${row[0]}": "Success when" holds no number`);
+    const result = tableRows(s.get('Result') ?? []);
+    if (result.length === 0) report(rel, 'the result has no measurement');
+    for (const [metric, measured, by, date] of result) {
+      if (!/\d/.test(measured ?? '')) report(rel, `result "${metric}": "Measured" holds no number`);
+      if (!by) report(rel, `result "${metric}": no "Measured by" (a command, or the owner)`);
+      if (!DATE.test(date ?? '')) report(rel, `result "${metric}": no date`);
+    }
+    const follow = field(text, 'Follow-up');
+    if (outcome === 'not confirmed' && !(/\bADR-\d{4}\b|\bR-\d+\b/.test(stripCode(follow)) || follow.startsWith(d.pending))) {
+      report(rel, 'not confirmed, and "- Follow-up:" names no ADR, no accepted risk R-n and no "pending, /pitwall:decide <area>"');
+    }
+    const proto = /\b[0-9a-f]{7,40}\b/.exec(field(text, 'Prototype'))?.[0];
+    if (!proto) report(rel, '"- Prototype:" names no commit');
+    if (!history) continue;
+
+    // The criterion came first: the commit that added the file holds the same criterion and no result.
+    const added = git('log', '--diff-filter=A', '--format=%H', '--', rel).out.split('\n').filter(Boolean);
+    if (added.length === 0) {
+      report(rel, 'is not committed: commit the criterion on the planning branch before any prototype code');
+      continue;
+    }
+    const first = added[added.length - 1];
+    const before = git('show', `${first}:${rel}`).out.replace(/\r\n/g, '\n');
+    if (sectionText(before, 'Criterion') !== sectionText(text, 'Criterion')) report(rel, `the criterion changed after ${first.slice(0, 7)}, the commit that added it: a criterion is never adjusted to the result`);
+    if (tableRows(sections(before).get('Result') ?? []).length > 0 || d.outcomes.includes(field(before, 'Outcome'))) {
+      report(rel, `${first.slice(0, 7)}, the commit that added it, already held a result: the criterion is committed before the prototype`);
+    }
+    if (!proto) continue;
+    if (!hasRef(proto)) {
+      report(rel, `the prototype commit ${proto} is not in this clone: fetch ${branch}`);
+      continue;
+    }
+    const full = git('rev-parse', `${proto}^{commit}`).out;
+    if (full === first || !ancestor(first, full)) report(rel, `the prototype commit ${proto} does not come after ${first.slice(0, 7)}, the criterion commit: start ${branch} from it`);
+    // Spike code never reaches the planning branch or main.
+    for (const ref of ['HEAD', cfg.planning.branch, cfg.mergeProtection.branch]) {
+      if (hasRef(ref) && ancestor(full, ref)) report(rel, `the prototype commit ${proto} is reachable from ${ref}: spike code stays on ${branch}`);
+    }
+    // Pushed before this check when there is a remote (ADR-0009); on the local branch otherwise.
+    const home = remote ? `refs/remotes/origin/${branch}` : `refs/heads/${branch}`;
+    if (!hasRef(home) || !ancestor(full, home)) {
+      report(rel, remote ? `push ${branch} before this check: origin/${branch} does not hold ${proto} (ADR-0009)` : `${branch} does not hold the prototype commit ${proto}`);
+    }
+  }
+}
+
+// ---------- plan (T2-AC2, T2-AC3) ----------
+
+// R-n -> whether docs/RISKS.md accepts it: a risk, a fallback and the date the owner accepted it.
+function risksAccepted() {
+  const rows = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
+  return new Map(rows.map(([id, risk, fallback, on]) => [id, Boolean(risk && fallback && DATE.test(on ?? ''))]));
+}
+function adrAccepted(id) {
+  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  return Boolean(f && field(read(`docs/adr/${f}`), 'Status').startsWith('accepted'));
+}
+
+// The relative Markdown links of a file that point nowhere.
+function brokenLinks(rel) {
+  const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
+  const out = [];
+  for (const m of stripCode(read(rel)).matchAll(/\]\(([^)\s]+)\)/g)) {
+    const target = m[1].split('#')[0];
+    if (!target || /^[a-z]+:/i.test(target)) continue;
+    if (!existsSync(resolve(root, dir, target))) out.push(m[1]);
+  }
+  return out;
+}
+
+// The epics as docs/EPICS.md lists them, or null when the table is missing or has other columns.
+function readPlan(quiet = false) {
+  const rel = 'docs/EPICS.md';
+  if (!has(rel)) {
+    if (!quiet) report(rel, 'missing');
+    return null;
+  }
+  const lines = read(rel).split('\n');
+  const want = tableHeader(readTemplate(rel).split('\n'));
+  const got = tableHeader(lines);
+  if (!got || !same(got.join('|'), want.join('|'))) {
+    if (!quiet) report(rel, `the table must keep the template's columns: | ${want.join(' | ')} |`);
+    return null;
+  }
+  return tableRows(lines).map((row) => {
+    const m = /^\[?(E\d+)\]?(?:\(([^)\s]+)\))?$/.exec((row[0] ?? '').replace(/`/g, ''));
+    return { row, id: m?.[1], link: m?.[2], goal: row[1], risk: row[2], deps: plainIds(row[3], /\bE\d+\b/g), status: row[4] };
+  });
+}
+
+function checkPlan() {
+  const p = cfg.plan;
+  const rel = 'docs/EPICS.md';
+  const levelName = projectLevel();
+  const epics = readPlan();
+  if (!epics) return;
+  if (epics.length === 0) return report(rel, 'no epics in the table');
+  const risks = Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
+  const index = new Map();
+  epics.forEach((e, i) => {
+    if (e.row.length !== 5) report(rel, `the row "${e.row[0]}" has ${e.row.length} cells, the table has 5 columns`);
+    if (!e.id) return report(rel, `the row "${e.row[0]}" has no epic ID E<n>`);
+    if (index.has(e.id)) report(rel, `${e.id} is listed twice`);
+    else index.set(e.id, i);
+  });
+  if (epics[0].id !== p.firstEpic) report(rel, `the first epic is ${epics[0].id ?? epics[0].row[0]}: the plan starts with ${p.firstEpic}, the walking skeleton`);
+  const numbers = epics.map((e) => Number(e.id?.slice(1)));
+  for (let i = 1; i < numbers.length; i += 1) if (!(numbers[i] > numbers[i - 1])) report(rel, `${epics[i].id ?? epics[i].row[0]} comes after ${epics[i - 1].id ?? epics[i - 1].row[0]}: number the epics in their order`);
+  const listed = new Set();
+  for (const e of epics.filter((x) => x.id)) {
+    if (!e.goal) report(rel, `${e.id} has no goal`);
+    if (!risks.includes(e.risk)) report(rel, `${e.id}: risk "${e.risk ?? ''}" is not one of ${risks.join(', ')}`);
+    if (e.status !== p.status) report(rel, `${e.id}: status "${e.status ?? ''}", every epic of a new plan is ${p.status}`);
+    for (const dep of e.deps) {
+      if (!index.has(dep)) report(rel, `${e.id} depends on ${dep}, which is not in the plan`);
+      else if (index.get(dep) >= index.get(e.id)) report(rel, `${e.id} depends on ${dep}, which does not come before it`);
+    }
+    if (!e.link || !new RegExp(`^epics/${e.id}-[a-z0-9]+(?:-[a-z0-9]+)*\\.md$`).test(e.link)) {
+      report(rel, `${e.id} must link its file as [${e.id}](epics/${e.id}-<slug>.md)`);
+      continue;
+    }
+    const file = `docs/${e.link}`;
+    listed.add(e.link.slice('epics/'.length));
+    if (!has(file)) {
+      report(rel, `${e.id} links ${e.link}, which does not exist`);
+      continue;
+    }
+    const text = read(file);
+    if (!new RegExp(`^# ${e.id} - \\S`, 'm').test(text)) report(file, `the title is not "# ${e.id} - <title>"`);
+    if (!field(text, 'Goal', false)) report(file, 'no "Goal:" line');
+    const cls = field(text, 'Risk class', false).split(/[\s(]/)[0];
+    if (!cls) report(file, `no risk class: a "Risk class:" line with one of ${risks.join(', ')}`);
+    else if (!risks.includes(cls)) report(file, `risk class "${cls}" is not one of ${risks.join(', ')}`);
+    else if (cls !== e.risk) report(file, `risk class ${cls}, but docs/EPICS.md says ${e.risk}`);
+    const deps = plainIds(field(text, 'Depends on', false), /\bE\d+\b/g);
+    if ([...new Set(deps)].sort().join(',') !== [...new Set(e.deps)].sort().join(',')) {
+      report(file, `depends on ${deps.join(', ') || 'no epic'}, but docs/EPICS.md says ${e.deps.join(', ') || 'no epic'}`);
+    }
+    const adrLine = field(text, 'ADR', false);
+    const cited = plainIds(adrLine, /\bADR-\d{4}\b/g);
+    if (cited.length === 0 && !same(adrLine, 'none')) report(file, `the "ADR:" line is "${adrLine}": list the ADR IDs, or none`);
+    for (const id of cited) if (!adrFiles.some((name) => name.startsWith(id.slice(4) + '-'))) report(file, `cites ${id}, which has no file in docs/adr/`);
+    if (e.id === p.firstEpic && cited.length === 0 && adrFiles.length > 0) report(file, `${p.firstEpic} lays down the stack: its "ADR:" line cites the stack ADRs`);
+    const items = listItems(sections(text).get('Acceptance criteria') ?? []);
+    if (items.length === 0) report(file, 'no acceptance criteria');
+    items.forEach((l, i) => {
+      const m = /^- \[[ xX]\] (E\d+)-AC(\d+):\s*\S/.exec(l);
+      if (!m) report(file, `"${l.slice(0, 60)}" is not a criterion "- [ ] ${e.id}-AC${i + 1}: ..."`);
+      else if (m[1] !== e.id || Number(m[2]) !== i + 1) report(file, `${m[1]}-AC${m[2]} is criterion ${i + 1}: number them ${e.id}-AC1, ${e.id}-AC2, ... in their order`);
+    });
+    for (const link of brokenLinks(file)) report(file, `broken link ${link}`);
+  }
+  // A cycle is named as a cycle, even though one of its edges is reported above as well.
+  const graph = new Map(epics.filter((e) => e.id).map((e) => [e.id, e.deps.filter((x) => index.has(x))]));
+  const state = new Map();
+  const cycles = new Set();
+  const visit = (id, path) => {
+    state.set(id, 'open');
+    for (const next of graph.get(id) ?? []) {
+      if (state.get(next) === 'open') cycles.add([...path.slice(path.indexOf(next)), next].join(' -> '));
+      else if (!state.has(next)) visit(next, [...path, next]);
+    }
+    state.set(id, 'done');
+  };
+  for (const id of graph.keys()) if (!state.has(id)) visit(id, [id]);
+  for (const c of cycles) report(rel, `dependency cycle: ${c}`);
+  for (const f of epicFiles) if (!listed.has(f)) report(`docs/epics/${f}`, 'is not in the table of docs/EPICS.md');
+  for (const link of brokenLinks(rel)) report(rel, `broken link ${link}`);
+  const max = cfg.processLevels[levelName]?.epics?.max;
+  if (typeof max === 'number' && epics.length - 1 > max) {
+    report(rel, `${epics.length - 1} epics after ${p.firstEpic}: the ${levelName} level holds at most ${max}; cut the plan, or raise the level with an ADR`);
+  }
+  requireFilled('docs/SPEC.md', 'docs/SPEC.md', [...sections(readTemplate('docs/SPEC.md')).keys()]);
+  // Every spike is concluded, and a failed one has a follow-up that is done.
+  const accepted = risksAccepted();
+  for (const f of spikeFiles) {
+    const sr = `docs/spikes/${f}`;
+    const text = read(sr);
+    const outcome = field(text, 'Outcome');
+    if (!cfg.spike.outcomes.includes(outcome)) report(sr, `the spike is not concluded (Outcome "${outcome}"): finish it with /pitwall:spike`);
+    if (outcome !== 'not confirmed') continue;
+    const follow = stripCode(field(text, 'Follow-up'));
+    const adr = /\bADR-\d{4}\b/.exec(follow)?.[0];
+    const risk = /\bR-\d+\b/.exec(follow)?.[0];
+    if (adr ? !adrAccepted(adr) : risk ? !accepted.get(risk) : true) {
+      report(sr, 'not confirmed, and its follow-up is not done: an accepted ADR from /pitwall:decide <area>, or a risk R-n the owner accepted in docs/RISKS.md with a date');
+    }
+  }
+}
+
+// ---------- plan review (T2-AC4) ----------
+
+function checkPlanReview() {
+  checkPlan();
+  const r = cfg.planReview;
+  const levelName = projectLevel();
+  const level = cfg.processLevels[levelName] ?? {};
+  const rel = 'docs/PLAN-REVIEW.md';
+  const s = requireFilled(rel, rel, ['Pre-mortem', 'Non-functional requirements', 'Launch questions', 'Epic sizing', 'Findings']);
+  if (!s) return;
+  const CLOSER = /\b(?:E\d+(?:-AC\d+)?|ADR-\d{4}|R-\d+)\b/;
+  const isOpen = (cell) => same((cell ?? '').split(':')[0].trim(), r.open);
+  const closed = (cell) => CLOSER.test(stripCode(cell ?? '')) && !isOpen(cell);
+  const forLevel = (list) => list.filter((x) => x.levels.includes(levelName)).map((x) => x.item);
+
+  const reasons = tableRows(s.get('Pre-mortem') ?? []);
+  const need = level.preMortemReasons ?? 0;
+  if (reasons.length < need) report(rel, `${reasons.length} pre-mortem reasons, the ${levelName} level asks for ${need}`);
+  for (const [n, reason, by] of reasons) {
+    if (!reason) report(rel, `pre-mortem row ${n} has no reason`);
+    if (!closed(by)) report(rel, `pre-mortem reason ${n} is not closed: cite the epic, criterion or ADR that closes it, or a risk R-n the owner accepted`);
+  }
+  const answered = (section, items, third, missing) => {
+    const rows = tableRows(s.get(section) ?? []);
+    for (const item of items) {
+      const row = rows.find((x) => same(x[0], item));
+      if (!row) report(rel, `"## ${section}": "${item}" is missing`);
+      else if (!row[1] || isOpen(row[1])) report(rel, `"## ${section}": "${item}" has no answer`);
+      else if (!third(row[2] ?? '')) report(rel, `"## ${section}": "${item}" has ${missing}`);
+    }
+  };
+  answered('Non-functional requirements', forLevel(r.nonFunctional), (c) => Boolean(c) && !isOpen(c), 'no place where it lives');
+  answered('Launch questions', forLevel(r.launch), (c) => DATE.test(c), 'no date the owner confirmed it');
+
+  const sizing = tableRows(s.get('Epic sizing') ?? []);
+  for (const e of (readPlan(true) ?? []).filter((x) => x.id)) {
+    const row = sizing.find((x) => plainIds((x[0] ?? '').replace(/`/g, ''), /\bE\d+\b/g)[0] === e.id);
+    if (!row) {
+      report(rel, `${e.id} is not sized`);
+      continue;
+    }
+    const [, size, unc, action] = row;
+    const u = (unc ?? '').toLowerCase();
+    if (!r.sizes.includes(size)) report(rel, `${e.id}: size "${size ?? ''}" is not one of ${r.sizes.join(', ')}`);
+    if (!r.uncertainty.includes(u)) report(rel, `${e.id}: uncertainty "${unc ?? ''}" is not one of ${r.uncertainty.join(', ')}`);
+    if ((r.needsAction.sizes.includes(size) || r.needsAction.uncertainty.includes(u)) && (!action || action === '-')) {
+      report(rel, `${e.id} is ${size}, ${u}: it needs an action (split it, clarify it, or a spike first)`);
+    }
+  }
+  for (const [n, finding, severity, by] of tableRows(s.get('Findings') ?? [])) {
+    if (!finding) report(rel, `finding ${n} says nothing`);
+    if (!r.severities.includes((severity ?? '').toLowerCase())) report(rel, `finding ${n}: severity "${severity ?? ''}" is not one of ${r.severities.join(', ')}`);
+    if (!closed(by)) report(rel, `finding ${n} is not closed: cite the epic, criterion or ADR that closes it, or a risk R-n the owner accepted`);
+  }
+  // An accepted risk is a row in docs/RISKS.md with its fallback and the date the owner accepted it.
+  const accepted = risksAccepted();
+  for (const id of new Set(plainIds(read(rel), /\bR-\d+\b/g))) if (accepted.has(id) && !accepted.get(id)) report('docs/RISKS.md', `${id} has no risk, no fallback or no date in "Accepted on"`);
+
+  // Every high-risk assumption is covered by a spike, an ADR, an epic or an accepted risk.
+  if (!has('docs/DISCOVERY.md')) return report('docs/DISCOVERY.md', 'missing');
+  const assumptions = tableRows(sections(read('docs/DISCOVERY.md')).get('Assumptions by risk') ?? []);
+  const top = cfg.discovery.riskOrder[0];
+  const covering = [
+    ...spikeFiles.map((f) => `docs/spikes/${f}`),
+    ...adrFiles.map((f) => `docs/adr/${f}`),
+    ...epicFiles.map((f) => `docs/epics/${f}`),
+    ...(has('docs/RISKS.md') ? ['docs/RISKS.md'] : []),
+  ].map((f) => stripCode(read(f)));
+  for (const [id, , risk] of assumptions) {
+    if (!same(risk, top) || !/^A-\d+$/.test(id ?? '')) continue;
+    if (!covering.some((text) => new RegExp(`\\b${id}\\b`).test(text))) report(rel, `high-risk assumption ${id} is covered by no spike, ADR, epic or accepted risk`);
+  }
+  if (level.spikeRequired && assumptions[0]) {
+    const riskiest = assumptions[0][0];
+    const tested = spikeFiles.some((f) => {
+      const text = read(`docs/spikes/${f}`);
+      return plainIds(field(text, 'Assumption'), /\bA-\d+\b/g).includes(riskiest) && cfg.spike.outcomes.includes(field(text, 'Outcome'));
+    });
+    if (!tested) report(rel, `the ${levelName} level asks for a concluded spike on the riskiest assumption, ${riskiest}`);
+  }
+}
+
+const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview };
+for (const s of stages) checks[s]();
+
+const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;
 if (problems.length === 0) {
   console.log(`PASS docs-check (${what}) in ${root}`);
 } else {
   console.log(`FAIL docs-check (${what}) in ${root}`);
-  for (const p of problems) console.log(`  - ${p}`);
+  for (const p of new Set(problems)) console.log(`  - ${p}`);
   process.exit(1);
 }
