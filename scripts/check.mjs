@@ -746,6 +746,27 @@ step('plan and spike checks', (report) => {
     expect('not confirmed, follow-up pending: the plan does not', check(c, 'plan'), [/notify\.md: not confirmed, and its follow-up is not done/]);
     edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Follow-up: pending, /pitwall:decide Platform and runtime', '- Follow-up: R-1'));
     expect('not confirmed, risk accepted', check(c, 'plan'), []);
+    // T2 review: placeholders the spike skill writes, and a "Measured by" that names no one.
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Pending.').replace('| owner, by hand |', '| x |'));
+    expect('a spike left with its placeholders', check(c, 'spike'), [/the conclusion still reads "Pending\."/, /"Measured by" is "x"/]);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: pending'));
+    expect('the plan with a spike not concluded', check(c, 'plan'), [/notify\.md: the spike is not concluded/]);
+    // T2 review: a rename does not hide a changed criterion; a rename alone changes nothing.
+    c = copy();
+    gitIn(c, 'mv', 'docs/spikes/notify.md', 'docs/spikes/alert.md');
+    commit(c, 'rename');
+    gitIn(c, 'branch', '-m', 'spike/notify', 'spike/alert');
+    edit(c, 'docs/spikes/alert.md', (t) => t.replace('- Branch: spike/notify', '- Branch: spike/alert'));
+    commit(c);
+    expect('a renamed spike', check(c, 'spike'), []);
+    edit(c, 'docs/spikes/alert.md', (t) => t.replace('10 of 10 shown |', '1 of 10 shown |'));
+    gitIn(c, 'mv', 'docs/spikes/alert.md', 'docs/spikes/warn.md');
+    gitIn(c, 'branch', '-m', 'spike/alert', 'spike/warn');
+    edit(c, 'docs/spikes/warn.md', (t) => t.replace('- Branch: spike/alert', '- Branch: spike/warn'));
+    commit(c, 'rename and change');
+    expect('a spike renamed with its criterion changed', check(c, 'spike'), [/warn\.md: the criterion changed after [0-9a-f]{7}, the commit that added it/]);
     // No history, or only part of it: the check fails, never passes (ADR-0009).
     const shallow = join(dir, 'shallow');
     gitIn(dir, 'clone', '-q', '--depth', '1', '--branch', 'plan/initial', pathToFileURL(base).href, shallow);
@@ -798,6 +819,23 @@ step('plan and spike checks', (report) => {
       for (const [id, dep] of [['E3', 'E2'], ['E4', 'E3']]) writeFileSync(join(p, `docs/epics/${id}-${id === 'E3' ? 'a' : 'b'}.md`), `# ${id} - X\n\nGoal: x.\nDepends on: ${dep}\nRisk class: low\nADR: none\n\n## Acceptance criteria\n\n- [ ] ${id}-AC1: x.\n\n## Out of scope\n\nx\n\n## Open questions\n\nNone.\n`);
     }, [/4 epics after E0: the lite level holds at most 3/]);
     planCase('E0 without the stack ADRs', (p, e) => e('docs/epics/E0-skeleton.md', (t) => t.replace('ADR: ADR-0001, ADR-0002, ADR-0003', 'ADR: none')), [/E0 lays down the stack/]);
+    planCase('links with a title or in angle brackets', (p, e) => e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', 'See [a](../adr/0042-gone.md "title") and [b](<../no such dir/x.md>).\n\n## Out of scope')), [/broken link \.\.\/adr\/0042-gone\.md/, /broken link \.\.\/no such dir\/x\.md/]);
+    // T2 review: a level that is not known fails the checks, never relaxes them.
+    for (const [label, settings] of [['a level with another case', (t) => t.replace('"lite"', '"Standard"')], ['no level', (t) => t.replace(/\s*"processLevel": "lite",/, '')]]) {
+      planCase(`plan: ${label}`, (p, e) => e('.claude/pitwall.json', settings), [/processLevel ".*" is not one of lite, standard, full/]);
+      planCase(`plan review: ${label}`, (p, e) => e('.claude/pitwall.json', settings), [/processLevel ".*" is not one of lite, standard, full/], 'plan-review');
+    }
+    // T2 review: an open cell is open however it is worded, and a closed one starts with its ID.
+    for (const cell of ['open - E1 needs a snooze criterion', 'Open (E1-AC2 missing)', 'not closed yet, E1 should get one', '`E1-AC2`']) {
+      planCase(`a finding closed by "${cell}"`, (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', `| should fix | ${cell} |`)), [/finding 1 is not closed/], 'plan-review');
+    }
+    planCase('a requirement answered "open, nothing yet"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults |', '| Backups and restore | open, nothing yet |')), [/"Backups and restore" has no answer/], 'plan-review');
+    planCase('a finding closed by an ID and a few words', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | E1-AC2 (snooze) |')), [], 'plan-review');
+    planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+      e('docs/RISKS.md', (t) => t.replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | A-1 may not hold | none yet | not yet |\n'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
     // Plan review: T2-AC4.
     planCase('an open finding', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | open: no criterion for snooze |')), [/finding 1 is not closed/], 'plan-review');
     planCase('a requirement of the level missing', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |\n', '')), [/"Backups and restore" is missing/], 'plan-review');
@@ -835,7 +873,7 @@ step('review status (fake gh)', (report) => {
     gitIn(base, 'fetch', '-q', 'origin');
     const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN' }, pr: { head: 'local' }, status: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = ['--review', 'plan', '--state', 'success'], prepare, code, result, posts, commits = 0, says = [] }) => {
+    const run = (label, scenario, { args = ['--review', 'plan', '--state', 'success'], prepare, gh, code, result, posts, commits = 0, says = [] }) => {
       const p = join(dir, `r${(n += 1)}`);
       cpSync(base, p, { recursive: true });
       // Each case pushes to a remote of its own.
@@ -846,7 +884,7 @@ step('review status (fake gh)', (report) => {
       writeFileSync(reviewFile, readFileSync(reviewFile, 'utf8').replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | should fix | E2-AC1 |\n'));
       prepare?.(p);
       const before = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim());
-      const { r, calls, state } = withFakeGh('review-status.mjs', p, scenario, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir });
+      const { r, calls, state } = withFakeGh('review-status.mjs', p, scenario, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}) });
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       const writes = calls.filter((c) => c.args.includes('POST'));
       const made = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim()) - before;
@@ -874,7 +912,13 @@ step('review status (fake gh)', (report) => {
     run('other changes in the tree', ok, { prepare: (p) => writeFileSync(join(p, 'docs/SPEC.md'), 'changed\n'), code: 1, posts: 0, says: ['changes besides docs/PLAN-REVIEW.md', 'docs/SPEC.md'] });
     run('not on the planning branch', ok, { prepare: (p) => gitIn(p, 'stash', '-q').stdout + gitIn(p, 'switch', '-q', 'main').stdout, code: 1, posts: 0, says: ['on branch "main"'] });
     run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh auth login\n'] });
-    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh repo create --private --source . --remote origin\n', '    gh pr create --base main --head plan/initial --fill\n'] });
+    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh repo create --private --source . --remote origin\n', '    git push -u origin spike/notify\n', '    gh pr create --base main --head plan/initial --fill\n'] });
+    run('a repository gh cannot read', { ...ok, repo: null, repoError: 'HTTP 404: Not Found' }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['gh could not read the repository: HTTP 404'] });
+    run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', posts: 0, commits: 1, says: ['cli.github.com'] });
+    run('outside git', ok, { prepare: (p) => rmSync(join(p, '.git'), { recursive: true, force: true }), code: 1, posts: 0, says: ['is not inside a git repository'] });
+    run('a PR into another branch', { ...ok, pr: { head: 'local', base: 'develop' } }, { code: 1, posts: 0, commits: 1, says: ['goes into develop, not main'] });
+    run('a closed PR', { ...ok, pr: { head: 'local', state: 'CLOSED' } }, { code: 1, posts: 0, commits: 1, says: ['is closed'] });
+    run('a PR from another branch only', { ...ok, pr: { head: 'local', branch: 'other' } }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['there is no PR from plan/initial'] });
     run('no PR', { ...ok, pr: null }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh pr create --base main --head plan/initial --fill\n'] });
     run('PR merged', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 1, posts: 0, commits: 1, says: ['is merged'] });
     run('PR head lags', { ...ok, pr: { head: '0'.repeat(40) } }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['shows head 0000000'] });
@@ -897,8 +941,8 @@ step('plan merge (fake gh)', (report) => {
     const { project: base } = makePlanRepo(dir, { spike: false });
     const sha = gitIn(base, 'rev-parse', 'plan/initial').stdout.trim();
     const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
-    const run = (label, scenario, { args = ['--plan', '--owner-approved'], code, result, merges, says = [] }) => {
-      const { r, calls, state } = withFakeGh('merge.mjs', base, scenario, [...args, '--project', base, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir });
+    const run = (label, scenario, { args = ['--plan', '--owner-approved'], project = base, gh, code, result, merges, says = [] }) => {
+      const { r, calls, state } = withFakeGh('merge.mjs', project, scenario, [...args, '--project', project, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}) });
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       const merged = calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
       if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
@@ -923,7 +967,6 @@ step('plan merge (fake gh)', (report) => {
     run('ai-review not set', { ...ok, statuses: {} }, { code: 1, merges: 0, says: ['ai-review is not set'] });
     run('gate red', { ...ok, gate: 'failure' }, { code: 1, merges: 0, says: ['gate is failure'] });
     run('gate still running', { ...ok, gate: 'pending' }, { code: 3, result: 'pending', merges: 0, says: ['still in_progress'] });
-    run('gate from another app', { ...ok, gateApp: 1 }, { code: 1, merges: 0, says: ['no gate check from GitHub Actions'] });
     run('the head moved', { ...ok, pr: { head: '0'.repeat(40) } }, { code: 1, merges: 0, says: ['push it and review it again'] });
     run('GitHub refuses', { ...ok, merge: 'refuse' }, { code: 3, result: 'pending', merges: 1, says: ['GitHub refused the merge', `    gh pr merge 7 --merge --match-head-commit ${sha}`] });
     run('no PR', { ...ok, pr: null }, { code: 3, result: 'pending', merges: 0, says: ['    gh pr create --base main --head plan/initial --fill\n'] });
@@ -931,6 +974,22 @@ step('plan merge (fake gh)', (report) => {
     run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', merges: 0, says: ['    gh auth login\n'] });
     run('read only', { ...ok, repo: { ...ok.repo, viewerPermission: 'READ' } }, { code: 3, result: 'pending', merges: 0, says: ['needs write access'] });
     run('dry run', ok, { args: ['--plan', '--owner-approved', '--dry-run'], code: 0, result: 'merged (dry run', merges: 0, says: ['would run gh pr merge 7 --merge'] });
+    // T2 review: the branches the first version left untested.
+    run('no gate check at all', { ...ok, gate: null }, { code: 3, result: 'pending', merges: 0, says: ['no gate check from GitHub Actions'] });
+    run('a gate from another app refuses at once', { ...ok, gateApp: 1 }, { code: 1, merges: 0, says: ['comes from app 1, not GitHub Actions'] });
+    run('a closed PR', { ...ok, pr: { head: 'local', state: 'CLOSED' } }, { code: 1, merges: 0, says: ['is closed'] });
+    run('a PR into another branch', { ...ok, pr: { head: 'local', base: 'develop' } }, { code: 1, merges: 0, says: ['goes into develop, not main'] });
+    run('a PR from another branch only', { ...ok, pr: { head: 'local', branch: 'other' } }, { code: 3, result: 'pending', merges: 0, says: ['there is no PR from plan/initial'] });
+    run('a repository gh cannot read', { ...ok, repo: null, repoError: 'HTTP 404: Not Found' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the repository: HTTP 404'] });
+    run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', merges: 0, says: ['cli.github.com'] });
+    run('the merge is not read back', { ...ok, merge: 'lost' }, { code: 3, result: 'pending', merges: 1, says: ['reads OPEN'] });
+    run('merged by hand before', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 0, result: 'merged', merges: 0, says: ['does not record the approval of the owner'] });
+    run('merged with the approval before', { ...ok, pr: { head: 'local', state: 'MERGED' }, mergeMessage: 'Merge the plan\n\nPlan approved by the owner, 2026-11-08, at abc' }, { code: 0, result: 'merged', merges: 0, says: ['records the approval of the owner'] });
+    const nobranch = join(dir, 'nobranch');
+    cpSync(base, nobranch, { recursive: true });
+    gitIn(nobranch, 'switch', '-q', 'main');
+    gitIn(nobranch, 'branch', '-q', '-D', 'plan/initial');
+    run('no local planning branch', ok, { project: nobranch, code: 1, merges: 0, says: ['there is no local branch plan/initial'] });
   });
 });
 
@@ -1049,6 +1108,10 @@ step('merge protection (fake gh)', (report) => {
     // T2-AC6 (d): a refused probe while other protection is visible.
     run('probe refused, other protection visible', { ...ok, probe: 'denied', protection: otherProtection }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['could not read the branch protection'] });
     run('probe refused, other protection visible, private, recorded local-hook', { ...ok, repo: repo('PRIVATE'), probe: 'denied', protection: otherProtection }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'local-hook', says: ['kept the recorded mode'] });
+    // T2 review: linear history, which the summary cannot show, counts as other settings for an admin.
+    run('admin, protected but linear history required', { ...ok, protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['other settings'] });
+    run('not admin, protected with linear history the summary hides', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('admin, summary satisfies, probe refused', { ...ok, probe: 'denied', protection: protectedOk }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });
 });

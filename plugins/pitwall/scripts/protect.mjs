@@ -121,7 +121,9 @@ function satisfies(p) {
   const gate = checks.find((c) => c.context === gateContext);
   const review = checks.find((c) => c.context === reviewContext);
   const admins = p?.enforce_admins ? p.enforce_admins.enabled === true : p?.required_status_checks?.enforcement_level === 'everyone';
-  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && admins);
+  // Only the full form shows linear history; required, it would refuse the plan's merge commit (ADR-0008).
+  const linear = p?.required_linear_history?.enabled === true;
+  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && admins && !linear);
 }
 
 // 1. May we? gh, a signed-in account, a repository, the branch on GitHub, admin rights.
@@ -148,12 +150,14 @@ log(`repository ${name} (${String(repo.visibility).toLowerCase()}), your permiss
 const onGitHub = gh(['api', `repos/${name}/branches/${branch}`]);
 if (!onGitHub.ok) handoff(`${branch} is not on GitHub yet.`, [{ run: `git push -u origin ${branch}` }]);
 const summary = parse(onGitHub.out);
-if (summary?.protected && satisfies(summary.protection)) {
+// The summary cannot show linear history, so an admin, who can read the full form, reads it below.
+if (summary?.protected && satisfies(summary.protection) && repo.viewerPermission !== 'ADMIN') {
   log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
   done('branch-protection');
 }
-// From here on the job is not done. The branch's protection counts as read if the summary parsed.
-known.branchRead = summary !== null;
+// From here on the job is not done, or an admin reads the full form. The branch's protection
+// counts as read, and falling short, if the summary parsed and does not satisfy.
+known.branchRead = summary !== null && !(summary?.protected && satisfies(summary.protection));
 if (repo.viewerPermission !== 'ADMIN') {
   const steps = [{ note: 'an admin runs' }, { run: putCommand(name) }];
   if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the last command below, run by the admin, records it' });

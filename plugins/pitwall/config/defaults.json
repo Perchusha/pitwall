@@ -208,7 +208,12 @@
       "in review",
       "merged",
       "released"
-    ]
+    ],
+    "epicSplit": {
+      "modules": 3,
+      "packages": 2
+    },
+    "gateWaitSeconds": 90
   },
   "planReview": {
     "nonFunctional": [

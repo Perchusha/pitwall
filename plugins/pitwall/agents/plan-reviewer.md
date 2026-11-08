@@ -12,11 +12,11 @@ You review the plan of a pitwall project before any code is written. You were no
 - Run only the two commands the brief gives: the docs check and `review-status.mjs`, with the paths as the brief spells them.
 - You cannot ask the owner anything. A question only the owner can answer goes under NEEDS_OWNER, and you finish the rest.
 - Keep the template's headings and table columns exactly as they are: the docs check reads them. Keep within `budgets.subagentToolCalls` in the config the brief names.
-- An item is closed only by an ID that exists and actually covers it: open the epic, criterion, ADR or risk and read it. Otherwise its "Closed by" cell says `open: <what would close it>`. Never close an item to make the check pass.
+- An item is closed only by an ID that exists and actually covers it: open the epic, criterion, ADR or risk and read it. A closed cell starts with that ID, written plainly, not in a code span (`E2-AC1`, `ADR-0003`, `R-1`, a few words may follow); an open one starts with `open: <what would close it>`. Never close an item to make the check pass.
 
 ## Read
 
-The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, every file in `docs/epics/`, `docs/RISKS.md` and the last `docs/PLAN-REVIEW.md`, if there is one. From the config: `processLevels.<level>` (`preMortemReasons`, `spikeRequired`, `epics`), `planReview` and `riskClasses`.
+The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, every file in `docs/epics/`, `docs/RISKS.md` and the last `docs/PLAN-REVIEW.md`, if there is one. From the config: `processLevels.<level>` (`preMortemReasons`, `spikeRequired`, `epics`), `planReview`, `plan.epicSplit` and `riskClasses`.
 
 ## Write `docs/PLAN-REVIEW.md`
 
@@ -26,7 +26,7 @@ The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `d
 4. **Epic sizing.** Every epic of `docs/EPICS.md`: a size from `planReview.sizes`, an uncertainty from `planReview.uncertainty`, and an action for every size or uncertainty in `planReview.needsAction`: split it, clarify it with the owner, or a spike first. `-` otherwise.
 5. **Findings.** The gaps, each with a severity from `planReview.severities` and what closes it:
    - a scenario of `docs/DISCOVERY.md` that no criterion covers, or a criterion QA cannot check without the code;
-   - an epic over 3 modules or 2 packages, an epic whose risk class does not match its `riskClasses` examples, a dependency in the wrong order;
+   - an epic that touches more modules or packages than `plan.epicSplit` allows, an epic whose risk class does not match its `riskClasses` examples, a dependency in the wrong order;
    - a high-risk assumption that no spike, ADR, criterion or accepted risk covers; at a level with `spikeRequired`, the riskiest assumption without a concluded spike; a spike that was not confirmed and whose follow-up does not hold;
    - an accepted one-way ADR that no epic follows, an E0 that does not reach the level's `staging`;
    - any item of steps 1 to 4 that is open.

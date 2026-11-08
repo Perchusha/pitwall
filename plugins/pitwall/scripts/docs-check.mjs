@@ -422,6 +422,24 @@ const SPIKE_TEMPLATE = 'docs/spikes/template.md';
 // The non-empty lines of a section, trimmed, so whitespace alone is no change.
 const sectionText = (text, name) => (sections(text).get(name) ?? []).map((l) => l.trim()).filter(Boolean).join('\n');
 
+// The commit that first added a file, and its path there: the oldest add of the path, and when
+// that commit renamed it from another path, the oldest add of that one before it, and so on.
+function spikeOrigin(git, rel) {
+  let path = rel;
+  let from = 'HEAD';
+  for (let hop = 0; hop < 50; hop += 1) {
+    const added = git('log', '--no-renames', '--diff-filter=A', '--format=%H', from, '--', path).out.split('\n').filter(Boolean);
+    if (added.length === 0) return null;
+    const sha = added[added.length - 1];
+    const changes = git('-c', 'core.quotePath=false', 'show', '-M', '--name-status', '--format=', sha).out.split('\n').map((l) => l.split('\t'));
+    const renamed = changes.find((c) => c[0].startsWith('R') && c[2] === path);
+    if (!renamed) return { sha, path };
+    path = renamed[1];
+    from = `${sha}^`;
+  }
+  return null;
+}
+
 function checkSpike() {
   const d = cfg.spike;
   if (spikeFiles.length === 0) return report('docs/spikes', 'no spike: a spike is docs/spikes/<topic>.md, copied from docs/spikes/template.md');
@@ -456,9 +474,10 @@ function checkSpike() {
     if (result.length === 0) report(rel, 'the result has no measurement');
     for (const [metric, measured, by, date] of result) {
       if (!/\d/.test(measured ?? '')) report(rel, `result "${metric}": "Measured" holds no number`);
-      if (!by) report(rel, `result "${metric}": no "Measured by" (a command, or the owner)`);
+      if (!/^(?:command:\s*\S|owner\b)/i.test(by ?? '')) report(rel, `result "${metric}": "Measured by" is "${by ?? ''}": write "command: <the command>" or "owner"`);
       if (!DATE.test(date ?? '')) report(rel, `result "${metric}": no date`);
     }
+    if (sectionText(text, 'Conclusion') === 'Pending.') report(rel, 'the conclusion still reads "Pending."');
     const follow = field(text, 'Follow-up');
     if (outcome === 'not confirmed' && !(/\bADR-\d{4}\b|\bR-\d+\b/.test(stripCode(follow)) || follow.startsWith(d.pending))) {
       report(rel, 'not confirmed, and "- Follow-up:" names no ADR, no accepted risk R-n and no "pending, /pitwall:decide <area>"');
@@ -467,14 +486,21 @@ function checkSpike() {
     if (!proto) report(rel, '"- Prototype:" names no commit');
     if (!history) continue;
 
-    // The criterion came first: the commit that added the file holds the same criterion and no result.
-    const added = git('log', '--diff-filter=A', '--format=%H', '--', rel).out.split('\n').filter(Boolean);
-    if (added.length === 0) {
+    // The criterion came first: the commit that first added the file, under whatever name it had
+    // then, holds the same criterion and no result. Renames are followed; a copy of another
+    // spike is not (git log --follow would walk into the other spike's history).
+    const origin = spikeOrigin(git, rel);
+    if (!origin) {
       report(rel, 'is not committed: commit the criterion on the planning branch before any prototype code');
       continue;
     }
-    const first = added[added.length - 1];
-    const before = git('show', `${first}:${rel}`).out.replace(/\r\n/g, '\n');
+    const first = origin.sha;
+    const shown = git('show', `${first}:${origin.path}`);
+    if (!shown.ok) {
+      report(rel, `cannot read ${origin.path} at ${first.slice(0, 7)}: ${shown.err}`);
+      continue;
+    }
+    const before = shown.raw.replace(/\r\n/g, '\n');
     if (sectionText(before, 'Criterion') !== sectionText(text, 'Criterion')) report(rel, `the criterion changed after ${first.slice(0, 7)}, the commit that added it: a criterion is never adjusted to the result`);
     if (tableRows(sections(before).get('Result') ?? []).length > 0 || d.outcomes.includes(field(before, 'Outcome'))) {
       report(rel, `${first.slice(0, 7)}, the commit that added it, already held a result: the criterion is committed before the prototype`);
@@ -514,10 +540,16 @@ function adrAccepted(id) {
 function brokenLinks(rel) {
   const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
   const out = [];
-  for (const m of stripCode(read(rel)).matchAll(/\]\(([^)\s]+)\)/g)) {
-    const target = m[1].split('#')[0];
+  // [text](target), [text](<target with spaces>) and [text](target "title").
+  for (const m of stripCode(read(rel)).matchAll(/\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g)) {
+    const raw = m[1].replace(/^<|>$/g, '');
+    const target = raw.split('#')[0];
     if (!target || /^[a-z]+:/i.test(target)) continue;
-    if (!existsSync(resolve(root, dir, target))) out.push(m[1]);
+    let path = target;
+    try {
+      path = decodeURI(target);
+    } catch {}
+    if (!existsSync(resolve(root, dir, path))) out.push(raw);
   }
   return out;
 }
@@ -542,10 +574,17 @@ function readPlan(quiet = false) {
   });
 }
 
+// The process level sets the numbers both checks hold a plan to, so a level that is not known fails, never relaxes them.
+function knownLevel() {
+  const name = projectLevel();
+  if (!Object.hasOwn(cfg.processLevels, name ?? '')) report('.claude/pitwall.json', `processLevel "${name ?? ''}" is not one of ${Object.keys(cfg.processLevels).join(', ')}: the plan checks need the level`);
+  return name;
+}
+
 function checkPlan() {
   const p = cfg.plan;
   const rel = 'docs/EPICS.md';
-  const levelName = projectLevel();
+  const levelName = knownLevel();
   const epics = readPlan();
   if (!epics) return;
   if (epics.length === 0) return report(rel, 'no epics in the table');
@@ -650,11 +689,15 @@ function checkPlanReview() {
   const levelName = projectLevel();
   const level = cfg.processLevels[levelName] ?? {};
   const rel = 'docs/PLAN-REVIEW.md';
+  // checkPlan has reported an unknown level; nothing below can be checked without one.
+  if (!Object.hasOwn(cfg.processLevels, levelName ?? '')) return;
   const s = requireFilled(rel, rel, ['Pre-mortem', 'Non-functional requirements', 'Launch questions', 'Epic sizing', 'Findings']);
   if (!s) return;
-  const CLOSER = /\b(?:E\d+(?:-AC\d+)?|ADR-\d{4}|R-\d+)\b/;
-  const isOpen = (cell) => same((cell ?? '').split(':')[0].trim(), r.open);
-  const closed = (cell) => CLOSER.test(stripCode(cell ?? '')) && !isOpen(cell);
+  // Closed means the cell starts with the ID that closes it, written outside a code span. A cell
+  // that starts with "open", or with words, is open whatever IDs follow.
+  const CLOSER = /^\[?(?:E\d+(?:-AC\d+)?|ADR-\d{4}|R-\d+)\b/;
+  const isOpen = (cell) => new RegExp(`^\\s*${r.open}\\b`, 'i').test(cell ?? '');
+  const closed = (cell) => CLOSER.test(stripCode(cell ?? '').trim()) && !isOpen(cell);
   const forLevel = (list) => list.filter((x) => x.levels.includes(levelName)).map((x) => x.item);
 
   const reasons = tableRows(s.get('Pre-mortem') ?? []);
@@ -708,8 +751,10 @@ function checkPlanReview() {
     ...spikeFiles.map((f) => `docs/spikes/${f}`),
     ...adrFiles.map((f) => `docs/adr/${f}`),
     ...epicFiles.map((f) => `docs/epics/${f}`),
-    ...(has('docs/RISKS.md') ? ['docs/RISKS.md'] : []),
   ].map((f) => stripCode(read(f)));
+  // From docs/RISKS.md only the risks the owner accepted count.
+  const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
+  for (const row of risks) if (accepted.get(row[0])) covering.push(stripCode(row.join(' | ')));
   for (const [id, , risk] of assumptions) {
     if (!same(risk, top) || !/^A-\d+$/.test(id ?? '')) continue;
     if (!covering.some((text) => new RegExp(`\\b${id}\\b`).test(text))) report(rel, `high-risk assumption ${id} is covered by no spike, ADR, epic or accepted risk`);

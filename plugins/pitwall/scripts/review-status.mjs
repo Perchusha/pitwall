@@ -112,11 +112,14 @@ const view = gh(['repo', 'view', '--json', 'nameWithOwner,viewerPermission']);
 const repo = view.ok ? parseJson(view.out) : null;
 if (!repo?.nameWithOwner) {
   if (/no git remotes|not a git repository/i.test(view.err)) {
+    // Spike branches go too: the spike check wants them on the remote once there is one (pitwall ADR-0009).
+    const spikeBranches = git('for-each-ref', '--format=%(refname:short)', 'refs/heads/spike/').out.split('\n').filter(Boolean);
     handoff(`no GitHub repository for ${project}.`, [
-      { note: 'from the project folder, create one named after the folder (use --public for a public repository), push both branches and open the PR' },
+      { note: 'from the project folder, create one named after the folder (use --public for a public repository), push the branches and open the PR' },
       { run: 'gh repo create --private --source . --remote origin' },
       { run: `git push -u origin ${base}` },
       { run: `git push -u origin ${review.branch}` },
+      ...spikeBranches.map((b) => ({ run: `git push -u origin ${b}` })),
       { run: `gh pr create --base ${base} --head ${review.branch} --fill` },
     ]);
   }

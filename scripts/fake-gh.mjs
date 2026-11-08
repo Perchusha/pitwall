@@ -10,10 +10,10 @@
 // branch (false: main not on GitHub; "garbled": the branch endpoint prints no JSON),
 // protection (the protection GitHub holds before any write), probe ("404", "free" for
 // "Upgrade to GitHub Pro", "denied" for a refused read), put ("ok", "refuse", "lost"),
-// pr ({ number, state, base, head: "local" for the planning branch's local commit, or a sha }),
-// status ("ok", "refuse", "lost"), statuses ({ <context>: <state> } already on every commit),
+// pr ({ number, state, base, branch (default plan/initial), head: "local" for the planning branch's local commit, or a sha }),
+// status ("ok", "refuse", "lost"), statuses ({ <context>: <state> } already on the PR head),
 // gate ("success", "failure", "pending", or null for none), gateApp (its app id),
-// rules (the rules on main), merge ("ok", "refuse").
+// rules (the rules on main), merge ("ok", "refuse", "lost"), mergeMessage (of a PR merged before the run).
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -41,20 +41,28 @@ const fields = () => Object.fromEntries(args.flatMap((a, i) => (args[i - 1] === 
 
 if (args[0] === '--version') out('gh version 2.0.0 (fake)\n');
 if (args[0] === 'auth') s.auth ? out('Logged in\n') : err('You are not logged into any GitHub hosts.');
-if (args[0] === 'repo' && args[1] === 'view') s.repo ? out(s.repo) : err('no git remotes found');
+if (args[0] === 'repo' && args[1] === 'view') s.repo ? out(s.repo) : err(s.repoError ?? 'no git remotes found');
+
+// The PR's head: "local" is the planning branch's local commit, read with git in the project folder.
+const prHead = () => (s.pr?.head === 'local' ? spawnSync('git', ['rev-parse', 'refs/heads/plan/initial'], { encoding: 'utf8' }).stdout.trim() : s.pr?.head);
 
 if (args[0] === 'pr') {
-  if (!s.pr) err(`no pull requests found for branch "${args[2]}"`);
-  const head = s.pr.head === 'local' ? spawnSync('git', ['rev-parse', 'refs/heads/plan/initial'], { encoding: 'utf8' }).stdout.trim() : s.pr.head;
+  // A PR is asked for by its branch or its number; any other branch has none.
+  const asked = args[2];
+  if (!s.pr || (!/^\d+$/.test(asked) && asked !== (s.pr.branch ?? 'plan/initial'))) err(`no pull requests found for branch "${asked}"`);
+  const head = prHead();
   if (args[1] === 'merge') {
     if (s.merge === 'refuse') err('GraphQL: Merge commits are not allowed on this repository (mergePullRequest)');
     if (flag('--match-head-commit') !== head) err('GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)');
-    st.merged = { oid: 'f'.repeat(40), args };
-    save();
+    // "lost": GitHub answers OK but the PR never reads merged.
+    if (s.merge !== 'lost') {
+      st.merged = { oid: 'f'.repeat(40), args };
+      save();
+    }
     out('');
   }
   if (args[1] === 'view') {
-    out({ number: s.pr.number ?? 7, state: st.merged ? 'MERGED' : s.pr.state ?? 'OPEN', headRefOid: head, baseRefName: s.pr.base ?? 'main', url: 'https://github.com/o/r/pull/7', mergeCommit: st.merged ? { oid: st.merged.oid } : null });
+    out({ number: s.pr.number ?? 7, state: st.merged ? 'MERGED' : s.pr.state ?? 'OPEN', headRefOid: head, baseRefName: s.pr.base ?? 'main', url: 'https://github.com/o/r/pull/7', mergeCommit: st.merged ? { oid: st.merged.oid } : s.pr.state === "MERGED" ? { oid: "e".repeat(40) } : null });
   }
 }
 
@@ -75,12 +83,18 @@ if (args[0] === 'api') {
     }
     out({ state: f.state, context: f.context });
   }
+  // Statuses and check runs belong to one commit: the scenario's are on the PR head only.
   const list = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)\/statuses$/.exec(path);
-  if (list) out([...(st.statuses?.[list[1]] ?? []), ...Object.entries(s.statuses ?? {}).map(([context, state]) => ({ context, state }))]);
-  if (/\/commits\/[0-9a-f]+\/check-runs$/.test(path)) {
-    const pending = s.gate === 'pending';
-    out({ total_count: s.gate ? 1 : 0, check_runs: s.gate ? [{ name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : s.gate, app: { id: s.gateApp ?? 15368 } }] : [] });
+  if (list) out([...(st.statuses?.[list[1]] ?? []), ...(list[1] === prHead() ? Object.entries(s.statuses ?? {}).map(([context, state]) => ({ context, state })) : [])]);
+  const runs = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)\/check-runs$/.exec(path);
+  if (runs) {
+    const gate = runs[1] === prHead() ? s.gate : null;
+    const pending = gate === 'pending';
+    out({ total_count: gate ? 1 : 0, check_runs: gate ? [{ name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : gate, app: { id: s.gateApp ?? 15368 } }] : [] });
   }
+  // A commit: the merge commit's message, for merge.mjs to see whether it records the approval.
+  const commit = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/.exec(path);
+  if (commit) out({ sha: commit[1], commit: { message: st.merged ? `Merge the plan\n\n${st.merged.args[st.merged.args.indexOf('--body') + 1]}` : s.mergeMessage ?? 'Merge pull request #7' } });
   if (/\/rules\/branches\//.test(path)) out(s.rules ?? []);
 
   // Branch protection: written by protect.mjs, read by it and by merge.mjs.

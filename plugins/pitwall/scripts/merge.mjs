@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Merges the plan PR once the owner said yes (T2-AC5, ADR-0005, ADR-0008).
 //
-//   node merge.mjs --plan --owner-approved [--project <dir>] [--wait <minutes>] [--dry-run]
+//   node merge.mjs --plan --owner-approved [--project <dir>] [--wait <seconds>] [--dry-run]
 //
 // --owner-approved is the plan skill's word that the owner said yes to the plan; the
 // script cannot hear the owner, so without it nothing happens. Before it merges, it
 // checks that it may (L-5): gh is installed and signed in, the account may write, the
 // PR from the planning branch is open into main with the local branch's commit as its
 // head, ai-review is success and gate is success from GitHub Actions on that commit
-// (it waits up to --wait minutes for a running gate), the repository allows merge
+// (it waits up to --wait seconds, plan.gateWaitSeconds in the config, for a gate that
+// is running or not started yet), the repository allows merge
 // commits, and neither a ruleset nor the branch protection requires linear history.
 // It merges with a merge commit whose message records the approval:
 //   Plan approved by the owner, <date>, at <sha>
@@ -25,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, requireNode, sleep } from './lib.mjs';
 
 requireNode();
-const usage = 'node merge.mjs --plan --owner-approved [--project <dir>] [--wait <minutes>] [--dry-run]';
+const usage = 'node merge.mjs --plan --owner-approved [--project <dir>] [--wait <seconds>] [--dry-run]';
 const args = parseArgs(process.argv.slice(2), { plan: 'switch', 'owner-approved': 'switch', project: 'value', wait: 'value', 'dry-run': 'switch' }, usage);
 const bad = (msg) => {
   console.error(`merge: ${msg}\nusage: ${usage}`);
@@ -33,9 +34,10 @@ const bad = (msg) => {
 };
 if (!args.plan) bad('--plan is required: the plan PR is the only one this script merges until T3');
 if (!args['owner-approved']) bad('--owner-approved is required: the plan merges only after the owner says yes (pitwall ADR-0008)');
-const wait = Number(args.wait ?? 10);
-if (!(wait >= 0)) bad('--wait takes a number of minutes');
 const cfg = config();
+// Short enough that the whole run fits in one tool call; a gate still running is handed back, and the skill runs this again.
+const wait = Number(args.wait ?? cfg.plan.gateWaitSeconds);
+if (!(wait >= 0)) bad('--wait takes a number of seconds');
 const project = resolve(args.project ?? '.');
 const dry = Boolean(args['dry-run']);
 const branch = cfg.planning.branch;
@@ -85,6 +87,9 @@ const pr = prView.ok ? parseJson(prView.out) : null;
 if (!pr) handoff(`there is no PR from ${branch}.`, [{ run: `git push -u origin ${branch}` }, { run: `gh pr create --base ${base} --head ${branch} --fill` }]);
 if (pr.state === 'MERGED') {
   log(`PR #${pr.number} is already merged${pr.mergeCommit?.oid ? ` as ${pr.mergeCommit.oid}` : ''}`);
+  // A merge by hand looks the same from here, so say whether the message records the owner's approval.
+  const message = pr.mergeCommit?.oid ? parseJson(gh(['api', `repos/${name}/commits/${pr.mergeCommit.oid}`]).out)?.commit?.message ?? '' : '';
+  log(message.includes('Plan approved by the owner') ? 'its merge commit records the approval of the owner' : 'its merge commit does not record the approval of the owner: it was merged another way');
   console.log('RESULT: merged');
   process.exit(0);
 }
@@ -97,16 +102,19 @@ const statuses = parseJson(gh(['api', `repos/${name}/commits/${sha}/statuses`]).
 const review = statuses.find((s) => s.context === cfg.review.statusContext);
 if (review?.state !== 'success') refuse(`${cfg.review.statusContext} is ${review?.state ?? 'not set'} on ${sha.slice(0, 7)}: the plan reviewer sets it (pitwall ADR-0007)`);
 const pollMs = Number(process.env.PITWALL_POLL_MS ?? 15000);
-const deadline = Date.now() + wait * 60000;
+const deadline = Date.now() + wait * 1000;
 let gate;
 for (;;) {
   const runs = parseJson(gh(['api', `repos/${name}/commits/${sha}/check-runs`]).out)?.check_runs ?? [];
-  gate = runs.find((c) => c.name === cfg.review.gateContext && c.app?.id === cfg.mergeProtection.githubActionsAppId);
+  const named = runs.filter((c) => c.name === cfg.review.gateContext);
+  gate = named.find((c) => c.app?.id === cfg.mergeProtection.githubActionsAppId);
+  // A gate from anything but GitHub Actions never passes (ADR-0005), so there is nothing to wait for.
+  if (!gate && named.length > 0) refuse(`the ${cfg.review.gateContext} check on ${sha.slice(0, 7)} comes from app ${named[0].app?.id ?? 'unknown'}, not GitHub Actions`);
   if (gate?.status === 'completed' || Date.now() >= deadline) break;
   sleep(pollMs);
 }
-if (!gate) refuse(`no ${cfg.review.gateContext} check from GitHub Actions on ${sha.slice(0, 7)}`);
-if (gate.status !== 'completed') handoff(`${cfg.review.gateContext} is still ${gate.status} on ${sha.slice(0, 7)} after ${wait} minutes.`, [{ note: 'wait for it to finish, then' }, { run: `gh pr checks ${pr.number}` }]);
+if (!gate) handoff(`no ${cfg.review.gateContext} check from GitHub Actions on ${sha.slice(0, 7)} after ${wait} seconds.`, [{ note: 'CI may not have started: look at the Actions tab of the repository, then' }, { run: `gh pr checks ${pr.number}` }]);
+if (gate.status !== 'completed') handoff(`${cfg.review.gateContext} is still ${gate.status} on ${sha.slice(0, 7)} after ${wait} seconds.`, [{ note: 'wait for it to finish, then' }, { run: `gh pr checks ${pr.number}` }]);
 if (gate.conclusion !== 'success') refuse(`${cfg.review.gateContext} is ${gate.conclusion} on ${sha.slice(0, 7)}`);
 log(`${cfg.review.statusContext} and ${cfg.review.gateContext} are green on ${sha.slice(0, 7)}`);
 
@@ -115,10 +123,13 @@ if (repo.mergeCommitAllowed === false) {
   handoff(`${name} does not allow merge commits, and the plan merges with one (pitwall ADR-0008).`, [{ run: `gh repo edit ${name} --enable-merge-commit` }]);
 }
 const rules = gh(['api', `repos/${name}/rules/branches/${base}`]);
+const lastLine = (text) => text.trim().split('\n').pop();
+if (!rules.ok) log(`could not read the rules on ${base} (${lastLine(rules.err)}); GitHub will refuse the merge if one requires linear history`);
 if (rules.ok && (parseJson(rules.out) ?? []).some((r) => r.type === 'required_linear_history')) {
   handoff(`a ruleset on ${name} requires linear history on ${base}, which refuses a merge commit (pitwall ADR-0008).`, [{ note: `remove that rule in the repository settings (Rules, Rulesets), or merge PR #${pr.number} by hand, then` }, { run: `gh api repos/${name}/rules/branches/${base}` }]);
 }
 const protection = gh(['api', `repos/${name}/branches/${base}/protection`]);
+if (!protection.ok && !/HTTP 404/.test(protection.err)) log(`could not read the branch protection of ${base} (${lastLine(protection.err)}); GitHub will refuse the merge if it requires linear history`);
 if (protection.ok && parseJson(protection.out)?.required_linear_history?.enabled === true) {
   handoff(`the branch protection of ${base} requires linear history, which refuses a merge commit (pitwall ADR-0008).`, [{ note: `turn off "Require linear history" for ${base} in the repository settings (Branches), then` }, { run: `gh api repos/${name}/branches/${base}/protection` }]);
 }

@@ -1,6 +1,6 @@
 # Plan review
 
-Written at stage 5 by the `plan-reviewer` agent, from the documents only; it is the only file the reviewer writes. The main conversation closes findings in the epics, `SPEC.md` and `RISKS.md`, and the next review round records them here. Development starts when every reason and finding is closed or accepted as a risk.
+Written at stage 5 by the `plan-reviewer` agent, from the documents only; it is the only file the reviewer writes. The main conversation closes findings in the epics, `SPEC.md` and `RISKS.md`, and the next review round records them here. Development starts when every reason and finding is closed or accepted as a risk. A closed row starts its last cell with the ID that closes it (an epic, a criterion, an ADR, or a risk `R-n` the owner accepted); an open one starts with `open:`.
 
 ## Pre-mortem
 
