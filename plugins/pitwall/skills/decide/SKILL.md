@@ -50,7 +50,7 @@ When a spike was not confirmed, or a plan review shows that a decision does not 
 
 1. **Preflight** as in step 1. Read the ADR that `docs/STACK.md` cites for the area, and every spike in `docs/spikes/` whose `Follow-up:` names `/pitwall:decide <area>` or whose assumption the decision rests on.
 2. **Research and ask** as in steps 3 and 4, for this area only, with the spike's measured result and the old ADR's options as context. The old choice is one of the options, with what the spike measured.
-3. **Record.** Write the new ADR (the next free number, `Class: one-way`, `Decided by: owner`) and set the old ADR's Status to `superseded by ADR-NNNN`. Update the area's rows in `docs/STACK.md` (versions as in step 6), and set the `Follow-up:` of each spike from step 1 to the new ADR.
+3. **Record.** Write the new ADR (the next free number, `Class: one-way`, `Decided by: owner`, today's date) and, when the area had an ADR, set the old one's Status to `superseded by ADR-NNNN`; an area that was a two-way line has nothing to supersede. Update the area's rows in `docs/STACK.md` (versions as in step 6), and set the `Follow-up:` of each spike from step 1 to the new ADR.
 4. **Check and commit.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage decide` until it passes, then `git add docs/ CLAUDE.md` and `git commit -m "docs: revisit <area>"`. With a remote, `git push -u origin <planning branch>`.
 5. **Hand over.** Tell the owner the new decision, and that the next stage is `/pitwall:plan` (it resumes where it stopped).
 

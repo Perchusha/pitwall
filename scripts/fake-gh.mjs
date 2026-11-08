@@ -102,7 +102,8 @@ if (args[0] === 'api') {
     const pending = gate === 'pending';
     // gateRerun: an older failed run before the latest one.
     const older = s.gateRerun ? [{ id: 1, name: 'gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] : [];
-    out({ total_count: gate ? 1 + older.length : 0, check_runs: gate ? [{ id: 2, name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : gate, app: { id: s.gateApp ?? 15368 } }, ...older] : [] });
+    // The older run comes first, so a script that takes the first run instead of the latest one fails.
+    out({ total_count: gate ? 1 + older.length : 0, check_runs: gate ? [...older, { id: 2, name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : gate, app: { id: s.gateApp ?? 15368 } }] : [] });
   }
   // A commit: the merge commit's message, for merge.mjs to see whether it records the approval.
   const commit = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/.exec(path);

@@ -123,11 +123,40 @@ const tableHeader = (lines) => {
 
 // Checks that the named sections of a project file are present and filled in, and
 // that a table the template's section holds keeps the template's columns in every row.
+// The tables in some lines, outside fenced blocks: each run of lines that start with "|".
+function tableCount(lines) {
+  let fence = false;
+  let count = 0;
+  let inTable = false;
+  for (const line of lines) {
+    if (isFence(line)) fence = !fence;
+    const row = !fence && line.trim().startsWith('|');
+    if (row && !inTable) count += 1;
+    inTable = row;
+  }
+  return count;
+}
+// "## " headings outside fenced blocks, in their order, repeats included.
+function headingList(text) {
+  let fence = false;
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (isFence(line)) fence = !fence;
+    const h = !fence && /^##\s+(.+?)\s*$/.exec(line);
+    if (h) out.push(h[1]);
+  }
+  return out;
+}
+
 function requireFilled(rel, templateRel, names) {
   if (!has(rel)) return report(rel, 'missing');
   const mine = sections(read(rel));
   const tpl = sections(readTemplate(templateRel));
+  // A repeated heading hides the first one from the checks, which read the last: it is refused.
+  const headings = headingList(read(rel));
   for (const name of names) {
+    const times = headings.filter((h) => h === name).length;
+    if (times > 1) report(rel, `"## ${name}" appears ${times} times: keep one`);
     if (!mine.has(name)) {
       report(rel, `missing section "## ${name}"`);
       continue;
@@ -137,7 +166,7 @@ function requireFilled(rel, templateRel, names) {
     if (!want) continue;
     // The checks read one table per section, so a second one, such as a later round's rows
     // under a subheading, would go unread: it is refused instead.
-    const tables = mine.get(name).filter((l, i, all) => l.trim().startsWith('|') && !(all[i - 1] ?? '').trim().startsWith('|')).length;
+    const tables = tableCount(mine.get(name));
     if (tables > 1) report(rel, `"## ${name}" holds ${tables} tables: keep every row in the one table the template gives it`);
     const got = tableHeader(mine.get(name));
     if (!got || got.join('|').toLowerCase() !== want.join('|').toLowerCase()) {
@@ -496,8 +525,8 @@ function checkSpike() {
     const origin = spikeOrigin(git, rel);
     if (!origin) {
       // git log shows no adding commit for a file that only a merge brought in, and such a merge cannot show the criterion came first.
-      const tracked = git('ls-files', '--error-unmatch', '--', rel).ok;
-      report(rel, tracked ? 'no commit but a merge adds it, so nothing shows the criterion came first: commit the criterion on the planning branch before any prototype code' : 'is not committed: commit the criterion on the planning branch before any prototype code');
+      const inHistory = git('log', '--format=%H', '-1', 'HEAD', '--', rel).out !== '';
+      report(rel, inHistory ? 'no commit but a merge adds it, so nothing shows the criterion came first: commit the criterion on the planning branch before any prototype code' : 'is not committed: commit the criterion on the planning branch before any prototype code');
       continue;
     }
     const first = origin.sha;
@@ -509,7 +538,7 @@ function checkSpike() {
     const before = shown.raw.replace(/\r\n/g, '\n');
     if (sectionText(before, 'Criterion') !== sectionText(text, 'Criterion')) report(rel, `the criterion changed after ${first.slice(0, 7)}, the commit that added it: a criterion is never adjusted to the result`);
     const conclusionBefore = sections(before).get('Conclusion') ?? [];
-    const concludedBefore = filled(conclusionBefore, sections(readTemplate(SPIKE_TEMPLATE)).get('Conclusion')) && sectionText(before, 'Conclusion') !== 'Pending.';
+    const concludedBefore = filled(conclusionBefore, sections(readTemplate(SPIKE_TEMPLATE)).get('Conclusion')) && !/^pending\b/i.test(sectionText(before, 'Conclusion'));
     if (tableRows(sections(before).get('Result') ?? []).length > 0 || d.outcomes.includes(field(before, 'Outcome')) || /\b[0-9a-f]{7,40}\b/.test(field(before, 'Prototype')) || concludedBefore) {
       report(rel, `${first.slice(0, 7)}, the commit that added it, already held a result: the criterion is committed before the prototype`);
     }
@@ -535,10 +564,20 @@ function checkSpike() {
 // ---------- plan (T2-AC2, T2-AC3) ----------
 
 // R-n -> whether docs/RISKS.md accepts it: a risk, a fallback and the date the owner accepted it.
+// Rows outside its one table go unread, so a second table is refused where the risks are checked.
 function risksAccepted() {
   const rows = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
   return new Map(rows.map(([id, risk, fallback, on]) => [id, Boolean(risk && fallback && DATE.test(on ?? ''))]));
 }
+function checkRisksTable() {
+  if (!has('docs/RISKS.md')) return;
+  const tables = tableCount(read('docs/RISKS.md').split('\n'));
+  if (tables > 1) report('docs/RISKS.md', `holds ${tables} tables: keep every risk in the one table the template gives it`);
+}
+const adrDate = (id) => {
+  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  return f ? DATE.exec(field(read(`docs/adr/${f}`), 'Date'))?.[0] ?? '' : '';
+};
 function adrAccepted(id) {
   const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && field(read(`docs/adr/${f}`), 'Status').startsWith('accepted'));
@@ -675,19 +714,24 @@ function checkPlan() {
   }
   requireFilled('docs/SPEC.md', 'docs/SPEC.md', [...sections(readTemplate('docs/SPEC.md')).keys()]);
   // Every spike is concluded, and a failed one has a follow-up that is done.
+  checkRisksTable();
   const accepted = risksAccepted();
   for (const f of spikeFiles) {
     const sr = `docs/spikes/${f}`;
     const text = read(sr);
     const outcome = field(text, 'Outcome');
     if (!cfg.spike.outcomes.includes(outcome)) report(sr, `the spike is not concluded (Outcome "${outcome}"): finish it with /pitwall:spike`);
+    else if (/^pending\b/i.test(sectionText(text, 'Conclusion'))) report(sr, 'the conclusion still reads "Pending."');
     if (outcome !== 'not confirmed') continue;
     const follow = stripCode(field(text, 'Follow-up'));
     const adr = /\bADR-\d{4}\b/.exec(follow)?.[0];
     const risk = /\bR-\d+\b/.exec(follow)?.[0];
-    // An ADR follow-up is the new decision: accepted, and the one an older ADR is superseded by.
-    if (adr ? !(adrAccepted(adr) && supersedes(adr)) : risk ? !accepted.get(risk) : true) {
-      report(sr, 'not confirmed, and its follow-up is not done: a new accepted ADR from /pitwall:decide <area>, which an older ADR is "superseded by", or a risk R-n the owner accepted in docs/RISKS.md with a date');
+    // An ADR follow-up is the new decision: accepted, and either the one an older ADR is superseded
+    // by, or, for an area that had no ADR to supersede, decided on or after the spike's date.
+    const spikeDate = DATE.exec(field(text, 'Date'))?.[0] ?? '9999-99-99';
+    const newDecision = (id) => adrAccepted(id) && (supersedes(id) || adrDate(id) >= spikeDate);
+    if (adr ? !newDecision(adr) : risk ? !accepted.get(risk) : true) {
+      report(sr, 'not confirmed, and its follow-up is not done: a new accepted ADR from /pitwall:decide <area> (one an older ADR is "superseded by", or dated on or after the spike), or a risk R-n the owner accepted in docs/RISKS.md with a date');
     }
   }
 }
@@ -705,11 +749,24 @@ function checkPlanReview() {
   const s = requireFilled(rel, rel, ['Pre-mortem', 'Non-functional requirements', 'Launch questions', 'Epic sizing', 'Findings']);
   if (!s) return;
   for (const doc of [rel, 'docs/RISKS.md'].filter(has)) for (const link of brokenLinks(doc)) report(doc, `broken link ${link}`);
-  // Closed means the cell starts with the ID that closes it, written outside a code span. A cell
-  // that starts with "open", or with words, is open whatever IDs follow.
-  const CLOSER = /^\[?(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/;
+  const accepted = risksAccepted();
+  // Closed means the cell starts with the ID that closes it, written outside a code span, and a
+  // risk that closes it is one the owner accepted. A cell that starts with "open", or with words,
+  // is open whatever IDs follow.
+  const CLOSER = /^\[?(E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/;
   const isOpen = (cell) => new RegExp(`^\\s*${r.open}\\b`, 'i').test(cell ?? '');
-  const closed = (cell) => CLOSER.test(stripCode(cell ?? '').trim()) && !isOpen(cell);
+  const closed = (cell) => {
+    const id = CLOSER.exec(stripCode(cell ?? '').trim())?.[1];
+    return Boolean(id) && !isOpen(cell) && (!id.startsWith('R-') || accepted.get(id) === true);
+  };
+  // Only the template's sections are read, so a heading of its own, such as a later round's
+  // findings, would hide rows: it is refused, and so is any open cell anywhere in the file.
+  const known = new Set(sections(readTemplate(rel)).keys());
+  for (const h of new Set(headingList(read(rel)))) if (!known.has(h)) report(rel, `"## ${h}" is not a section of the template: keep every row in the template's sections`);
+  for (const line of stripCode(read(rel)).split('\n').filter((l) => l.trim().startsWith('|'))) {
+    const cells = splitRow(line);
+    if (!isSeparator(cells) && cells.length > 1 && isOpen(cells[cells.length - 1])) report(rel, `an open item: ${line.trim().slice(0, 100)}`);
+  }
   // An answer is more than a dash or a placeholder; a place names a document of the project or an ID.
   const blank = (cell) => !cell || isOpen(cell) || /^(?:-+|n\/a|tbd|todo|\?+)$/i.test(cell.trim());
   const place = (cell) => {
@@ -750,7 +807,7 @@ function checkPlanReview() {
     const u = (unc ?? '').toLowerCase();
     if (!r.sizes.includes(size)) report(rel, `${e.id}: size "${size ?? ''}" is not one of ${r.sizes.join(', ')}`);
     if (!r.uncertainty.includes(u)) report(rel, `${e.id}: uncertainty "${unc ?? ''}" is not one of ${r.uncertainty.join(', ')}`);
-    if ((r.needsAction.sizes.includes(size) || r.needsAction.uncertainty.includes(u)) && (!action || action === '-')) {
+    if ((r.needsAction.sizes.includes(size) || r.needsAction.uncertainty.includes(u)) && blank(action)) {
       report(rel, `${e.id} is ${size}, ${u}: it needs an action (split it, clarify it, or a spike first)`);
     }
   }
@@ -759,9 +816,8 @@ function checkPlanReview() {
     if (!r.severities.includes((severity ?? '').toLowerCase())) report(rel, `finding ${n}: severity "${severity ?? ''}" is not one of ${r.severities.join(', ')}`);
     if (!closed(by)) report(rel, `finding ${n} is not closed: cite the epic, criterion or ADR that closes it, or a risk R-n the owner accepted`);
   }
-  // An accepted risk is a row in docs/RISKS.md with its fallback and the date the owner accepted it.
-  const accepted = risksAccepted();
-  for (const id of new Set(plainIds(read(rel), /\bR-\d+\b/g))) if (accepted.has(id) && !accepted.get(id)) report('docs/RISKS.md', `${id} has no risk, no fallback or no date in "Accepted on"`);
+  // An accepted risk is a row in the one table of docs/RISKS.md with its fallback and the date the owner accepted it.
+  for (const id of new Set(plainIds(read(rel), /\bR-\d+\b/g))) if (!accepted.get(id)) report('docs/RISKS.md', `${id} is not an accepted risk: a row in its table with the risk, a fallback and the date in "Accepted on"`);
 
   // Every high-risk assumption is covered by a spike, an ADR, an epic or an accepted risk.
   if (!has('docs/DISCOVERY.md')) return report('docs/DISCOVERY.md', 'missing');

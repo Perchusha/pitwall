@@ -85,7 +85,12 @@ const changed = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--un
 const others = changed.filter((p) => p !== review.file);
 if (others.length > 0) refuse(`the tree has changes besides ${review.file}; the main conversation commits its fixes before a review round`, others.slice(0, 20).join('\n'));
 // The check reads the files on disk, so an ignored file it would read, and the commit would not hold, is refused too.
-const ignored = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--ignored', '--untracked-files=all', '--', 'docs', 'CLAUDE.md', '.claude/pitwall.json').raw.split('\n').filter((l) => l.startsWith('!! ')).map((l) => l.slice(3));
+// Only what docs-check reads counts: Markdown under docs/, CLAUDE.md and .claude/pitwall.json, not the OS files the template ignores.
+const ignored = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--ignored', '--untracked-files=all', '--', 'docs', 'CLAUDE.md', '.claude/pitwall.json')
+  .raw.split('\n')
+  .filter((l) => l.startsWith('!! '))
+  .map((l) => l.slice(3))
+  .filter((p) => p.endsWith('.md') || p === '.claude/pitwall.json');
 if (ignored.length > 0) refuse('files the docs check reads are ignored by git, so the reviewed commit would not hold them', ignored.slice(0, 20).join('\n'));
 
 // 2. success only when the review passes its check, on the tree as it is.

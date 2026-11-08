@@ -86,6 +86,8 @@ const prView = gh(['pr', 'view', branch, '--json', 'number,state,headRefOid,base
 const pr = prView.ok ? parseJson(prView.out) : null;
 if (!pr) handoff(`there is no PR from ${branch}.`, [{ run: `git push -u origin ${branch}` }, { run: `gh pr create --base ${base} --head ${branch} --fill` }]);
 if (pr.state === 'MERGED') {
+  // A PR merged at another commit leaves the local commits after it unmerged and unreviewed.
+  if (pr.headRefOid !== sha) refuse(`PR #${pr.number} was merged at ${String(pr.headRefOid).slice(0, 7)}, and the local ${branch} is at ${sha.slice(0, 7)}: the commits after it need a PR and a review of their own`);
   log(`PR #${pr.number} is already merged${pr.mergeCommit?.oid ? ` as ${pr.mergeCommit.oid}` : ''}`);
   // A merge by hand looks the same from here, so say whether the message records the owner's approval.
   const message = pr.mergeCommit?.oid ? parseJson(gh(['api', `repos/${name}/commits/${pr.mergeCommit.oid}`]).out)?.commit?.message ?? '' : '';
