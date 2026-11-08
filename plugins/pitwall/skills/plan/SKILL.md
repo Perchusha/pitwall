@@ -40,7 +40,8 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
     - a decision that turns out to be missing or wrong: the owner runs `/pitwall:decide <area>`;
     - a risk to accept: ask the owner, one per message; on yes, add the next `R-n` to `docs/RISKS.md` with the risk, the owner's fallback and today's date in "Accepted on";
     - a question only the owner can answer (the reviewer's NEEDS_OWNER): ask it, one per message, and record the answer where it belongs.
-    Run `--stage plan` again, `git add docs/ .claude/pitwall.json`, `git commit -m "docs: close plan review round <n>"`, push with a remote, and go back to step 9. After `review.ownerDecidesAtReject` rounds that end in CHANGES, stop the loop: show the owner what is still open, and they decide, item by item, to fix it or accept it as a risk, before one more round.
+    Run `--stage plan` again, `git add docs/ .claude/pitwall.json`, `git commit -m "docs: close plan review round <n>"`, push with a remote, and go back to step 9.
+    The loop has an end. The first `review.ownerDecidesAtReject` rounds are full reviews. After them, show the owner what is still open, and they decide, item by item, to fix it or accept it as a risk. Every later round is a verification round (the brief says so): the reviewer checks that each finding it already holds is closed, adds a new finding only when it is blocking, and lists anything smaller under NOTES. Show the owner those notes in one message; each is theirs to add to the plan or leave, and none blocks the merge. When a verification round still ends in CHANGES, the owner decides on what is open again, before one more verification round.
 11. **Merge**, once the reviewer returned APPROVED.
     - Show the owner one summary: the epics (ID, goal, risk), the risks accepted in `docs/RISKS.md`, and the reviewer's verdict. Ask one question: merge the plan into `main` now?
     - On yes, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --plan --owner-approved`. It checks that `gate` and `ai-review` are green on the approved commit, waiting up to `plan.gateWaitSeconds` for a gate that is still running, and that a merge commit is allowed, then merges with `Plan approved by the owner, <date>, at <sha>` in the message.
@@ -50,7 +51,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 
 ## Reviewer brief
 
-The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
+The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number, and from round `review.ownerDecidesAtReject` + 1 on, that it is a verification round; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
 
 - `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan-review` (add `,spike` when there are spikes);
 - `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-status.mjs" --review plan --state success` or `--state failure`.

@@ -775,12 +775,17 @@ step('plan and spike checks', (report) => {
     commit(c);
     expect('a criterion commit that says pending in its own words', check(c, 'spike'), [/wording\.md: "- Outcome:" is "pending"/]);
     if (/wording\.md: [0-9a-f]{7}, the commit that added it, already held a result/.test(check(c, 'spike').stdout)) report('a criterion commit that says pending in its own words: read as a result');
+    // T2 review, round 4: a result written as prose in the criterion commit is a result too.
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/prose.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/prose').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n\nAlready measured: 10 of 10 shown, by the owner on 2026-11-08.\n'));
+    commit(c);
+    expect('a criterion commit with the result in prose', check(c, 'spike'), [/prose\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
     c = copy();
     edit(c, 'docs/spikes/notify.md', (t) => t.replace('## Conclusion\n', 'The log:\n\n```\n| run | shown |\n| 1 | yes |\n```\n\n## Conclusion\n'));
     expect('a fenced block of output in the result', check(c, 'spike'), []);
     c = copy();
     edit(c, 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Pending.'));
-    expect('the plan alone with a confirmed spike whose conclusion is pending', check(c, 'plan'), [/notify\.md: the conclusion still reads "Pending\."/]);
+    expect('the plan alone with a confirmed spike whose conclusion is pending', check(c, 'plan'), [/notify\.md: the conclusion is not written/]);
     c = copy();
     edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: pending').replace('10 of 10 shown |', 'all shown |').replace('| 10 of 10 | owner', '| all | owner'));
     expect('a spike without numbers or an outcome', check(c, 'spike'), [/"- Outcome:" is "pending"/, /"Success when" holds no number/, /"Measured" holds no number/]);
@@ -889,13 +894,19 @@ step('plan and spike checks', (report) => {
       e('docs/adr/0001-stack.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003').replace('A desktop app.', 'A desktop app; it settles A-1.'));
     }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
     planCase('not confirmed, follow-up an ADR that supersedes nothing', (p, e) => e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0001')), [/notify\.md: not confirmed, and its follow-up is not done/]);
-    planCase('not confirmed, follow-up the ADR that supersedes the old one', (p, e) => {
+    planCase('not confirmed, follow-up the new ADR that links the spike', (p, e) => {
       e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0003'));
+      e('docs/adr/0003-hosting.md', (t) => t.replace('A desktop app.', 'A desktop app; the spike ../spikes/notify.md was not confirmed.'));
       e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
     }, []);
+    // T2 review, round 4: the ADR the spike disproved, dated the same day, is no follow-up.
+    planCase('not confirmed, follow-up the old ADR of the same day', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0001'));
+      e('docs/adr/0001-stack.md', (t) => t.replace('- Date: 2026-11-05', '- Date: 2026-11-08'));
+    }, [/notify\.md: not confirmed, and its follow-up is not done/]);
     // T2 review, round 3.
-    planCase('Findings twice, the open row under the first', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | blocking | open: name them |\n\n## Findings\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Snooze had no criterion | should fix | E1-AC2 |\n')), [/"## Findings" appears 2 times/, /an open item: \| 3 \| E2 names no systems/], 'plan-review');
-    planCase('a later round under a heading of its own', (p, e) => e('docs/PLAN-REVIEW.md', (t) => `${t}\n## Findings, round 2\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 3 | E2 names no systems | blocking | open: name them |\n`), [/"## Findings, round 2" is not a section of the template/, /an open item: \| 3 \| E2 names no systems/], 'plan-review');
+    planCase('Findings twice, the open row under the first', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | blocking | open: name them |\n\n## Findings\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Snooze had no criterion | should fix | E1-AC2 |\n')), [/"## Findings" appears 2 times/], 'plan-review');
+    planCase('a later round under a heading of its own', (p, e) => e('docs/PLAN-REVIEW.md', (t) => `${t}\n## Findings, round 2\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 3 | E2 names no systems | blocking | open: name them |\n`), [/"## Findings, round 2" is not a section of the template/, /a table in "## Findings, round 2"/], 'plan-review');
     planCase('a risk nobody accepted, in a second table, closing a finding', (p, e) => {
       e('docs/RISKS.md', (t) => `${t}\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | Snooze is misused | none | not yet |\n`);
       e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | R-2 |'));
@@ -905,8 +916,35 @@ step('plan and spike checks', (report) => {
     }
     planCase('not confirmed, follow-up a new ADR for an area that had none', (p, e) => {
       e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0004'));
-      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Date: 2026-11-05', '- Date: 2026-11-08'));
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Date: 2026-11-05', '- Date: 2026-11-08').replace('A desktop app.', 'After ../spikes/notify.md, models move to a local file.'));
     }, []);
+    // T2 review, round 4: Markdown that GitHub shows one way and a line reader reads another.
+    const hide = (label, rel, fn, patterns) => planCase(`hidden from the check: ${label}`, (p, e) => e(rel, fn), patterns, 'plan-review');
+    const afterRow2 = (extra) => (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', `| 2 | Full-screen games hide it | should fix | R-1 |\n${extra}`);
+    hide('a row without its leading pipe', 'docs/PLAN-REVIEW.md', afterRow2('3 | E2 names no systems | blocking | open: name them\n'), [/a "\|" outside a table row/]);
+    hide('a table in a block quote', 'docs/PLAN-REVIEW.md', afterRow2('\n> | # | Finding | Severity | Closed by |\n> | --- | --- | --- | --- |\n> | 3 | E2 | blocking | open: name them |\n'), [/a block quote/]);
+    hide('a table between comment fences', 'docs/PLAN-REVIEW.md', afterRow2('\n<!--\n~~~\n-->\n| 3 | E2 names no systems | blocking | open: name them |\n<!--\n~~~\n-->\n'), [/an HTML comment/]);
+    hide('a table between indented fences', 'docs/PLAN-REVIEW.md', afterRow2('\n    ```\n| 3 | E2 names no systems | blocking | open: name them |\n    ```\n'), [/"## Findings" holds 2 tables/]);
+    hide('a setext heading after the last section', 'docs/PLAN-REVIEW.md', (t) => `${t}\nFindings, round 2\n-----\n\n| 3 | E2 names no systems | blocking | still to do |\n`, [/a setext heading or a rule/, /a table in "## Approval"/]);
+    hide('an HTML table', 'docs/PLAN-REVIEW.md', (t) => `${t}\n<table><tr><td>3</td><td>open: name them</td></tr></table>\n`, [/an HTML block/]);
+    hide('a fenced example table before the real one', 'docs/PLAN-REVIEW.md', (t) => t.replace('| # | Finding | Severity |', '```\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Example | should fix | E1-AC2 |\n```\n\n| # | Finding | Severity |').replace('| should fix | E1-AC2 |\n| 2 |', '| should fix | not yet, ask the owner |\n| 2 |'), [/finding 1 is not closed/]);
+    hide('a requirement twice, answered then open', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Security and secrets | None kept | SPEC.md |\n', '| Security and secrets | None kept | SPEC.md |\n| Security and secrets | open: the release tokens | - |\n'), [/the row "Security and secrets" repeats a row above it/, /an open item in "## Non-functional requirements"/]);
+    hide('an epic sized twice', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |\n', '| E1 | M | partly | - |\n| E1 | L | unknown | - |\n'), [/the row "E1" repeats a row above it/]);
+    hide('an open cell in emphasis', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | **open**: name it |'), [/finding 1 is not closed/, /an open item in "## Findings"/]);
+    hide('a launch answer not confirmed', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | not confirmed, asked 2026-11-08 |'), [/"Support channel" has no date the owner confirmed it/]);
+    hide('an L epic with the action "none"', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |', '| E1 | L | unknown | none |'), [/E1 is L, unknown: it needs an action/]);
+    hide('an accepted risk in a fenced example', 'docs/RISKS.md', (t) => t.replace('| ID | Risk |', '```\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | x | y | 2026-11-08 |\n```\n\n| ID | Risk |').replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | Snooze is misused | none | not yet |\n'), []);
+    planCase('hidden from the check: a risk accepted only in a fenced example closes a finding', (p, e) => {
+      e('docs/RISKS.md', (t) => t.replace('| ID | Risk |', '```\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | x | y | 2026-11-08 |\n```\n\n| ID | Risk |').replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | Snooze is misused | none | not yet |\n'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | R-2 |'));
+    }, [/finding 1 is not closed/, /R-2 is not an accepted risk/], 'plan-review');
+    hide('a risk in an HTML comment', 'docs/RISKS.md', (t) => `${t}\n<!--\n| R-3 | x | y | 2026-11-08 |\n-->\n`, [/an HTML comment/]);
+    hide('a second table of epics', 'docs/EPICS.md', (t) => `${t}\nLater:\n\n| Epic | Goal | Risk | Depends on | Status |\n| --- | --- | --- | --- | --- |\n| E3 | X | low | E5 | planned |\n`, [/EPICS\.md: holds 2 tables/]);
+    hide('a second table of assumptions', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n\n| ID | Assumption | Risk | How to check it |\n| --- | --- | --- | --- |\n| A-9 | Users accept a tray icon | high | Ask five people |\n'), [/"## Assumptions by risk" holds 2 tables/]);
+    hide('an outcome in an HTML comment', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '<!--\n- Outcome: confirmed\n-->\n- Outcome: pending'), [/an HTML comment/, /"- Outcome:" appears 2 times/]);
+    hide('an outcome twice', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: confirmed\n- Outcome: pending'), [/"- Outcome:" appears 2 times/]);
+    planCase('a closing cell that starts with "closed by"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | closed by E1-AC2: snooze is a criterion now |').replace('| should fix | R-1 |', '| should fix | **R-1** |')), [], 'plan-review');
+    planCase('a file with a byte order mark', (p, e) => e('.claude/pitwall.json', (t) => String.fromCodePoint(0xfeff) + t), [], 'plan-review');
     planCase('a broken link in RISKS.md', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A [tray badge](spikes/badge.md) |')), [/RISKS\.md: broken link spikes\/badge\.md/], 'plan-review');
     planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
       e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));

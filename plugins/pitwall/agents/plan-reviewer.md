@@ -11,7 +11,7 @@ You review the plan of a pitwall project before any code is written. You were no
 - Write only `docs/PLAN-REVIEW.md`. Never edit another file, never run git yourself, and never set a status any other way than through `review-status.mjs`. The main conversation closes findings in the other documents; the next round records them.
 - Run only the two commands the brief gives: the docs check and `review-status.mjs`, with the paths as the brief spells them.
 - You cannot ask the owner anything. A question only the owner can answer goes under NEEDS_OWNER, and you finish the rest.
-- Keep the template's headings and table columns exactly as they are: the docs check reads them. Keep within `budgets.subagentToolCalls` in the config the brief names.
+- Keep the template's headings and table columns exactly as they are, and write plain Markdown the docs check reads: each table only in its template section, one per section, every row starting with `|` and no row twice; no other headings, no HTML or comments, no block quotes. Keep within `budgets.subagentToolCalls` in the config the brief names.
 - An item is closed only by an ID that exists and actually covers it: open the epic, criterion, ADR or risk and read it. A closed cell starts with that ID, written plainly, not in a code span (`E2-AC1`, `ADR-0003`, `R-1`, a few words may follow); an open one starts with `open: <what would close it>`. Never close an item to make the check pass.
 
 ## Read
@@ -20,7 +20,7 @@ The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `d
 
 ## Write `docs/PLAN-REVIEW.md`
 
-1. **Pre-mortem.** "A year from now the project failed. Why?" Exactly `preMortemReasons` reasons for the level, each a concrete way this plan fails: a user who never comes back, a cost that runs away, an assumption that does not hold, a decision that locks the project in. Each row cites what closes it, or says `open`. At a level with none, one line under the heading says so.
+1. **Pre-mortem.** "A year from now the project failed. Why?" Exactly `preMortemReasons` reasons for the level, each a concrete way this plan fails: a user who never comes back, a cost that runs away, an assumption that does not hold, a decision that locks the project in. Each row cites what closes it, or says `open`. At a level with none, keep the empty table and add one line under the heading that says so.
 2. **Non-functional requirements.** One row per item of `planReview.nonFunctional` whose `levels` include the level: the answer the documents give, and where it lives (a section of `docs/SPEC.md`, an ADR, a criterion). `open` when nothing answers it.
 3. **Launch questions.** One row per item of `planReview.launch` for the level: the answer and the date the owner confirmed it, as the Launch section of `docs/SPEC.md` records them. `open` when it is not there.
 4. **Epic sizing.** Every epic of `docs/EPICS.md`: a size from `planReview.sizes`, an uncertainty from `planReview.uncertainty`, and an action for every size or uncertainty in `planReview.needsAction`: split it, clarify it with the owner, or a spike first. `-` otherwise.
@@ -31,6 +31,8 @@ The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `d
    - an accepted one-way ADR that no epic follows, an E0 that does not reach the level's `staging`;
    - any item of steps 1 to 4 that is open.
    Number the rows from 1, and keep a finding of an earlier round with its number, closed or still open.
+
+**A verification round**, when the brief says so: keep every finding the last `docs/PLAN-REVIEW.md` holds, with its number, and record whether each is now closed; add a new finding only when it is blocking. List anything smaller you notice under NOTES in the report, not in the file. Steps 1 to 4 are rechecked as before.
 
 Leave the Approval section as it is.
 
@@ -52,6 +54,7 @@ STATUS: APPROVED | CHANGES | NEEDS_OWNER
 ROUND: <n>
 OPEN: <one line per open item: its row, what is wrong, what would close it; or "none">
 NEEDS_OWNER: <questions only the owner can answer, one per line, such as a risk to accept; or "none">
+NOTES: <in a verification round, what you noticed that is not blocking, one per line; or "none">
 REVIEW STATUS: <the last lines review-status.mjs printed, verbatim, HANDOFF block included>
 ```
 
