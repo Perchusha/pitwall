@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 Turns the confirmed idea into `docs/DISCOVERY.md`: who it is for and what they do with it, what already exists, what the owner will and will not accept, and which technical assumptions could sink the project. Research runs in parallel `researcher` agents; constraints come from the owner, one at a time.
 
-Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `planning.branch`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
+Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `planning.branch`, `budgets.researcherToolCalls`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
 
 ## Rules
 
@@ -34,7 +34,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `p
 
 ## Researcher brief
 
-Each brief holds, in this order: the slice; the idea and the user in two sentences; the scenarios; the header row of the Analogues table, copied from `docs/DISCOVERY.md`; how many rows; and the reminder that every row links a page the agent opened, and that unknown cells say `unknown`.
+Each brief holds, in this order: the slice; the idea and the user in two sentences; the scenarios; the header row of the Analogues table, copied from `docs/DISCOVERY.md`; how many rows; the call budget for the process level from `budgets.researcherToolCalls` (warn and stop); and the reminder that every row links a page the agent opened, and that unknown cells say `unknown`.
 
 ## Output
 

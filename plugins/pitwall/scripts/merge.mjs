@@ -32,7 +32,7 @@ const bad = (msg) => {
   process.exit(2);
 };
 if (!args.plan) bad('--plan is required: the plan PR is the only one this script merges until T3');
-if (!args['owner-approved']) bad('--owner-approved is required: the plan merges only after the owner says yes (ADR-0008)');
+if (!args['owner-approved']) bad('--owner-approved is required: the plan merges only after the owner says yes (pitwall ADR-0008)');
 const wait = Number(args.wait ?? 10);
 if (!(wait >= 0)) bad('--wait takes a number of minutes');
 const cfg = config();
@@ -95,7 +95,7 @@ if (pr.headRefOid !== sha) refuse(`PR #${pr.number} has head ${String(pr.headRef
 // 4. Both checks are green on that commit: ai-review from the review flow, gate from GitHub Actions only (ADR-0005).
 const statuses = parseJson(gh(['api', `repos/${name}/commits/${sha}/statuses`]).out) ?? [];
 const review = statuses.find((s) => s.context === cfg.review.statusContext);
-if (review?.state !== 'success') refuse(`${cfg.review.statusContext} is ${review?.state ?? 'not set'} on ${sha.slice(0, 7)}: the plan reviewer sets it (ADR-0007)`);
+if (review?.state !== 'success') refuse(`${cfg.review.statusContext} is ${review?.state ?? 'not set'} on ${sha.slice(0, 7)}: the plan reviewer sets it (pitwall ADR-0007)`);
 const pollMs = Number(process.env.PITWALL_POLL_MS ?? 15000);
 const deadline = Date.now() + wait * 60000;
 let gate;
@@ -112,15 +112,15 @@ log(`${cfg.review.statusContext} and ${cfg.review.gateContext} are green on ${sh
 
 // 5. A merge commit is possible: allowed by the repository, and no linear history required (ADR-0008).
 if (repo.mergeCommitAllowed === false) {
-  handoff(`${name} does not allow merge commits, and the plan merges with one (ADR-0008).`, [{ run: `gh repo edit ${name} --enable-merge-commit` }]);
+  handoff(`${name} does not allow merge commits, and the plan merges with one (pitwall ADR-0008).`, [{ run: `gh repo edit ${name} --enable-merge-commit` }]);
 }
 const rules = gh(['api', `repos/${name}/rules/branches/${base}`]);
 if (rules.ok && (parseJson(rules.out) ?? []).some((r) => r.type === 'required_linear_history')) {
-  handoff(`a ruleset on ${name} requires linear history on ${base}, which refuses a merge commit (ADR-0008).`, [{ note: `remove that rule in the repository settings (Rules, Rulesets), or merge PR #${pr.number} by hand, then` }, { run: `gh api repos/${name}/rules/branches/${base}` }]);
+  handoff(`a ruleset on ${name} requires linear history on ${base}, which refuses a merge commit (pitwall ADR-0008).`, [{ note: `remove that rule in the repository settings (Rules, Rulesets), or merge PR #${pr.number} by hand, then` }, { run: `gh api repos/${name}/rules/branches/${base}` }]);
 }
 const protection = gh(['api', `repos/${name}/branches/${base}/protection`]);
 if (protection.ok && parseJson(protection.out)?.required_linear_history?.enabled === true) {
-  handoff(`the branch protection of ${base} requires linear history, which refuses a merge commit (ADR-0008).`, [{ note: `turn off "Require linear history" for ${base} in the repository settings (Branches), then` }, { run: `gh api repos/${name}/branches/${base}/protection` }]);
+  handoff(`the branch protection of ${base} requires linear history, which refuses a merge commit (pitwall ADR-0008).`, [{ note: `turn off "Require linear history" for ${base} in the repository settings (Branches), then` }, { run: `gh api repos/${name}/branches/${base}/protection` }]);
 }
 
 // 6. Merge, with the approval in the message, only if the head is still the approved commit.

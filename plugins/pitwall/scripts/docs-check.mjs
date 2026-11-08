@@ -13,7 +13,7 @@
 //             A-n (assumptions) and R-n (risks); an ID in a code span is an example;
 //   size      CLAUDE.md and the state files stay within docsLimits in config/defaults.json.
 // --stage adds the Check of that skill: what the stage writes is there and filled in.
-// spike reads git history (ADR-0009): it runs locally only and fails closed on a
+// spike reads git history (pitwall ADR-0009): it runs locally only and fails closed on a
 // shallow clone or outside git. plan-review includes plan.
 //
 // Exit 0 pass, 1 problems found (each printed), 2 usage.
@@ -156,7 +156,7 @@ const templateDocs = listFiles(templateRoot)
 function requireHeadings(rel, templateRel) {
   const need = [...sections(readTemplate(templateRel)).keys()];
   if (need.length === 0) return;
-  if (!has(rel)) return report(rel, 'missing (a contract path, ADR-0006)');
+  if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
   const mine = sections(read(rel));
   for (const h of need) if (!mine.has(h)) report(rel, `missing section "## ${h}" (template ${templateRel})`);
 }
@@ -428,9 +428,9 @@ function checkSpike() {
   const git = gitRunner(root);
   // Without the whole history nothing below can be shown, so the check fails, never passes (ADR-0009).
   let history = git('rev-parse', '--is-inside-work-tree').out === 'true';
-  if (!history) report('docs/spikes', 'not inside a git repository: the spike check reads git history (ADR-0009)');
+  if (!history) report('docs/spikes', 'not inside a git repository: the spike check reads git history (pitwall ADR-0009)');
   else if (git('rev-parse', '--is-shallow-repository').out !== 'false') {
-    report('docs/spikes', 'the clone is shallow: run git fetch --unshallow, the spike check reads the whole history (ADR-0009)');
+    report('docs/spikes', 'the clone is shallow: run git fetch --unshallow, the spike check reads the whole history (pitwall ADR-0009)');
     history = false;
   }
   const hasRef = (ref) => git('rev-parse', '--verify', '-q', `${ref}^{commit}`).ok;
@@ -493,7 +493,7 @@ function checkSpike() {
     // Pushed before this check when there is a remote (ADR-0009); on the local branch otherwise.
     const home = remote ? `refs/remotes/origin/${branch}` : `refs/heads/${branch}`;
     if (!hasRef(home) || !ancestor(full, home)) {
-      report(rel, remote ? `push ${branch} before this check: origin/${branch} does not hold ${proto} (ADR-0009)` : `${branch} does not hold the prototype commit ${proto}`);
+      report(rel, remote ? `push ${branch} before this check: origin/${branch} does not hold ${proto} (pitwall ADR-0009)` : `${branch} does not hold the prototype commit ${proto}`);
     }
   }
 }

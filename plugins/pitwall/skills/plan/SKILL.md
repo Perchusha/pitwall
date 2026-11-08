@@ -1,25 +1,66 @@
 ---
 name: plan
-description: Stage 4 of pitwall. Turns the decisions into an ordered list of epics without dates, each with a goal, testable acceptance criteria, dependencies and a risk class, then sends the plan to the plan-reviewer agent. Use when the owner asks for a plan, a roadmap or epics.
+description: Stages 4 and 5 of pitwall. Turns the decisions into docs/SPEC.md and an ordered list of epics without dates, each with a goal, testable acceptance criteria, dependencies and a risk class, sends the plan to the plan-reviewer agent until every finding is closed or accepted, and merges the plan PR once the owner says yes. The owner runs it as /pitwall:plan after decide and any spikes.
 disable-model-invocation: true
 ---
 
-# plan - stage 4
+# plan - stages 4 and 5
 
-> Status: planned for epic T2, not implemented in v0.1.0. If this skill is invoked, tell the owner that stage 4 is not built yet and stop.
+> Status: built in T2.
 
-## What it will do
+Turns the idea, the discovery, the decisions and the spikes into a plan the epic loop can run: `docs/SPEC.md`, `docs/EPICS.md` and one file per epic. A `plan-reviewer` agent with a fresh context reviews it from the documents only and sets `ai-review` on the plan PR; this conversation closes the findings with the owner. Once both checks are green and the owner says yes, the plan merges into `main` with a merge commit that records the approval.
 
-1. E0 is always the walking skeleton: repository, `scripts/gate`, CI, a "hello world" deployed to staging.
-2. One epic is one PR with a testable result. More than 3 modules or 2 packages: split it.
-3. Acceptance criteria are written for QA, not for the author: checkable without knowing the code.
-4. Risk class per epic: low (UI, copy), normal (ordinary logic), high (auth, payments, data migrations and deletion, infrastructure, security). It sets the implementer's effort, the review depth and how the PR is merged.
-5. Dispatch the `plan-reviewer` agent (stage 5): pre-mortem, non-functional requirements, launch questions, epic sizing, moving everything into the project docs.
+Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`, `riskClasses`, `plan`, `planReview`, `review`, `planning.branch`) and the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/`: `docs-check.mjs`, `merge.mjs` (and `review-status.mjs`, which only the reviewer runs).
+
+## Rules
+
+- Run each command in the steps as written, from the project root, one command per call.
+- One question per message, then wait. Never answer for the owner, never accept a risk for them, and never merge without their yes in this conversation.
+- Never edit `docs/PLAN-REVIEW.md` and never set `ai-review`: both belong to the reviewer. Close findings in the epics, `docs/SPEC.md`, `docs/RISKS.md` or through `/pitwall:decide`, and let the next round record them.
+- Keep the template's headings and table columns exactly as they are: the docs check reads them.
+- When a script hands a step over, show the owner its HANDOFF lines verbatim: the commands under "Run this yourself" are for the owner, and the one under "Then run this to record the result" finishes the step afterwards. Never retry a refused write another way.
+
+## Steps
+
+1. **Preflight.** Read `.claude/pitwall.json`; without it, stop: run `/pitwall:kickoff` first. Switch to the planning branch (`planning.branch`). If `mergeProtection` is `pending`, tell the owner once and offer to run `node "${CLAUDE_PLUGIN_ROOT}/scripts/protect.mjs"`. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage decide`; if it fails, stop: finish `/pitwall:decide` first. When `docs/spikes/` holds a spike besides `README.md` and `template.md`, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage spike`; a spike that is not concluded goes back to `/pitwall:spike`, and one that is not confirmed and whose follow-up is still pending goes to `/pitwall:decide <area>` first. When the level's `spikeRequired` is true and the riskiest assumption in `docs/DISCOVERY.md` has no concluded spike, stop: run `/pitwall:spike` first.
+2. **Resume.** When `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan-review` already passes and `git status --porcelain` prints nothing, the plan is reviewed: go to step 11. When `docs/EPICS.md` already passes `--stage plan`, go to step 8.
+3. **Read.** `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/STACK.md`, every ADR in `docs/adr/`, the spikes, `docs/RISKS.md`, `CLAUDE.md`, and `docs/epics/E0-skeleton.md`.
+4. **Fill `docs/SPEC.md`**, keeping its headings: Overview, the product in a paragraph; Scenarios, the scenarios of `docs/DISCOVERY.md`; Architecture, the parts and how they talk, citing the ADRs instead of repeating them; Data model, the entities and where they live, or what little there is; Non-functional requirements, one line per item of `planReview.nonFunctional` for the level, from the constraints and decisions (write `open` where nothing answers it yet).
+5. **Launch questions.** For each item of `planReview.launch` for the level, ask the owner one per message, offering what the idea and the decisions already imply as a proposal to confirm. Record each answer in the Launch section of `docs/SPEC.md` with today's date: `- <item>: <answer> (confirmed <date>)`.
+6. **Draft the epics.**
+   - E0 first, from `docs/epics/E0-skeleton.md`: fill its `ADR:` line with the stack ADRs, and fit its criteria to the level's `staging`; keep its other criteria.
+   - Then E1, E2, ... in the order they will be built. One epic is one PR with a testable result; more than 3 modules or 2 packages, split it. At lite, no more than `processLevels.lite.epics.max` epics after E0.
+   - Each epic: a goal in one line; acceptance criteria `E<n>-AC<m>`, numbered from 1, written for QA, checkable without knowing the code, and together covering every scenario; `Depends on:` earlier epics only; `ADR:` the ADRs it follows, or `none`; a risk class from `riskClasses` by its `examples`; out of scope; open questions.
+   - Cite a high-risk assumption `A-n` in the criterion that settles it.
+7. **Show the plan** in one message: a table (Epic, Goal, Risk, Depends on) and the criteria of each epic. The owner accepts it or names changes; apply them and show the changed epics again until the owner accepts.
+8. **Write and commit.** Write `docs/EPICS.md` (one row per epic, its ID linked to its file the way the E0 row is, status `planned`) and one file per epic in `docs/epics/`, from `E0-skeleton.md`. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan`; fix what it reports and run it again until it passes. Then `git add docs/ .claude/pitwall.json` and `git commit -m "docs: plan"`. With a remote: `git push -u origin <branch>`, then `gh pr list --head <branch> --state open`, and when it lists nothing, `gh pr create --base main --head <branch> --title "Plan: <project name>" --body "Stages 1 to 5: discovery, decisions, spikes, the plan and its review. It merges once gate and ai-review are green and the owner says yes."`. A failed push or PR is not retried: show the error and go on; the reviewer's status step hands it over.
+9. **A review round.** Dispatch the `pitwall:plan-reviewer` agent with the brief below, a fresh agent each round. It writes `docs/PLAN-REVIEW.md`, runs `review-status.mjs` (which commits that file, pushes, and sets `ai-review`) and returns its report. Show the owner its STATUS, the open items in a short list, and any HANDOFF lines verbatim.
+10. **Close the findings.** For each open item:
+    - a gap in the plan (a criterion missing or not checkable, an epic too big, a wrong order): fix it in the epics or `docs/SPEC.md`;
+    - a decision that turns out to be missing or wrong: the owner runs `/pitwall:decide <area>`;
+    - a risk to accept: ask the owner, one per message; on yes, add the next `R-n` to `docs/RISKS.md` with the risk, the owner's fallback and today's date in "Accepted on";
+    - a question only the owner can answer (the reviewer's NEEDS_OWNER): ask it, one per message, and record the answer where it belongs.
+    Run `--stage plan` again, `git add docs/ .claude/pitwall.json`, `git commit -m "docs: close plan review round <n>"`, push with a remote, and go back to step 9. After `review.ownerDecidesAtReject` rounds that end in CHANGES, stop the loop: show the owner what is still open, and they decide, item by item, to fix it or accept it as a risk, before one more round.
+11. **Merge**, once the reviewer returned APPROVED.
+    - Show the owner one summary: the epics (ID, goal, risk), the risks accepted in `docs/RISKS.md`, and the reviewer's verdict. Ask one question: merge the plan into `main` now?
+    - On yes, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --plan --owner-approved`. It checks that `gate` and `ai-review` are green on the approved commit, waiting a few minutes for a running gate, and that a merge commit is allowed, then merges with `Plan approved by the owner, <date>, at <sha>` in the message.
+    - Exit 0 (`RESULT: merged`): with a remote, `git switch main` and `git pull --ff-only`. Exit 3: show the HANDOFF block verbatim. Exit 1: show why it refused; when `ai-review` is not success on the head, run one more round (step 9).
+    - On no, or not yet: stop here; `/pitwall:plan` resumes at this step.
+12. **Hand over.** Tell the owner, in a few lines: the number of epics, the accepted risks, whether the plan is merged (or the pending command), and that the next stage is `/pitwall:continue`, which starts with E0.
+
+## Reviewer brief
+
+The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
+
+- `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan-review` (add `,spike` when there are spikes);
+- `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-status.mjs" --review plan --state success` or `--state failure`.
 
 ## Output
 
-`docs/EPICS.md` (order and status) and `docs/epics/E<n>-<slug>.md` per epic, following `template/docs/epics/E0-skeleton.md`.
+- `docs/SPEC.md` filled in, `docs/EPICS.md` and `docs/epics/E<n>-<slug>.md` per epic, `docs/RISKS.md` with the risks the owner accepted.
+- `docs/PLAN-REVIEW.md`, written by the reviewer: pre-mortem, non-functional and launch items, epic sizing, findings, each closed.
+- The plan PR from the planning branch with `ai-review` from the reviewer, merged into `main` with a merge commit after the owner's yes.
 
 ## Check
 
-Every epic has acceptance criteria and a risk class, ADR links resolve, the dependency graph has no cycles, E0 comes first.
+`docs-check.mjs --stage plan-review` passes (it includes `--stage plan`): every epic has acceptance criteria and a risk class, rows and files agree, ADR IDs and links resolve, dependencies point to earlier epics and form no cycle, E0 comes first; every reason and finding is closed by an ID or an accepted risk, every item of the level is answered, every epic is sized, and every high-risk assumption is covered. The owner said yes before the merge.
