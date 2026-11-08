@@ -4,7 +4,7 @@ Written at stage 5 by the `plan-reviewer` agent, from the documents only; it is 
 
 ## Pre-mortem
 
-"A year from now the project failed. Why?" As many reasons as pitwall's `preMortemReasons` asks for the process level; none at lite.
+"A year from now the project failed. Why?" As many reasons as pitwall's `preMortemReasons` asks for the process level.
 
 | # | Reason | Closed by (epic, ADR) or accepted risk |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ One row per item of pitwall's `planReview.launch` for the process level, as the 
 | Epic | Size (S, M, L) | Uncertainty (known, partly, unknown) | Action |
 | --- | --- | --- | --- |
 
-An L or unknown epic has an action: split it, clarify it, or a spike first.
+An epic whose size or uncertainty is in pitwall's `planReview.needsAction` has an action: split it, clarify it, or a spike first.
 
 ## Findings
 

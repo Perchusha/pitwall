@@ -98,20 +98,27 @@ if (pr.baseRefName !== base) refuse(`PR #${pr.number} goes into ${pr.baseRefName
 if (pr.headRefOid !== sha) refuse(`PR #${pr.number} has head ${String(pr.headRefOid).slice(0, 7)}, and the local ${branch} is ${sha.slice(0, 7)}: the owner approved what is here, so push it and review it again`);
 
 // 4. Both checks are green on that commit: ai-review from the review flow, gate from GitHub Actions only (ADR-0005).
-const statuses = parseJson(gh(['api', `repos/${name}/commits/${sha}/statuses`]).out) ?? [];
+// gh prints an error body, a JSON object, on a failed read: a read that fails is handed back, never read as "not set".
+const readFailed = (what, r) => handoff(`gh could not read the ${what} of ${sha.slice(0, 7)}: ${(r.err.trim() || r.out.trim()).split('\n').pop()}`, [{ note: 'when GitHub answers again (a rate limit passes, the network is back), then' }, { run: 'gh auth status' }]);
+const statusRead = gh(['api', `repos/${name}/commits/${sha}/statuses`]);
+const statuses = statusRead.ok ? parseJson(statusRead.out) : null;
+if (!Array.isArray(statuses)) readFailed('statuses', statusRead);
 const review = statuses.find((s) => s.context === cfg.review.statusContext);
 if (review?.state !== 'success') refuse(`${cfg.review.statusContext} is ${review?.state ?? 'not set'} on ${sha.slice(0, 7)}: the plan reviewer sets it (pitwall ADR-0007)`);
 const pollMs = Number(process.env.PITWALL_POLL_MS ?? 15000);
 const deadline = Date.now() + wait * 1000;
 let gate;
 for (;;) {
-  const runs = parseJson(gh(['api', `repos/${name}/commits/${sha}/check-runs`]).out)?.check_runs ?? [];
+  const runRead = gh(['api', `repos/${name}/commits/${sha}/check-runs`]);
+  const runs = runRead.ok ? parseJson(runRead.out)?.check_runs : null;
+  if (!Array.isArray(runs)) readFailed('check runs', runRead);
   const named = runs.filter((c) => c.name === cfg.review.gateContext);
-  gate = named.find((c) => c.app?.id === cfg.mergeProtection.githubActionsAppId);
+  // The latest run from GitHub Actions decides: a re-run replaces the run before it.
+  gate = named.filter((c) => c.app?.id === cfg.mergeProtection.githubActionsAppId).sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0];
   // A gate from anything but GitHub Actions never passes (ADR-0005), so there is nothing to wait for.
   if (!gate && named.length > 0) refuse(`the ${cfg.review.gateContext} check on ${sha.slice(0, 7)} comes from app ${named[0].app?.id ?? 'unknown'}, not GitHub Actions`);
   if (gate?.status === 'completed' || Date.now() >= deadline) break;
-  sleep(pollMs);
+  sleep(Math.max(0, Math.min(pollMs, deadline - Date.now())));
 }
 if (!gate) handoff(`no ${cfg.review.gateContext} check from GitHub Actions on ${sha.slice(0, 7)} after ${wait} seconds.`, [{ note: 'CI may not have started: look at the Actions tab of the repository, then' }, { run: `gh pr checks ${pr.number}` }]);
 if (gate.status !== 'completed') handoff(`${cfg.review.gateContext} is still ${gate.status} on ${sha.slice(0, 7)} after ${wait} seconds.`, [{ note: 'wait for it to finish, then' }, { run: `gh pr checks ${pr.number}` }]);

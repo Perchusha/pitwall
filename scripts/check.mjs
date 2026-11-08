@@ -638,7 +638,7 @@ function fillPlan(project) {
       .replace(/(## Pre-mortem\n\n.*\n)/, '$1\nNot at the lite level.\n')
       .replace('| Requirement | Answer | Where it lives |\n| --- | --- | --- |\n', '| Requirement | Answer | Where it lives |\n| --- | --- | --- |\n| Security and secrets | None kept | SPEC.md |\n| Dependency licences | MIT and Apache | E2-AC1 |\n| Backups and restore | Settings reset to defaults | SPEC.md |\n| Performance targets | Under 50 MB | E1-AC1 |\n')
       .replace('| Question | Answer | Confirmed on |\n| --- | --- | --- |\n', '| Question | Answer | Confirmed on |\n| --- | --- | --- |\n| App stores | None: GitHub releases | 2026-11-08 |\n| Support channel | GitHub issues | 2026-11-08 |\n')
-      .replace('| --- | --- | --- | --- |\n\nAn L', '| --- | --- | --- | --- |\n| E0 | S | known | - |\n| E1 | M | partly | - |\n| E2 | S | known | - |\n\nAn L')
+      .replace('| --- | --- | --- | --- |\n\nAn epic whose', '| --- | --- | --- | --- |\n| E0 | S | known | - |\n| E1 | M | partly | - |\n| E2 | S | known | - |\n\nAn epic whose')
       .replace(/(\| # \| Finding \| Severity \| Closed by \(epic, ADR\) or accepted risk \|\n\| --- \| --- \| --- \| --- \|\n)/, '$1| 1 | Snooze had no criterion | should fix | E1-AC2 |\n| 2 | Full-screen games hide it | should fix | R-1 |\n'),
   );
 }
@@ -736,6 +736,22 @@ step('plan and spike checks', (report) => {
     commit(c);
     expect('a spike committed with its result', check(c, 'spike'), [/later\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
     c = copy();
+    writeFileSync(join(c, 'docs/spikes/early.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/early').replace('Pending.', 'Confirmed: 10 of 10 shown.'));
+    commit(c);
+    edit(c, 'docs/spikes/early.md', (t) => t.replace('- Outcome: pending', '- Outcome: confirmed').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n| Reminder shown over a full-screen app | 10 of 10 | owner | 2026-11-08 |\n'));
+    commit(c);
+    expect('a criterion commit that already held a conclusion', check(c, 'spike'), [/early\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
+    c = copy();
+    gitIn(c, 'switch', '-qc', 'side');
+    writeFileSync(join(c, 'side.txt'), 'x\n');
+    commit(c);
+    gitIn(c, 'switch', '-q', 'plan/initial');
+    gitIn(c, 'merge', '-q', '--no-ff', '--no-commit', 'side');
+    writeFileSync(join(c, 'docs/spikes/merged.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/merged'));
+    gitIn(c, 'add', '-A');
+    gitIn(c, 'commit', '-qm', 'merge side with a spike in it');
+    expect('a spike only a merge adds', check(c, 'spike'), [/merged\.md: no commit but a merge adds it/]);
+    c = copy();
     edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: pending').replace('10 of 10 shown |', 'all shown |').replace('| 10 of 10 | owner', '| all | owner'));
     expect('a spike without numbers or an outcome', check(c, 'spike'), [/"- Outcome:" is "pending"/, /"Success when" holds no number/, /"Measured" holds no number/]);
     c = copy();
@@ -831,6 +847,22 @@ step('plan and spike checks', (report) => {
     }
     planCase('a requirement answered "open, nothing yet"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults |', '| Backups and restore | open, nothing yet |')), [/"Backups and restore" has no answer/], 'plan-review');
     planCase('a finding closed by an ID and a few words', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | E1-AC2 (snooze) |')), [], 'plan-review');
+    // T2 review, round 2.
+    planCase('an open finding in a second table', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n\n### Round 2\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 3 | E2 names no systems | blocking | open: name them |\n')), [/"## Findings" holds 2 tables/], 'plan-review');
+    planCase('a dash as an answer and as a place', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Security and secrets | None kept | SPEC.md |', '| Security and secrets | - | - |').replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | Under 50 MB | somewhere |')), [/"Security and secrets" has no answer/, /"Performance targets" has no place where it lives/], 'plan-review');
+    planCase('a finding closed by the template ADR', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ADR-0000 |')), [/finding 1 is not closed/], 'plan-review');
+    planCase('a broken link in SPEC.md', (p, e) => e('docs/SPEC.md', (t) => t.replace('A local settings file.', 'A local settings file, see [the idea](../nowhere/IDEA.md).')), [/SPEC\.md: broken link \.\.\/nowhere\/IDEA\.md/]);
+    planCase('a broken link in PLAN-REVIEW.md', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Snooze had no criterion |', '| Snooze had no [criterion](epics/E9-x.md) |')), [/PLAN-REVIEW\.md: broken link epics\/E9-x\.md/], 'plan-review');
+    planCase('a high-risk assumption only a superseded ADR covers', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+      e('docs/adr/0001-stack.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003').replace('A desktop app.', 'A desktop app; it settles A-1.'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    planCase('not confirmed, follow-up an ADR that supersedes nothing', (p, e) => e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0001')), [/notify\.md: not confirmed, and its follow-up is not done/]);
+    planCase('not confirmed, follow-up the ADR that supersedes the old one', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0003'));
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+    }, []);
     planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
       e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
       rmSync(join(p, 'docs/spikes/notify.md'));
@@ -873,7 +905,7 @@ step('review status (fake gh)', (report) => {
     gitIn(base, 'fetch', '-q', 'origin');
     const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN' }, pr: { head: 'local' }, status: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = ['--review', 'plan', '--state', 'success'], prepare, gh, code, result, posts, commits = 0, says = [] }) => {
+    const run = (label, scenario, { args = ['--review', 'plan', '--state', 'success'], prepare, gh, env = {}, code, result, posts, commits = 0, says = [] }) => {
       const p = join(dir, `r${(n += 1)}`);
       cpSync(base, p, { recursive: true });
       // Each case pushes to a remote of its own.
@@ -884,7 +916,7 @@ step('review status (fake gh)', (report) => {
       writeFileSync(reviewFile, readFileSync(reviewFile, 'utf8').replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | should fix | E2-AC1 |\n'));
       prepare?.(p);
       const before = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim());
-      const { r, calls, state } = withFakeGh('review-status.mjs', p, scenario, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}) });
+      const { r, calls, state } = withFakeGh('review-status.mjs', p, scenario, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}), ...env });
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       const writes = calls.filter((c) => c.args.includes('POST'));
       const made = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim()) - before;
@@ -928,6 +960,12 @@ step('review status (fake gh)', (report) => {
     run('push refused', ok, { prepare: (p) => gitIn(p, 'remote', 'set-url', 'origin', join(dir, 'no-such-remote.git')), code: 3, result: 'pending', posts: 0, commits: 1, says: ['    git push -u origin plan/initial\n'] });
     run('dry run', ok, { args: ['--review', 'plan', '--state', 'success', '--dry-run'], code: 0, result: 'success (dry run', posts: 0, commits: 0, says: ['would commit docs/PLAN-REVIEW.md', 'would run gh api -X POST'] });
     run('nothing to commit', ok, { prepare: (p) => gitIn(p, 'checkout', '-q', '--', 'docs/PLAN-REVIEW.md'), code: 0, result: 'success', posts: 1, commits: 0 });
+    // T2 review, round 2: an ignored file the check would read, a failed read after the write, a commit git refuses.
+    run('an ignored file under docs/', ok, { prepare: (p) => { writeFileSync(join(p, '.git', 'info', 'exclude'), 'docs/adr/0004-extra.md\n'); writeFileSync(join(p, 'docs', 'adr', '0004-extra.md'), '# ADR-0004: Extra\n'); }, code: 1, posts: 0, says: ['ignored by git', 'docs/adr/0004-extra.md'] });
+    run('the status read back fails', { ...ok, reads: 'statuses' }, { code: 3, result: 'pending', posts: 1, commits: 1, says: ['reading it back'] });
+    const emptyConfig = join(dir, 'empty.gitconfig');
+    writeFileSync(emptyConfig, '');
+    run('git cannot commit', ok, { env: { GIT_AUTHOR_NAME: '', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: '', GIT_COMMITTER_EMAIL: '', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' }, code: 1, posts: 0, commits: 0, says: ['git could not commit docs/PLAN-REVIEW.md'] });
     for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'code', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
       run(label, ok, { args: a, code: 2, posts: 0 });
     }
@@ -942,7 +980,7 @@ step('plan merge (fake gh)', (report) => {
     const sha = gitIn(base, 'rev-parse', 'plan/initial').stdout.trim();
     const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
     const run = (label, scenario, { args = ['--plan', '--owner-approved'], project = base, gh, code, result, merges, says = [] }) => {
-      const { r, calls, state } = withFakeGh('merge.mjs', project, scenario, [...args, '--project', project, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}) });
+      const { r, calls, state } = withFakeGh('merge.mjs', project, scenario, [...args, '--project', project, ...(args.includes('--wait') ? [] : ['--wait', '0'])], { GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}) });
       const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
       const merged = calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
       if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
@@ -985,6 +1023,14 @@ step('plan merge (fake gh)', (report) => {
     run('the merge is not read back', { ...ok, merge: 'lost' }, { code: 3, result: 'pending', merges: 1, says: ['reads OPEN'] });
     run('merged by hand before', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 0, result: 'merged', merges: 0, says: ['does not record the approval of the owner'] });
     run('merged with the approval before', { ...ok, pr: { head: 'local', state: 'MERGED' }, mergeMessage: 'Merge the plan\n\nPlan approved by the owner, 2026-11-08, at abc' }, { code: 0, result: 'merged', merges: 0, says: ['records the approval of the owner'] });
+    // T2 review, round 2.
+    run('without --plan', ok, { args: ['--owner-approved'], code: 2, merges: 0, says: ['--plan is required'] });
+    run('a --wait that is not a number', ok, { args: ['--plan', '--owner-approved', '--wait', 'soon'], code: 2, merges: 0, says: ['--wait takes a number of seconds'] });
+    run('the statuses cannot be read', { ...ok, reads: 'statuses' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the statuses'] });
+    run('the check runs cannot be read', { ...ok, reads: 'check-runs' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the check runs'] });
+    run('the rules cannot be read', { ...ok, reads: 'rules' }, { code: 0, result: 'merged', merges: 1, says: ['could not read the rules on main'] });
+    run('the protection cannot be read', { ...ok, reads: 'protection' }, { code: 0, result: 'merged', merges: 1, says: ['could not read the branch protection of main'] });
+    run('a gate re-run after a failure', { ...ok, gateRerun: true }, { code: 0, result: 'merged', merges: 1 });
     const nobranch = join(dir, 'nobranch');
     cpSync(base, nobranch, { recursive: true });
     gitIn(nobranch, 'switch', '-q', 'main');

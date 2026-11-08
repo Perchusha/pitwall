@@ -84,6 +84,9 @@ if (branch !== review.branch) refuse(`on branch "${branch}": the ${args.review} 
 const changed = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all').raw.split('\n').filter(Boolean).map((l) => l.slice(3));
 const others = changed.filter((p) => p !== review.file);
 if (others.length > 0) refuse(`the tree has changes besides ${review.file}; the main conversation commits its fixes before a review round`, others.slice(0, 20).join('\n'));
+// The check reads the files on disk, so an ignored file it would read, and the commit would not hold, is refused too.
+const ignored = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--ignored', '--untracked-files=all', '--', 'docs', 'CLAUDE.md', '.claude/pitwall.json').raw.split('\n').filter((l) => l.startsWith('!! ')).map((l) => l.slice(3));
+if (ignored.length > 0) refuse('files the docs check reads are ignored by git, so the reviewed commit would not hold them', ignored.slice(0, 20).join('\n'));
 
 // 2. success only when the review passes its check, on the tree as it is.
 if (state === 'success') {
@@ -164,7 +167,9 @@ if (dry) {
 const write = gh(['api', '-X', 'POST', `repos/${name}/statuses/${sha}`, '-f', `state=${state}`, '-f', `context=${context}`, '-f', `description=${description}`]);
 if (!write.ok) handoff(`GitHub refused the status: ${write.err.trim()}`, [{ note: 'where gh may write to the repository' }, { run: post }]);
 const back = gh(['api', `repos/${name}/commits/${sha}/statuses`]);
-const latest = (parseJson(back.out) ?? []).find((s) => s.context === context);
+// gh prints an error body, a JSON object, on a failed read, so only an array is a list of statuses.
+const list = back.ok ? parseJson(back.out) : null;
+const latest = Array.isArray(list) ? list.find((s) => s.context === context) : undefined;
 if (!back.ok || latest?.state !== state) handoff('the status went through, but reading it back does not show it.', [{ run: `gh api repos/${name}/commits/${sha}/statuses` }]);
 log(`${context} is ${state} on ${sha.slice(0, 7)}: ${description}`);
 console.log(`RESULT: ${state}`);

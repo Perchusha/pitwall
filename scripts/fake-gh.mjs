@@ -14,6 +14,7 @@
 // status ("ok", "refuse", "lost"), statuses ({ <context>: <state> } already on the PR head),
 // gate ("success", "failure", "pending", or null for none), gateApp (its app id),
 // rules (the rules on main), merge ("ok", "refuse", "lost"), mergeMessage (of a PR merged before the run).
+// reads ("statuses", "check-runs", "rules" or "protection": that read fails), gateRerun (an older failed gate run).
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -84,18 +85,33 @@ if (args[0] === 'api') {
     out({ state: f.state, context: f.context });
   }
   // Statuses and check runs belong to one commit: the scenario's are on the PR head only.
+  // A failed read, the way gh shows one: the error body on stdout as JSON, the status on stderr.
+  const failed = () => {
+    process.stdout.write(JSON.stringify({ message: 'API rate limit exceeded', documentation_url: 'https://docs.github.com/rest' }));
+    err('gh: API rate limit exceeded (HTTP 403)');
+  };
   const list = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)\/statuses$/.exec(path);
-  if (list) out([...(st.statuses?.[list[1]] ?? []), ...(list[1] === prHead() ? Object.entries(s.statuses ?? {}).map(([context, state]) => ({ context, state })) : [])]);
+  if (list) {
+    if (s.reads === 'statuses') failed();
+    out([...(st.statuses?.[list[1]] ?? []), ...(list[1] === prHead() ? Object.entries(s.statuses ?? {}).map(([context, state]) => ({ context, state })) : [])]);
+  }
   const runs = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)\/check-runs$/.exec(path);
   if (runs) {
+    if (s.reads === 'check-runs') failed();
     const gate = runs[1] === prHead() ? s.gate : null;
     const pending = gate === 'pending';
-    out({ total_count: gate ? 1 : 0, check_runs: gate ? [{ name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : gate, app: { id: s.gateApp ?? 15368 } }] : [] });
+    // gateRerun: an older failed run before the latest one.
+    const older = s.gateRerun ? [{ id: 1, name: 'gate', status: 'completed', conclusion: 'failure', app: { id: 15368 } }] : [];
+    out({ total_count: gate ? 1 + older.length : 0, check_runs: gate ? [{ id: 2, name: 'gate', status: pending ? 'in_progress' : 'completed', conclusion: pending ? null : gate, app: { id: s.gateApp ?? 15368 } }, ...older] : [] });
   }
   // A commit: the merge commit's message, for merge.mjs to see whether it records the approval.
   const commit = /^repos\/[^/]+\/[^/]+\/commits\/([0-9a-f]+)$/.exec(path);
   if (commit) out({ sha: commit[1], commit: { message: st.merged ? `Merge the plan\n\n${st.merged.args[st.merged.args.indexOf('--body') + 1]}` : s.mergeMessage ?? 'Merge pull request #7' } });
-  if (/\/rules\/branches\//.test(path)) out(s.rules ?? []);
+  if (/\/rules\/branches\//.test(path)) {
+    if (s.reads === 'rules') failed();
+    out(s.rules ?? []);
+  }
+  if (s.reads === 'protection' && path.endsWith('/protection') && method === 'GET') err('gh: Must have admin rights to Repository. (HTTP 403)');
 
   // Branch protection: written by protect.mjs, read by it and by merge.mjs.
   if (method === 'PUT') {

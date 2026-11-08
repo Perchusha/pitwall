@@ -135,6 +135,10 @@ function requireFilled(rel, templateRel, names) {
     if (!filled(mine.get(name), tpl.get(name))) report(rel, `section "## ${name}" is not filled in`);
     const want = tableHeader(tpl.get(name) ?? []);
     if (!want) continue;
+    // The checks read one table per section, so a second one, such as a later round's rows
+    // under a subheading, would go unread: it is refused instead.
+    const tables = mine.get(name).filter((l, i, all) => l.trim().startsWith('|') && !(all[i - 1] ?? '').trim().startsWith('|')).length;
+    if (tables > 1) report(rel, `"## ${name}" holds ${tables} tables: keep every row in the one table the template gives it`);
     const got = tableHeader(mine.get(name));
     if (!got || got.join('|').toLowerCase() !== want.join('|').toLowerCase()) {
       report(rel, `the table in "## ${name}" must keep the template's columns: | ${want.join(' | ')} |`);
@@ -491,7 +495,9 @@ function checkSpike() {
     // spike is not (git log --follow would walk into the other spike's history).
     const origin = spikeOrigin(git, rel);
     if (!origin) {
-      report(rel, 'is not committed: commit the criterion on the planning branch before any prototype code');
+      // git log shows no adding commit for a file that only a merge brought in, and such a merge cannot show the criterion came first.
+      const tracked = git('ls-files', '--error-unmatch', '--', rel).ok;
+      report(rel, tracked ? 'no commit but a merge adds it, so nothing shows the criterion came first: commit the criterion on the planning branch before any prototype code' : 'is not committed: commit the criterion on the planning branch before any prototype code');
       continue;
     }
     const first = origin.sha;
@@ -502,7 +508,9 @@ function checkSpike() {
     }
     const before = shown.raw.replace(/\r\n/g, '\n');
     if (sectionText(before, 'Criterion') !== sectionText(text, 'Criterion')) report(rel, `the criterion changed after ${first.slice(0, 7)}, the commit that added it: a criterion is never adjusted to the result`);
-    if (tableRows(sections(before).get('Result') ?? []).length > 0 || d.outcomes.includes(field(before, 'Outcome'))) {
+    const conclusionBefore = sections(before).get('Conclusion') ?? [];
+    const concludedBefore = filled(conclusionBefore, sections(readTemplate(SPIKE_TEMPLATE)).get('Conclusion')) && sectionText(before, 'Conclusion') !== 'Pending.';
+    if (tableRows(sections(before).get('Result') ?? []).length > 0 || d.outcomes.includes(field(before, 'Outcome')) || /\b[0-9a-f]{7,40}\b/.test(field(before, 'Prototype')) || concludedBefore) {
       report(rel, `${first.slice(0, 7)}, the commit that added it, already held a result: the criterion is committed before the prototype`);
     }
     if (!proto) continue;
@@ -535,6 +543,8 @@ function adrAccepted(id) {
   const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && field(read(`docs/adr/${f}`), 'Status').startsWith('accepted'));
 }
+// Whether some ADR reads "superseded by <id>": the mark /pitwall:decide <area> leaves on the old decision.
+const supersedes = (id) => adrFiles.some((f) => new RegExp(`^superseded by ${id}\\b`).test(field(read(`docs/adr/${f}`), 'Status')));
 
 // The relative Markdown links of a file that point nowhere.
 function brokenLinks(rel) {
@@ -658,7 +668,7 @@ function checkPlan() {
   for (const id of graph.keys()) if (!state.has(id)) visit(id, [id]);
   for (const c of cycles) report(rel, `dependency cycle: ${c}`);
   for (const f of epicFiles) if (!listed.has(f)) report(`docs/epics/${f}`, 'is not in the table of docs/EPICS.md');
-  for (const link of brokenLinks(rel)) report(rel, `broken link ${link}`);
+  for (const doc of [rel, 'docs/SPEC.md'].filter(has)) for (const link of brokenLinks(doc)) report(doc, `broken link ${link}`);
   const max = cfg.processLevels[levelName]?.epics?.max;
   if (typeof max === 'number' && epics.length - 1 > max) {
     report(rel, `${epics.length - 1} epics after ${p.firstEpic}: the ${levelName} level holds at most ${max}; cut the plan, or raise the level with an ADR`);
@@ -675,8 +685,9 @@ function checkPlan() {
     const follow = stripCode(field(text, 'Follow-up'));
     const adr = /\bADR-\d{4}\b/.exec(follow)?.[0];
     const risk = /\bR-\d+\b/.exec(follow)?.[0];
-    if (adr ? !adrAccepted(adr) : risk ? !accepted.get(risk) : true) {
-      report(sr, 'not confirmed, and its follow-up is not done: an accepted ADR from /pitwall:decide <area>, or a risk R-n the owner accepted in docs/RISKS.md with a date');
+    // An ADR follow-up is the new decision: accepted, and the one an older ADR is superseded by.
+    if (adr ? !(adrAccepted(adr) && supersedes(adr)) : risk ? !accepted.get(risk) : true) {
+      report(sr, 'not confirmed, and its follow-up is not done: a new accepted ADR from /pitwall:decide <area>, which an older ADR is "superseded by", or a risk R-n the owner accepted in docs/RISKS.md with a date');
     }
   }
 }
@@ -693,11 +704,20 @@ function checkPlanReview() {
   if (!Object.hasOwn(cfg.processLevels, levelName ?? '')) return;
   const s = requireFilled(rel, rel, ['Pre-mortem', 'Non-functional requirements', 'Launch questions', 'Epic sizing', 'Findings']);
   if (!s) return;
+  for (const doc of [rel, 'docs/RISKS.md'].filter(has)) for (const link of brokenLinks(doc)) report(doc, `broken link ${link}`);
   // Closed means the cell starts with the ID that closes it, written outside a code span. A cell
   // that starts with "open", or with words, is open whatever IDs follow.
-  const CLOSER = /^\[?(?:E\d+(?:-AC\d+)?|ADR-\d{4}|R-\d+)\b/;
+  const CLOSER = /^\[?(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/;
   const isOpen = (cell) => new RegExp(`^\\s*${r.open}\\b`, 'i').test(cell ?? '');
   const closed = (cell) => CLOSER.test(stripCode(cell ?? '').trim()) && !isOpen(cell);
+  // An answer is more than a dash or a placeholder; a place names a document of the project or an ID.
+  const blank = (cell) => !cell || isOpen(cell) || /^(?:-+|n\/a|tbd|todo|\?+)$/i.test(cell.trim());
+  const place = (cell) => {
+    if (blank(cell)) return false;
+    if (/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/.test(stripCode(cell))) return true;
+    const doc = /([\w./-]+\.md)\b/.exec(cell.replace(/`/g, ''))?.[1];
+    return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
+  };
   const forLevel = (list) => list.filter((x) => x.levels.includes(levelName)).map((x) => x.item);
 
   const reasons = tableRows(s.get('Pre-mortem') ?? []);
@@ -712,11 +732,11 @@ function checkPlanReview() {
     for (const item of items) {
       const row = rows.find((x) => same(x[0], item));
       if (!row) report(rel, `"## ${section}": "${item}" is missing`);
-      else if (!row[1] || isOpen(row[1])) report(rel, `"## ${section}": "${item}" has no answer`);
+      else if (blank(row[1])) report(rel, `"## ${section}": "${item}" has no answer`);
       else if (!third(row[2] ?? '')) report(rel, `"## ${section}": "${item}" has ${missing}`);
     }
   };
-  answered('Non-functional requirements', forLevel(r.nonFunctional), (c) => Boolean(c) && !isOpen(c), 'no place where it lives');
+  answered('Non-functional requirements', forLevel(r.nonFunctional), place, 'no place where it lives: a document of the project (SPEC.md, an ADR file) or an ID');
   answered('Launch questions', forLevel(r.launch), (c) => DATE.test(c), 'no date the owner confirmed it');
 
   const sizing = tableRows(s.get('Epic sizing') ?? []);
@@ -747,9 +767,10 @@ function checkPlanReview() {
   if (!has('docs/DISCOVERY.md')) return report('docs/DISCOVERY.md', 'missing');
   const assumptions = tableRows(sections(read('docs/DISCOVERY.md')).get('Assumptions by risk') ?? []);
   const top = cfg.discovery.riskOrder[0];
+  // Only accepted ADRs count: a superseded or proposed one decides nothing any more.
   const covering = [
     ...spikeFiles.map((f) => `docs/spikes/${f}`),
-    ...adrFiles.map((f) => `docs/adr/${f}`),
+    ...adrFiles.filter((f) => field(read(`docs/adr/${f}`), 'Status').startsWith('accepted')).map((f) => `docs/adr/${f}`),
     ...epicFiles.map((f) => `docs/epics/${f}`),
   ].map((f) => stripCode(read(f)));
   // From docs/RISKS.md only the risks the owner accepted count.
