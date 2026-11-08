@@ -169,45 +169,70 @@ function headingList(text) {
   });
 }
 
+// What a reader sees in a cell or a line of text: struck-through text gone, inline HTML tags
+// gone, character references decoded, links reduced to their text.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+function visible(text) {
+  return (text ?? '')
+    .replace(/~~.*?~~/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, (_, label) => label);
+}
+
 // The checks read a file line by line: tables are lines that start with "|", sections start at
 // "## " headings, fields are "- Name:" lines. Markdown that GitHub shows differently could hide a
-// row from them, so in the files whose rows they judge it is refused (T2 reviews): HTML comments
-// and blocks, block quotes, setext headings and rules, indented headings, a "|" outside a table
-// row, a table indented as code, a table outside the sections that hold one, more than one table
-// where one is read, a repeated first cell in a table, and a field that appears twice.
-//   tables: the "## " sections that may hold one table each, null for one table in the file, "any" for no rule;
+// row or a field from them, so the files whose rows and fields decide a stage keep to a small
+// grammar of lines, and anything outside it is refused (T2 reviews). A line is blank, a heading
+// at the first column, a table row starting with "|" at the first column, a fence at the first
+// column, a rule after a blank line, or text: a paragraph or a list item. Text may not start a
+// block GitHub reads another way: an HTML block or comment, a block quote, a link reference
+// definition, a setext underline, an indented heading, an indented fence (which may belong to a
+// list item), an indented table row, a table without leading pipes. A line right after a table
+// row is a row too on GitHub, so it must be blank or a row. On top of that: tables only in the
+// sections that hold one, one each, no row twice, no field twice.
+//   tables: the "## " sections that may hold tables, null for one table in the file, "any" for any;
+//   once: sections that may hold one table at most (for "any");
+//   quotes: whether block quotes may stand (where the checks read no table or field from them);
 //   fields: field names ("- Name:" with dash, "Name:" without) that must appear at most once.
-function checkStructure(rel, { tables = null, fields = [], dash = true } = {}) {
+function checkStructure(rel, { tables = null, once = [], quotes = false, fields = [], dash = true } = {}) {
   if (!has(rel)) return;
   const lines = read(rel).split('\n');
   const fenced = fencedLines(lines);
   const plain = stripCode(lines.join('\n')).split('\n');
   const perSection = new Map();
   let section = null;
-  let inTable = false;
+  let prev = '';
+  let prevRow = false;
   let rowIndex = 0;
   let firsts = new Set();
   lines.forEach((line, i) => {
     const where = `${rel}:${i + 1}`;
     if (fenced[i]) {
-      inTable = false;
+      if (/^ {1,3}(`{3,}|~{3,})/.test(line) && !fenced[i - 1]) report(where, 'an indented fence: start fences at the first column, outside lists');
+      prev = line;
+      prevRow = false;
       return;
     }
     const text = plain[i];
+    const blank = line.trim() === '';
     const heading = /^##\s+(.+?)\s*$/.exec(line);
     if (heading) section = heading[1];
     else if (/^#\s/.test(line)) section = null;
+    const row = /^\|/.test(line);
+    if (prevRow && !blank && !row) report(where, 'a line right after a table: GitHub reads it as a row of the table; leave a blank line after a table');
     if (text.includes('<!--')) report(where, 'an HTML comment: GitHub hides it, the checks would read it; remove it');
-    else if (/^ {0,3}<[A-Za-z/!?]/.test(line)) report(where, 'an HTML block: write it in Markdown the checks read');
-    if (/^ {0,3}>/.test(line)) report(where, 'a block quote: the checks read tables and fields outside quotes only');
-    if (/^ {0,3}(?:=+|-+|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(line)) report(where, 'a setext heading or a rule: use "## " headings and no rules');
+    else if (/^ {0,3}<(?!https?:)[A-Za-z/!?]/.test(line)) report(where, 'an HTML block: write it in Markdown the checks read');
+    if (!quotes && /^ {0,3}>/.test(line)) report(where, 'a block quote: the checks read tables and fields outside quotes only');
+    if (/^ {0,3}\[[^\]]+\]:/.test(line)) report(where, 'a link reference definition, which GitHub does not show: write the link inline');
+    if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prev.trim() !== '') report(where, 'a setext heading (text underlined with = or -): use a "## " heading');
     if (/^ {1,3}#{1,6}(?:\s|$)/.test(line)) report(where, 'an indented heading: start a heading at the first column');
-    const row = /^ {0,3}\|/.test(line);
-    if (!row && /(?<!\\)\|/.test(text)) {
-      report(where, /^\s{4,}\|/.test(line) ? 'a table row indented four spaces, which GitHub shows as code' : 'a "|" outside a table row: start the row with "|", or write the "|" as "\\|"');
-    }
+    if (/^ +\|/.test(line)) report(where, 'an indented table row: start table rows at the first column');
+    if (!row && /^\s*:?-+:?\s*\|/.test(text)) report(where, 'a table without leading pipes: start every row with "|"');
     if (row) {
-      if (!inTable) {
+      if (!prevRow) {
         perSection.set(section, (perSection.get(section) ?? 0) + 1);
         rowIndex = 0;
         firsts = new Set();
@@ -215,17 +240,20 @@ function checkStructure(rel, { tables = null, fields = [], dash = true } = {}) {
       const cells = splitRow(line);
       rowIndex += 1;
       if (rowIndex > 1 && !isSeparator(cells)) {
-        const first = (cells[0] ?? '').replace(/[`*_]/g, '').trim().toLowerCase();
+        const first = visible(stripCode(cells[0] ?? '')).replace(/[*_]/g, '').trim().toLowerCase();
         if (first && firsts.has(first)) report(where, `the row "${cells[0]}" repeats a row above it in the same table: keep one row for it`);
         firsts.add(first);
       }
     }
-    inTable = row;
+    prev = line;
+    prevRow = row;
   });
   for (const [name, count] of perSection) {
-    if (!Array.isArray(tables)) continue;
-    if (!tables.includes(name)) report(rel, `a table ${name ? `in "## ${name}"` : 'outside the sections'}: the checks read tables only in ${tables.map((t) => `"## ${t}"`).join(', ')}`);
-    else if (count > 1) report(rel, `"## ${name}" holds ${count} tables: keep every row in the one table the template gives it`);
+    if (Array.isArray(tables) && !tables.includes(name)) {
+      report(rel, `a table ${name ? `in "## ${name}"` : 'outside the sections'}: the checks read tables only in ${tables.map((t) => `"## ${t}"`).join(', ')}`);
+    } else if ((Array.isArray(tables) || once.includes(name)) && count > 1) {
+      report(rel, `"## ${name}" holds ${count} tables: keep every row in the one table the template gives it`);
+    }
   }
   if (tables === null) {
     const count = [...perSection.values()].reduce((a, b) => a + b, 0);
@@ -396,7 +424,9 @@ function checkKickoff() {
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);
 }
 
+const DISCOVERY_STRUCTURE = { tables: ['Analogues', 'Owner constraints', 'Assumptions by risk'] };
 function checkDiscovery() {
+  checkStructure('docs/DISCOVERY.md', DISCOVERY_STRUCTURE);
   const d = cfg.discovery;
   const rel = 'docs/DISCOVERY.md';
   const s = requireFilled(rel, rel, ['Problem and user', 'Scenarios', 'Non-goals', 'Analogues', 'Owner constraints', 'Assumptions by risk']);
@@ -541,7 +571,7 @@ function checkDecide() {
 // ---------- spike (T2-AC1, ADR-0009) ----------
 
 const SPIKE_TEMPLATE = 'docs/spikes/template.md';
-const SPIKE_STRUCTURE = { tables: ['Criterion', 'Result'], fields: ['Assumption', 'Branch', 'Date', 'Outcome', 'Prototype', 'Follow-up'] };
+const SPIKE_STRUCTURE = { tables: 'any', once: ['Criterion', 'Result'], fields: ['Assumption', 'Branch', 'Date', 'Outcome', 'Prototype', 'Follow-up'] };
 
 // The non-empty lines of a section, trimmed, so whitespace alone is no change.
 const sectionText = (text, name) => (sections(text).get(name) ?? []).map((l) => l.trim()).filter(Boolean).join('\n');
@@ -659,9 +689,21 @@ function checkSpike() {
 
 // R-n -> whether docs/RISKS.md accepts it: a risk, a fallback and the date the owner accepted it.
 // Rows outside its one table go unread, so a second table is refused where the risks are checked.
+// A status cell as a reader sees it: code spans, struck text, tags and references resolved.
+const cellText = (cell) => visible(stripCode(cell ?? '')).trim();
+// The same, with emphasis and a leading "closed by" or "confirmed on" taken off.
+const bareCell = (cell) => cellText(cell).replace(/^[*_\s]+/, '').replace(/^(?:closed by|confirmed(?: on)?)\s*:?\s*/i, '').replace(/^[*_\s]+/, '');
+// Open: the visible text starts with "open", or says "still open" or "open:" anywhere.
+const openCell = (cell) => {
+  const t = cellText(cell);
+  return new RegExp(`^[\\s*_]*${cfg.planReview.open}\\b`, 'i').test(t) || new RegExp(`\\bstill ${cfg.planReview.open}\\b|\\b${cfg.planReview.open}\\s*:`, 'i').test(t);
+};
+const DATE_FIRST = /^\d{4}-\d{2}-\d{2}\b/;
+
 function risksAccepted() {
   const rows = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
-  return new Map(rows.map(([id, risk, fallback, on]) => [id, Boolean(risk && fallback && DATE.test(on ?? ''))]));
+  const said = (cell) => Boolean(cellText(cell)) && !openCell(cell);
+  return new Map(rows.map(([id, risk, fallback, on]) => [id, said(risk) && said(fallback) && !openCell(on) && DATE_FIRST.test(bareCell(on))]));
 }
 // The ADR that a failed spike led to cites the spike: /pitwall:decide <area> links it in the new
 // ADR, so neither the ADR the spike disproved nor an unrelated one can stand in for it.
@@ -805,7 +847,8 @@ function checkPlan() {
   // The files whose rows and fields this check reads keep to Markdown it reads as GitHub shows it.
   checkStructure(rel, { tables: null });
   checkStructure('docs/RISKS.md', { tables: null });
-  for (const f of epicFiles) checkStructure(`docs/epics/${f}`, { tables: 'any', fields: ['Goal', 'Depends on', 'Risk class', 'ADR'], dash: false });
+  checkStructure('docs/DISCOVERY.md', DISCOVERY_STRUCTURE);
+  for (const f of epicFiles) checkStructure(`docs/epics/${f}`, { tables: 'any', quotes: true, fields: ['Goal', 'Depends on', 'Risk class', 'ADR'], dash: false });
   // Every spike is concluded, and a failed one has a follow-up that is done.
   const accepted = risksAccepted();
   const conclusionTemplate = sections(readTemplate(SPIKE_TEMPLATE)).get('Conclusion');
@@ -844,15 +887,15 @@ function checkPlanReview() {
   // tables only in the template's sections, one each, and no row twice.
   const TABLED = ['Pre-mortem', 'Non-functional requirements', 'Launch questions', 'Epic sizing', 'Findings'];
   checkStructure(rel, { tables: TABLED });
-  checkStructure('docs/DISCOVERY.md', { tables: ['Analogues', 'Owner constraints', 'Assumptions by risk'] });
+  checkStructure('docs/DISCOVERY.md', DISCOVERY_STRUCTURE);
   const accepted = risksAccepted();
-  // A cell's words with emphasis and a leading "closed by" taken off.
-  const bare = (cell) => stripCode(cell ?? '').trim().replace(/^[*_~\s]+/, '').replace(/^closed by\s+/i, '').replace(/^[*_~\s]+/, '');
-  // Closed means the cell starts with the ID that closes it (after "closed by", if the reviewer
-  // wrote that), outside a code span, and a risk that closes it is one the owner accepted. A cell
-  // that starts with "open", or with other words, is open whatever IDs follow.
+  // Every cell is judged by what a reader sees in it (cellText, bareCell, openCell above).
+  const bare = bareCell;
+  const isOpen = openCell;
+  // Closed means the visible cell starts with the ID that closes it (after "closed by", if the
+  // reviewer wrote that), outside a code span, and a risk that closes it is one the owner
+  // accepted. A cell that starts with "open", or with other words, is open whatever IDs follow.
   const CLOSER = /^\[?(E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/;
-  const isOpen = (cell) => new RegExp(`^[\\s*_~]*${r.open}\\b`, 'i').test(stripCode(cell ?? ''));
   const closed = (cell) => {
     const id = CLOSER.exec(bare(cell))?.[1];
     return Boolean(id) && !isOpen(cell) && (!id.startsWith('R-') || accepted.get(id) === true);
@@ -874,8 +917,8 @@ function checkPlanReview() {
   const noAction = (cell) => blank(cell) || /^(?:none|no|nothing|no action)\.?$/i.test(bare(cell));
   const place = (cell) => {
     if (blank(cell)) return false;
-    if (/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/.test(stripCode(cell))) return true;
-    const doc = /([\w./-]+\.md)\b/.exec(cell.replace(/`/g, ''))?.[1];
+    if (/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/.test(cellText(cell))) return true;
+    const doc = /([\w./-]+\.md)\b/.exec(visible((cell ?? '').replace(/`/g, '')))?.[1];
     return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
   };
   const forLevel = (list) => list.filter((x) => x.levels.includes(levelName)).map((x) => x.item);
@@ -897,11 +940,14 @@ function checkPlanReview() {
     }
   };
   answered('Non-functional requirements', forLevel(r.nonFunctional), place, 'no place where it lives: a document of the project (SPEC.md, an ADR file) or an ID');
-  answered('Launch questions', forLevel(r.launch), (c) => /^\d{4}-\d{2}-\d{2}\b/.test(bare(c)), 'no date the owner confirmed it at the start of its cell');
+  answered('Launch questions', forLevel(r.launch), (c) => !isOpen(c) && DATE_FIRST.test(bare(c)), 'no date the owner confirmed it at the start of its cell');
 
   const sizing = tableRows(s.get('Epic sizing') ?? []);
+  const sizedId = (x) => plainIds(visible((x[0] ?? '').replace(/`/g, '')), /\bE\d+\b/g)[0];
   for (const e of (readPlan(true) ?? []).filter((x) => x.id)) {
-    const row = sizing.find((x) => plainIds((x[0] ?? '').replace(/`/g, ''), /\bE\d+\b/g)[0] === e.id);
+    const rows = sizing.filter((x) => sizedId(x) === e.id);
+    if (rows.length > 1) report(rel, `${e.id} is sized in ${rows.length} rows: keep one`);
+    const row = rows[0];
     if (!row) {
       report(rel, `${e.id} is not sized`);
       continue;

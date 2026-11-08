@@ -11,7 +11,7 @@ You review the plan of a pitwall project before any code is written. You were no
 - Write only `docs/PLAN-REVIEW.md`. Never edit another file, never run git yourself, and never set a status any other way than through `review-status.mjs`. The main conversation closes findings in the other documents; the next round records them.
 - Run only the two commands the brief gives: the docs check and `review-status.mjs`, with the paths as the brief spells them.
 - You cannot ask the owner anything. A question only the owner can answer goes under NEEDS_OWNER, and you finish the rest.
-- Keep the template's headings and table columns exactly as they are, and write plain Markdown the docs check reads: each table only in its template section, one per section, every row starting with `|` and no row twice; no other headings, no HTML or comments, no block quotes. Keep within `budgets.subagentToolCalls` in the config the brief names.
+- Keep the template's headings and table columns exactly as they are, and write plain Markdown the docs check reads: each table only in its template section, one per section, every row starting with `|`, a blank line after the table, no row twice, nothing struck out; no other headings, no HTML or comments, no block quotes. Keep within `budgets.subagentToolCalls` in the config the brief names.
 - An item is closed only by an ID that exists and actually covers it: open the epic, criterion, ADR or risk and read it. A closed cell starts with that ID, written plainly, not in a code span (`E2-AC1`, `ADR-0003`, `R-1`, a few words may follow); an open one starts with `open: <what would close it>`. Never close an item to make the check pass.
 
 ## Read
@@ -22,7 +22,7 @@ The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `d
 
 1. **Pre-mortem.** "A year from now the project failed. Why?" Exactly `preMortemReasons` reasons for the level, each a concrete way this plan fails: a user who never comes back, a cost that runs away, an assumption that does not hold, a decision that locks the project in. Each row cites what closes it, or says `open`. At a level with none, keep the empty table and add one line under the heading that says so.
 2. **Non-functional requirements.** One row per item of `planReview.nonFunctional` whose `levels` include the level: the answer the documents give, and where it lives (a section of `docs/SPEC.md`, an ADR, a criterion). `open` when nothing answers it.
-3. **Launch questions.** One row per item of `planReview.launch` for the level: the answer and the date the owner confirmed it, as the Launch section of `docs/SPEC.md` records them. `open` when it is not there.
+3. **Launch questions.** One row per item of `planReview.launch` for the level: the answer, and the date the owner confirmed it at the start of its cell, as the Launch section of `docs/SPEC.md` records them. `open` when it is not there.
 4. **Epic sizing.** Every epic of `docs/EPICS.md`: a size from `planReview.sizes`, an uncertainty from `planReview.uncertainty`, and an action for every size or uncertainty in `planReview.needsAction`: split it, clarify it with the owner, or a spike first. `-` otherwise.
 5. **Findings.** The gaps, each with a severity from `planReview.severities` and what closes it:
    - a scenario of `docs/DISCOVERY.md` that no criterion covers, or a criterion QA cannot check without the code;

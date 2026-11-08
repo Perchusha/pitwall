@@ -18,6 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 - One question per message, then wait. Never answer for the owner, never accept a risk for them, and never merge without their yes in this conversation.
 - Never edit `docs/PLAN-REVIEW.md` and never set `ai-review`: both belong to the reviewer. Close findings in the epics, `docs/SPEC.md`, `docs/RISKS.md` or through `/pitwall:decide`, and let the next round record them.
 - Keep the template's headings and table columns exactly as they are: the docs check reads them.
+- Write plain Markdown the docs check reads as GitHub shows it: headings and table rows at the first column, a blank line after every table, tables only where the template has one, fences at the first column; no HTML or comments, no block quotes, no setext headings, no link reference definitions.
 - When a script hands a step over, show the owner its HANDOFF lines verbatim: the commands under "Run this yourself" are for the owner, and the one under "Then run this to record the result" finishes the step afterwards. Never retry a refused write another way.
 
 ## Steps
@@ -51,7 +52,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 
 ## Reviewer brief
 
-The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number, and from round `review.ownerDecidesAtReject` + 1 on, that it is a verification round; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
+The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number, which survives a resume because it is one more than the commits on the planning branch whose subject starts `docs: plan review,` (`git log --oneline --grep="^docs: plan review," <branch>` lists them), and from round `review.ownerDecidesAtReject` + 1 on, that it is a verification round; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
 
 - `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan-review` (add `,spike` when there are spikes);
 - `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-status.mjs" --review plan --state success` or `--state failure`.

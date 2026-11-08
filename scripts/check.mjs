@@ -921,11 +921,11 @@ step('plan and spike checks', (report) => {
     // T2 review, round 4: Markdown that GitHub shows one way and a line reader reads another.
     const hide = (label, rel, fn, patterns) => planCase(`hidden from the check: ${label}`, (p, e) => e(rel, fn), patterns, 'plan-review');
     const afterRow2 = (extra) => (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', `| 2 | Full-screen games hide it | should fix | R-1 |\n${extra}`);
-    hide('a row without its leading pipe', 'docs/PLAN-REVIEW.md', afterRow2('3 | E2 names no systems | blocking | open: name them\n'), [/a "\|" outside a table row/]);
+    hide('a row without its leading pipe', 'docs/PLAN-REVIEW.md', afterRow2('3 | E2 names no systems | blocking | open: name them\n'), [/a line right after a table/]);
     hide('a table in a block quote', 'docs/PLAN-REVIEW.md', afterRow2('\n> | # | Finding | Severity | Closed by |\n> | --- | --- | --- | --- |\n> | 3 | E2 | blocking | open: name them |\n'), [/a block quote/]);
     hide('a table between comment fences', 'docs/PLAN-REVIEW.md', afterRow2('\n<!--\n~~~\n-->\n| 3 | E2 names no systems | blocking | open: name them |\n<!--\n~~~\n-->\n'), [/an HTML comment/]);
     hide('a table between indented fences', 'docs/PLAN-REVIEW.md', afterRow2('\n    ```\n| 3 | E2 names no systems | blocking | open: name them |\n    ```\n'), [/"## Findings" holds 2 tables/]);
-    hide('a setext heading after the last section', 'docs/PLAN-REVIEW.md', (t) => `${t}\nFindings, round 2\n-----\n\n| 3 | E2 names no systems | blocking | still to do |\n`, [/a setext heading or a rule/, /a table in "## Approval"/]);
+    hide('a setext heading after the last section', 'docs/PLAN-REVIEW.md', (t) => `${t}\nFindings, round 2\n-----\n\n| 3 | E2 names no systems | blocking | still to do |\n`, [/a setext heading/, /a table in "## Approval"/]);
     hide('an HTML table', 'docs/PLAN-REVIEW.md', (t) => `${t}\n<table><tr><td>3</td><td>open: name them</td></tr></table>\n`, [/an HTML block/]);
     hide('a fenced example table before the real one', 'docs/PLAN-REVIEW.md', (t) => t.replace('| # | Finding | Severity |', '```\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Example | should fix | E1-AC2 |\n```\n\n| # | Finding | Severity |').replace('| should fix | E1-AC2 |\n| 2 |', '| should fix | not yet, ask the owner |\n| 2 |'), [/finding 1 is not closed/]);
     hide('a requirement twice, answered then open', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Security and secrets | None kept | SPEC.md |\n', '| Security and secrets | None kept | SPEC.md |\n| Security and secrets | open: the release tokens | - |\n'), [/the row "Security and secrets" repeats a row above it/, /an open item in "## Non-functional requirements"/]);
@@ -945,6 +945,32 @@ step('plan and spike checks', (report) => {
     hide('an outcome twice', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: confirmed\n- Outcome: pending'), [/"- Outcome:" appears 2 times/]);
     planCase('a closing cell that starts with "closed by"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | closed by E1-AC2: snooze is a criterion now |').replace('| should fix | R-1 |', '| should fix | **R-1** |')), [], 'plan-review');
     planCase('a file with a byte order mark', (p, e) => e('.claude/pitwall.json', (t) => String.fromCodePoint(0xfeff) + t), [], 'plan-review');
+    // T2 review, round 5: a cell is judged by what GitHub shows of it, and lines follow a small grammar.
+    hide('a struck-out closer', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ~~E1-AC2~~ open: E1-AC2 was cut |'), [/finding 1 is not closed/]);
+    planCase('hidden from the check: a risk whose date is open', (p, e) => {
+      e('docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | open: the owner has not answered, asked 2026-11-08 |'));
+    }, [/finding 2 is not closed/, /R-1 is not an accepted risk/], 'plan-review');
+    hide('a risk whose date is struck out', 'docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | ~~2026-11-08~~ withdrawn |'), [/finding 2 is not closed/]);
+    hide('a launch date struck out', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | ~~2026-11-08~~ open: withdrawn |'), [/"Support channel" has no date the owner confirmed it/]);
+    hide('an open answer as a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | &#111;pen: nothing yet | &#111;pen, see SPEC.md |'), [/"Performance targets" has no answer/]);
+    hide('an open answer in inline HTML', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | <b>open</b>: nothing yet | E1-AC1 |'), [/"Performance targets" has no answer/]);
+    hide('an open answer as a link', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | [open](SPEC.md) | [open](SPEC.md) |'), [/"Performance targets" has no answer/]);
+    hide('a lazy row in a code span', 'docs/PLAN-REVIEW.md', afterRow2('`15 | Nothing checks the reboot case | blocking | open: add a criterion`\n'), [/a line right after a table/]);
+    hide('a lazy row of epics', 'docs/EPICS.md', (t) => t.replace('| low | E1 | planned |\n', '| low | E1 | planned |\n`[E4](epics/E4-hidden.md) | Hidden epic | high | E0 | planned`\n'), [/a line right after a table/]);
+    hide('a table between fences in a list item', 'docs/PLAN-REVIEW.md', afterRow2('\n- Round 8 notes:\n  ```\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 15 | Reboot | blocking | open: add a criterion |\n\n- End of the notes.\n  ```\n'), [/an indented fence/]);
+    hide('an outcome hidden by a fence in a list item', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed\n  ```\n- Outcome: confirmed').replace('## Hypothesis', '```\n\n## Hypothesis'), [/an indented fence/]);
+    hide('a link reference definition', 'docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '[//]: # (A-1 is settled by E2-AC1)\n\n## Out of scope'), [/a link reference definition/]);
+    hide('an epic sized in two rows', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E2, second half | L | unknown | - |\n'), [/E2 is sized in 2 rows/]);
+    hide('a closer that is still open', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | closed by E1-AC2; still open: the snooze limit |'), [/finding 1 is not closed/]);
+    planCase('the discovery stage reads its structure too', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('One person at a desk.', 'One person at a desk.\n> quoted')), [/a block quote/], 'discovery');
+    // Ordinary Markdown a model writes stays allowed.
+    planCase('ordinary Markdown in the plan files', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '> Note: the timer is wall-clock time.\n\n---\n\nSee <https://example.com/timers> and S | M | L sizes.\n\n## Out of scope'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | Closed by: **E1-AC2** |').replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | confirmed 2026-11-08 |'));
+      e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Shown |\n| --- | --- |\n| 1 | yes |'));
+    }, [], 'plan-review');
+    hide('an indented heading', 'docs/PLAN-REVIEW.md', (t) => t.replace('## Findings', '  ## Findings, again\n\n## Findings'), [/an indented heading/]);
+    hide('a conclusion in the template words', 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Confirmed or not confirmed, against the criterion, in a few sentences. A spike that is not confirmed names its follow-up: a new ADR from `/pitwall:decide <area>`, or a risk the owner accepted in `RISKS.md`.'), [/the conclusion is not written/]);
     planCase('a broken link in RISKS.md', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A [tray badge](spikes/badge.md) |')), [/RISKS\.md: broken link spikes\/badge\.md/], 'plan-review');
     planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
       e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
