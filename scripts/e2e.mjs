@@ -236,12 +236,16 @@ function status(stage) {
 }
 
 // A passing stage saves the project as it left it, for runs that start after it.
-function save(stage) {
+// The numbers go with it, and are printed at once, so a run stopped later keeps them.
+function save(stage, numbers) {
   const dest = join(stateDir, stage);
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(stateDir, { recursive: true });
   cpSync(project, dest, { recursive: true });
-  writeFileSync(join(stateDir, `${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, head: git('rev-parse', '--short', 'HEAD').stdout.trim() }) + '\n');
+  const commit = git('rev-parse', '--short', 'HEAD').stdout.trim();
+  const pluginCommit = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout.trim();
+  writeFileSync(join(stateDir, `${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, head: commit, ...numbers }) + '\n');
+  console.log(`  saved: ${numbers.turns} turns, ${numbers.minutes.toFixed(1)} min, $${numbers.cost.toFixed(2)}, plugin at ${pluginCommit}`);
 }
 
 const results = [];
@@ -279,8 +283,9 @@ for (const stage of stages) {
     error = err.message;
   }
   if (!verdict.done) verdict = status(stage);
-  if (verdict.done) save(stage);
-  results.push({ stage, pass: verdict.done, turns, cost, minutes: (Date.now() - started) / 60000, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
+  const minutes = (Date.now() - started) / 60000;
+  if (verdict.done) save(stage, { turns, minutes, cost });
+  results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
   if (!verdict.done) break;
 }
 
