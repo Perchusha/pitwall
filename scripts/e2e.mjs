@@ -73,6 +73,7 @@ Facts you answer from:
 const OWNER_RULES = `Answer as this owner, in English, in one to three sentences, and only what was asked.
 - When asked to confirm or approve something that fits the facts, confirm it.
 - When offered options with a recommendation, accept the recommendation unless it contradicts the facts.
+- When shown the plan, accept it as drafted: no changes, and no further spike (one spike is enough for this project).
 - When asked to accept a risk, accept it with the fallback the assistant proposes.
 - When asked whether to merge the plan, say yes.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
