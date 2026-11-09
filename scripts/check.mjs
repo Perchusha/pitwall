@@ -1574,6 +1574,9 @@ step('hooks (recorded payloads)', (report) => {
     bash('rg -uu DATABASE_URL', 'deny:secrets');
     bash('rg DATABASE_URL', 'allow');
     bash('grep -rn DATABASE_URL docs', 'allow');
+    bash('grep -rn DATABASE_URL {src,docs}', 'allow');
+    bash("rg -uu -g '*' KEY", 'deny:secrets');
+    bash("rg -uu -g '*.ts' KEY", 'allow');
     bash('git grep DATABASE_URL', 'allow');
     rmSync(join(project, '.env'));
 
@@ -1608,6 +1611,17 @@ step('hooks (recorded payloads)', (report) => {
     bash('{ git push origin main; }', 'deny:push');
     bash('(git push origin main)', 'deny:push');
     bash('(cd docs && git push -u origin epic/E1-x)', 'allow');
+    // Braces inside a word are text: gh's {owner}/{repo} placeholders, brace expansion, stash@{0}.
+    bash('gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review', 'deny:review');
+    bash('gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json', 'deny:protection');
+    bash("gh api graphql -F owner={owner} -F name={repo} -f query='mutation { deleteBranchProtectionRule(input: {branchProtectionRuleId: \"x\"}) { clientMutationId } }'", 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection", { tool: 'PowerShell', input: { tool_input: { command: "Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: if($?){git push origin main}", { tool: 'PowerShell', input: { tool_input: { command: "if($?){git push origin main}" } } }, 'deny:push');
+    bash('mkdir -p src/{a,b} && git stash show stash@{0}', 'allow');
+    bash('find . -name "*.tmp" -exec rm {} \\;', 'allow');
+    bash('cp x.json ${HOME}/.claude/settings.json', 'deny:switch');
+    // A subshell keeps its cd to itself.
+    bash('(cd docs && ls) && rm .claude/pitwall.json', 'deny:switch');
     bash('echo "${HOME}/x" && git push -u origin epic/E1-x', 'allow');
     // A PowerShell here-string is one word of text, apostrophes and all.
     expect('main-pre-tool-use-bash', "PowerShell: git commit -m @'\nfix: don't read .env in tests\n'@", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m @'\nfix: don't read .env in tests\n'@" } } }, 'allow');
@@ -1726,6 +1740,12 @@ step('hooks (recorded payloads)', (report) => {
     const reviewer = (what, tool, toolInput, want) => expect('plan-reviewer-pre-tool-use-read', `plan reviewer: ${what}`, { tool, input: { tool_input: toolInput } }, want);
     reviewer('review-status.mjs', 'Bash', { command: reviewStatus }, 'allow');
     reviewer('the docs check', 'Bash', { command: `node "${P}/scripts/docs-check.mjs" --stage plan-review` }, 'allow');
+    // What the plan reviewer ran in each round of the headless plan stage: a cd to the project root first.
+    reviewer('cd to the project root first', 'Bash', { command: `cd "${fwd(project)}" && node "${P}/scripts/docs-check.mjs" --stage plan-review,spike` }, 'allow');
+    reviewer('cd to the project root, Windows spelling', 'Bash', { command: `cd "${project}" && node "${P}/scripts/docs-check.mjs" --stage plan-review,spike` }, 'allow');
+    reviewer('cd elsewhere first', 'Bash', { command: `cd "${fwd(dir)}" && node "${P}/scripts/docs-check.mjs" --stage plan-review` }, 'deny:agent');
+    reviewer('cd to the project root, then git', 'Bash', { command: `cd "${fwd(project)}" && git status` }, 'deny:agent');
+    reviewer('cd to the project root, then two commands', 'Bash', { command: `cd "${fwd(project)}" && ${reviewStatus} && git push` }, 'deny:agent');
     reviewer('git status', 'Bash', { command: 'git status' }, 'deny:agent');
     reviewer('merge.mjs', 'Bash', { command: `node "${P}/scripts/merge.mjs" --plan --owner-approved` }, 'deny:agent');
     reviewer('a copy of review-status.mjs', 'Bash', { command: `node "${fwd(dir)}/review-status.mjs" --review plan --state success` }, 'deny:agent');

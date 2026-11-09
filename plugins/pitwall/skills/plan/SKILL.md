@@ -52,10 +52,10 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 
 ## Reviewer brief
 
-The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number, which survives a resume because it is one more than the commits on the planning branch whose subject starts `docs: plan review,` (`git log --oneline --grep="^docs: plan review," <branch>` lists them), and from round `review.ownerDecidesAtReject` + 1 on, that it is a verification round; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths spelled out:
+The brief holds only what the reviewer needs to find the documents, never anything from this conversation: the project root; the round number, which survives a resume because it is one more than the commits on the planning branch whose subject starts `docs: plan review,` (`git log --oneline --grep="^docs: plan review," <branch>` lists them), and from round `review.ownerDecidesAtReject` + 1 on, that it is a verification round; the process level from `.claude/pitwall.json`; the config path `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; the paths to read (`CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `docs/SPEC.md`, `docs/STACK.md`, `docs/adr/`, `docs/spikes/`, `docs/EPICS.md`, `docs/epics/`, `docs/RISKS.md`, `docs/PLAN-REVIEW.md`); and the two commands it may run, with their paths and the project root spelled out, so it needs no `cd` (pitwall's hook lets the reviewer run each one alone, or after `cd` to the project root):
 
-- `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage plan-review` (add `,spike` when there are spikes);
-- `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-status.mjs" --review plan --state success` or `--state failure`.
+- `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --root "<project root>" --stage plan-review` (add `,spike` when there are spikes);
+- `node "${CLAUDE_PLUGIN_ROOT}/scripts/review-status.mjs" --project "<project root>" --review plan --state success` or `--state failure`.
 
 ## Output
 

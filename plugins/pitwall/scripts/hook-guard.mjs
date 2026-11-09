@@ -94,6 +94,8 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
   let redirect = null;
   const heredocs = [];
   const inner = [];
+  // Open { blocks, so a "}" that closes one ends a command and any other "}" is text ("{owner}/{repo}").
+  let blocks = 0;
   const endWord = () => {
     if (word === null) return;
     if (redirect === 'out') cur.redirects.push(word);
@@ -204,8 +206,21 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
       continue;
     }
     // Blocks and groups ("if ($?) { git push }", "{ a; }", "(cd x && b)"): each command inside is a command.
-    if (c === '(' || c === ')' || c === '{' || c === '}') {
+    // A "{" opens a block only where a word starts (and, in bash, before a blank: "{src,docs}" is a word);
+    // a "(" or ")" where a word starts or ends; a subshell's cd ends with it.
+    if ((c === '(' || c === ')') && (word === null || c === ')' || /[\s;|&]/.test(text[i - 1] ?? ' '))) {
       endCmd();
+      cmds.push({ group: c });
+      continue;
+    }
+    if (c === '{' && word === null && (ps || /\s/.test(text[i + 1] ?? ' '))) {
+      endCmd();
+      blocks += 1;
+      continue;
+    }
+    if (c === '}' && blocks > 0 && (word === null || ps)) {
+      endCmd();
+      blocks -= 1;
       continue;
     }
     // A PowerShell here-string, @'...'@ or @"..."@ to a line that starts with its closing mark: one word of text.
@@ -330,7 +345,17 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
 
   // The folder each command runs in, following cd; wrappers and variable assignments dropped.
   let dir = cwd;
+  const dirs = [];
   for (const cmd of cmds) {
+    // A subshell keeps its cd to itself: "(cd web && npm ci) && rm x" removes ./x.
+    if (cmd.group === '(') {
+      dirs.push(dir);
+      continue;
+    }
+    if (cmd.group === ')') {
+      if (dirs.length) dir = dirs.pop();
+      continue;
+    }
     let argv = cmd.argv;
     for (;;) {
       if (argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) argv = argv.slice(1);
@@ -472,9 +497,12 @@ export function guard(call, ctx) {
       if (!allowed.includes(norm(String(target), cwd, home))) return refuse('agent', `${agentType} writes only ${policy.write.join(', ')}, not ${target}.`);
     }
     if (COMMANDS.has(tool)) {
-      const text = String(input.command ?? '');
-      if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break.`);
-      const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
+      let text = String(input.command ?? '');
+      // It may start from the project root, "cd <root> && <command>", the way agents often do.
+      const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>`'"]+))\s*&&\s*/.exec(text);
+      if (cd && norm(cd[1] ?? cd[2] ?? cd[3], cwd, home) === root) text = text.slice(cd[0].length);
+      if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
+      const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
       const scripts = plugins.flatMap((d) => policy.run.map((s) => `${d}/scripts/${s}`));
       const ok = cmds.length === 1 && program(cmds[0].argv[0]) === 'node' && scripts.includes(norm(cmds[0].argv[1] ?? '', cmds[0].cwd, home));
       if (!ok) return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments.`);
@@ -557,7 +585,7 @@ export function guard(call, ctx) {
     const rgReadsAll = p === 'rg' && (argv.some((a) => /^-u{2,}$/.test(a)) || (argv.some((a) => /^--no-ignore/.test(a)) && argv.includes('--hidden')));
     if (rgReadsAll || (['grep', 'egrep', 'fgrep'].includes(p) && argv.some((a) => /^(--recursive|--dereference-recursive|-[a-zA-Z]*[rR][a-zA-Z]*)$/.test(a)))) {
       const leak = secretFilesSearched(argv, dir, home, ctx, isSecretName);
-      if (leak) return refuse('secrets', `grep -r reads ${leak}, a secret file: search with the Grep tool or git grep, which skip it, or add --exclude for it.`);
+      if (leak) return refuse('secrets', `${p === 'rg' ? 'rg' : 'grep -r'} reads ${leak}, a secret file: search with the Grep tool or git grep, which skip it, or leave it out (grep --exclude, rg -g '!${basename(leak)}').`);
     }
 
     // (d) The guards' switch: the settings, the plugin's folder, the plugin's enablement.
@@ -681,6 +709,11 @@ function secretFilesSearched(argv, dir, home, ctx, isSecretName) {
     const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a, undefined];
     if (flag === '--exclude' || flag === '--exclude-dir' || flag === '--include') {
       ({ '--exclude': excludes, '--exclude-dir': excludeDirs, '--include': includes })[flag].push(inline ?? argv[(i += 1)] ?? '');
+    } else if (flag === '-g' || flag === '--glob') {
+      // rg's globs: "!x" leaves x out, anything else limits the search to it.
+      const g = inline ?? argv[(i += 1)] ?? '';
+      if (g.startsWith('!')) excludes.push(g.slice(1));
+      else includes.push(g);
     } else if (['-e', '--regexp', '-f', '--file'].includes(flag)) {
       patternGiven = true;
       if (inline === undefined) i += 1;
