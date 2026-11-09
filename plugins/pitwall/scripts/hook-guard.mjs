@@ -502,11 +502,13 @@ export function guard(call, ctx) {
   const target = FILE_WRITES.has(tool) ? (tool === 'NotebookEdit' ? input.notebook_path : input.file_path) : null;
   const written = tool === 'Write' ? [input.content] : tool === 'Edit' ? [input.new_string] : tool === 'MultiEdit' ? (input.edits ?? []).map((e) => e.new_string) : tool === 'NotebookEdit' ? [input.new_source] : [];
 
-  // 1. An agent with limits of its own (T3a-AC4): the plan reviewer.
+  // 1. An agent with limits of its own (T3a-AC4, T3b-AC4): the plan reviewer and the code reviewer.
   if (policy) {
     if (target !== null) {
-      const allowed = policy.write.map((f) => norm(f, ctx.root));
-      if (!allowed.includes(norm(String(target), cwd, home))) return refuse('agent', `${agentType} writes only ${policy.write.join(', ')}, not ${target}.`);
+      const t = norm(String(target), cwd, home);
+      // A file, or a glob over the files of one folder ("docs/reviews/*.md").
+      const allowed = policy.write.some((f) => (GLOB.test(f) ? globRegex(norm(f, ctx.root)).test(t) : norm(f, ctx.root) === t));
+      if (!allowed) return refuse('agent', `${agentType} writes only ${policy.write.join(', ')}, not ${target}.`);
     }
     if (COMMANDS.has(tool)) {
       let text = String(input.command ?? '');
@@ -515,9 +517,28 @@ export function guard(call, ctx) {
       if (cd && norm(cd[1] ?? cd[2] ?? cd[3], cwd, home) === root) text = text.slice(cd[0].length);
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
+      const one = cmds.length === 1 ? cmds[0] : null;
+      const argv = one?.argv ?? [];
+      const at = one?.cwd ?? cwd;
       const scripts = plugins.flatMap((d) => policy.run.map((s) => `${d}/scripts/${s}`));
-      const ok = cmds.length === 1 && program(cmds[0].argv[0]) === 'node' && scripts.includes(norm(cmds[0].argv[1] ?? '', cmds[0].cwd, home));
-      if (!ok) return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments.`);
+      const runsScript = program(argv[0]) === 'node' && scripts.includes(norm(argv[1] ?? '', at, home));
+      // Read-only git in this project: the subcommands of policy.git, with no option that runs a program,
+      // sets a config or writes a file ("-c core.pager=...", "--output=...", "--ext-diff").
+      const g = policy.git && program(argv[0]) === 'git' ? gitCommand(argv) : null;
+      const gitOptions = argv.slice(1, argv.indexOf(g?.sub));
+      const readsGit =
+        Boolean(g) &&
+        policy.git.includes(g.sub) &&
+        gitOptions.every((a, i) => a === '--no-pager' || a === '-C' || gitOptions[i - 1] === '-C') &&
+        (!g.dir || norm(g.dir, at, home) === root) &&
+        !g.args.some((a) => /^(--output|--ext-diff|--textconv|--open-files-in-pager|-O)/.test(a));
+      // The project's gate in any of its modes, as CI runs it or straight from its path.
+      const gateArgs = program(argv[0]) === 'bash' ? argv.slice(1) : argv;
+      const runsGate = Boolean(policy.gate) && norm(gateArgs[0] ?? '', at, home) === `${root}/scripts/gate` && gateArgs.length <= 2 && (gateArgs.length === 1 || ['--fast', '--changed', '--full'].includes(gateArgs[1]));
+      if (!one || !(runsScript || readsGit || runsGate)) {
+        const also = [...(policy.git ? [`read-only git (${policy.git.join(', ')})`] : []), ...(policy.gate ? ['scripts/gate'] : [])];
+        return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments${also.length ? `, and ${also.join(' and ')}` : ''}.`);
+      }
     }
   }
 
@@ -675,6 +696,13 @@ export function guard(call, ctx) {
         const name = git.args.find((a) => !a.startsWith('-'));
         if (name && !git.args.includes('--') && ctx.git(['rev-parse', '--verify', '-q', `refs/heads/${name}`], git.dir ? native(git.dir, dir, home) : dir).ok) switchedTo = name;
       }
+    }
+
+    // T3b-AC6: the scripts only the owner runs, in a terminal (hooks.ownerOnly): the one that records
+    // whether merges may run without them (ADR-0010). No agent runs them, the main conversation included.
+    const ownerOnly = (h.ownerOnly ?? []).find((s) => argv.some((w) => basename(String(w).split('\\').join('/')).toLowerCase() === s) || (code !== null && code.includes(s)));
+    if (ownerOnly && (INTERPRETERS.has(p) || basename(String(argv[0] ?? '').split('\\').join('/')).toLowerCase() === ownerOnly)) {
+      return refuse('owner', `${ownerOnly} records a choice of the owner (pitwall ADR-0010): the owner runs it in a terminal, not an agent. Hand them the command.`);
     }
 
     // AC4: review-status.mjs only from the two reviewers.

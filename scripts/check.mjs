@@ -291,7 +291,7 @@ step('layout', (report) => {
     if (!claude.startsWith('# scratch\n\nA scratch project for the checks\n')) report(`CLAUDE.md does not start with the name and the idea:\n${claude.slice(0, 120)}`);
     const settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8'));
     const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending' };
+    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending', autoMerge: false };
     if (JSON.stringify(settings) !== JSON.stringify(want)) report(`.claude/pitwall.json is ${JSON.stringify(settings)}, expected ${JSON.stringify(want)}`);
 
     const again = layOut(project);
@@ -1207,7 +1207,7 @@ step('review status (fake gh)', (report) => {
     const emptyConfig = join(dir, 'empty.gitconfig');
     writeFileSync(emptyConfig, '');
     run('git cannot commit', ok, { env: { GIT_AUTHOR_NAME: '', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: '', GIT_COMMITTER_EMAIL: '', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' }, code: 1, posts: 0, commits: 0, says: ['git could not commit docs/PLAN-REVIEW.md'] });
-    for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'code', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
+    for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'epic', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
       run(label, ok, { args: a, code: 2, posts: 0 });
     }
   });

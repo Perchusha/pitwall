@@ -11,6 +11,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { config, ghRunner, parseJson, pluginRoot, pluginVersion, readGate, readReview } from './lib.mjs';
 import { guard, norm } from './hook-guard.mjs';
+import { guardWorks, syncRules } from './merge-rules.mjs';
 
 const FILE_WRITES = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 
@@ -177,7 +178,8 @@ function postToolUse({ cfg, input, root, dir, key }) {
   const r = norm(root);
   if (!p.startsWith(`${r}/`) || p.startsWith(`${r}/docs/`) || p.startsWith(`${r}/.git/`)) return null;
   const branch = git(['symbolic-ref', '--short', '-q', 'HEAD'], root).out;
-  if (!branch.startsWith('epic/')) return null;
+  // The branches of the epic loop: an epic's and a bug fix's (loop.branches).
+  if (!Object.values(cfg.loop.branches).some((b) => branch.startsWith(b))) return null;
   // An implementer answers for its own edits; any other sub-agent's edits are the main conversation's.
   const owner = input.agent_id && !cfg.hooks.implementers.includes(input.agent_type) ? 'main' : key;
   writeFileSync(join(dir, `${owner}.dirty`), branch);
@@ -288,6 +290,36 @@ function selfTest(s) {
   return null;
 }
 
+// The owner's choice of ADR-0010, said in the brief, and its allow rules kept in step with it (T3b-AC6):
+// on yes the rules name the plugin's path as this session spells it, so an update of the plugin
+// needs no new command from the owner; while the review guard does not work, and on no, there are none.
+function mergeRules({ cfg, settings, root }) {
+  const choice = settings[cfg.loop.ownerChoice];
+  const said =
+    choice === true
+      ? 'low and normal risk epics merge without the owner once gate and ai-review are green; high risk and bug fixes wait for the owner'
+      : choice === false
+        ? 'every merge waits for the owner'
+        : 'the owner has not chosen yet whether low and normal risk epics merge without them, so every merge waits; /pitwall:continue asks';
+  const dir = process.env.CLAUDE_PLUGIN_ROOT || pluginRoot;
+  try {
+    const broken = choice === true ? guardWorks(root, dir, cfg, settings) : null;
+    const r = syncRules(root, dir, choice === true && !broken);
+    const rules = r.error
+      ? `; .claude/settings.local.json ${r.error}, so its allow rules were not checked`
+      : broken
+        ? `; the review guard does not work (${broken}), so the allow rules are off and every merge waits`
+        : r.changed
+          ? choice === true
+            ? '; the allow rules in .claude/settings.local.json were written for this plugin path'
+            : '; the allow rules were removed from .claude/settings.local.json'
+          : '';
+    return `- Merges: ${said} (ADR-0010)${rules}.`;
+  } catch (e) {
+    return `- Merges: ${said} (ADR-0010); the allow rules could not be checked (${String(e.message).split(/\r?\n/)[0]}).`;
+  }
+}
+
 function sessionStart(s) {
   const { cfg, settings, root } = s;
   const lines = ['pitwall brief, from its session hook:'];
@@ -319,6 +351,7 @@ function sessionStart(s) {
   );
   const failed = selfTest(s);
   lines.push(failed ? `- Hooks: the self-test FAILED: ${failed}.` : '- Hooks: the guards are on (secrets, ignored files, pushes to main, their own switch, merge protection, ai-review, the call budget), and the self-test passed.');
+  lines.push(mergeRules(s));
   const brief = lines.join('\n').slice(0, cfg.hooks.briefMaxChars);
   const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: brief } };
   if (failed) out.systemMessage = `pitwall: the self-test of its guards failed: ${failed}. To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local`;

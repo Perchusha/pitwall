@@ -10,7 +10,7 @@
 // branch (false: main not on GitHub; "garbled": the branch endpoint prints no JSON),
 // protection (the protection GitHub holds before any write), probe ("404", "free" for
 // "Upgrade to GitHub Pro", "denied" for a refused read), put ("ok", "refuse", "lost"),
-// pr ({ number, state, base, branch (default plan/initial), head: "local" for the planning branch's local commit, or a sha }),
+// pr ({ number, state, base, branch (default plan/initial), head: "local" for that branch's local commit, or a sha; title }),
 // status ("ok", "refuse", "lost"), statuses ({ <context>: <state> } already on the PR head),
 // gate ("success", "failure", "pending", or null for none), gateApp (its app id),
 // rules (the rules on main), merge ("ok", "refuse", "lost"), mergeMessage (of a PR merged before the run).
@@ -44,8 +44,8 @@ if (args[0] === '--version') out('gh version 2.0.0 (fake)\n');
 if (args[0] === 'auth') s.auth ? out('Logged in\n') : err('You are not logged into any GitHub hosts.');
 if (args[0] === 'repo' && args[1] === 'view') s.repo ? out(s.repo) : err(s.repoError ?? 'no git remotes found');
 
-// The PR's head: "local" is the planning branch's local commit, read with git in the project folder.
-const prHead = () => (s.pr?.head === 'local' ? spawnSync('git', ['rev-parse', 'refs/heads/plan/initial'], { encoding: 'utf8' }).stdout.trim() : s.pr?.head);
+// The PR's head: "local" is the local commit of the PR's branch (the planning branch by default), read with git in the project folder.
+const prHead = () => (s.pr?.head === 'local' ? spawnSync('git', ['rev-parse', `refs/heads/${s.pr.branch ?? 'plan/initial'}`], { encoding: 'utf8' }).stdout.trim() : s.pr?.head);
 
 if (args[0] === 'pr') {
   // A PR is asked for by its branch or its number; any other branch has none.
@@ -63,7 +63,7 @@ if (args[0] === 'pr') {
     out('');
   }
   if (args[1] === 'view') {
-    out({ number: s.pr.number ?? 7, state: st.merged ? 'MERGED' : s.pr.state ?? 'OPEN', headRefOid: head, baseRefName: s.pr.base ?? 'main', url: 'https://github.com/o/r/pull/7', mergeCommit: st.merged ? { oid: st.merged.oid } : s.pr.state === "MERGED" ? { oid: "e".repeat(40) } : null });
+    out({ number: s.pr.number ?? 7, state: st.merged ? 'MERGED' : s.pr.state ?? 'OPEN', headRefOid: head, baseRefName: s.pr.base ?? 'main', url: 'https://github.com/o/r/pull/7', title: s.pr.title ?? 'The change', mergeCommit: st.merged ? { oid: st.merged.oid } : s.pr.state === "MERGED" ? { oid: "e".repeat(40) } : null });
   }
 }
 
