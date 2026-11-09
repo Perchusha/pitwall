@@ -1555,6 +1555,7 @@ step('hooks (recorded payloads)', (report) => {
     bash("git log -S '.env'", 'allow');
     bash("grep -n 'cert.pem' docs/SPEC.md", 'allow');
     bash("jq -r '.key' data.json", 'allow');
+    bash("yq e '.metadata.key' x.yaml", 'allow');
     bash('node -e "const o = { key: 1 }; console.log(o.key)"', 'allow');
     bash("git ls-files '*.pem'", 'allow');
     bash('grep KEY .env', 'deny:secrets');
@@ -1568,6 +1569,10 @@ step('hooks (recorded payloads)', (report) => {
     bash('git rm .env', 'deny:secrets');
     bash('grep -r DATABASE_URL', 'deny:secrets');
     bash('grep -rn --exclude=.env DATABASE_URL .', 'allow');
+    bash('grep -rn --include=*.ts useState .', 'allow');
+    bash('grep -rn --include=.env* KEY .', 'deny:secrets');
+    bash('rg -uu DATABASE_URL', 'deny:secrets');
+    bash('rg DATABASE_URL', 'allow');
     bash('grep -rn DATABASE_URL docs', 'allow');
     bash('git grep DATABASE_URL', 'allow');
     rmSync(join(project, '.env'));
@@ -1595,6 +1600,18 @@ step('hooks (recorded payloads)', (report) => {
     bash('git push --force-with-lease origin epic/E1-x', 'allow');
     bash('echo $(git push -f origin main)', 'deny:push');
     bash('git push origin @', 'deny:push');
+    // Commands inside blocks and groups are commands: PowerShell's "A; if ($?) { B }", bash's if, { } and ( ).
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m \"feat: x\"; if ($?) { git push origin main }", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m \"feat: x\"; if ($?) { git push origin main }" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: gh pr checks 7; if ($?) { gh pr merge 7 --admin --squash }", { tool: 'PowerShell', input: { tool_input: { command: "gh pr checks 7; if ($?) { gh pr merge 7 --admin --squash }" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m \"feat: x\"; if ($?) { git push -u origin epic/E1-x }", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m \"feat: x\"; if ($?) { git push -u origin epic/E1-x }" } } }, 'allow');
+    bash('if npm test; then git push origin main; fi', 'deny:push');
+    bash('{ git push origin main; }', 'deny:push');
+    bash('(git push origin main)', 'deny:push');
+    bash('(cd docs && git push -u origin epic/E1-x)', 'allow');
+    bash('echo "${HOME}/x" && git push -u origin epic/E1-x', 'allow');
+    // A PowerShell here-string is one word of text, apostrophes and all.
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m @'\nfix: don't read .env in tests\n'@", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m @'\nfix: don't read .env in tests\n'@" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m @'\nfix: the owner's choice\n'@; git push origin main", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m @'\nfix: the owner's choice\n'@; git push origin main" } } }, 'deny:push');
     // A heredoc inside $( ... ): its parentheses and backticks are text, and what comes after the substitution is still read.
     bash("gh pr create --title x --body \"$(cat <<'EOF'\nSteps: a) install b) run `git push origin main` is not done here\nEOF\n)\"", 'allow');
     bash("git commit -m \"$(cat <<'EOF'\nfix: three things\n\n1) the parser 2) the docs 3) docs mention `cat .env`\nEOF\n)\"", 'allow');
@@ -1622,6 +1639,11 @@ step('hooks (recorded payloads)', (report) => {
     gitIn(fresh, 'checkout', '-q', 'main');
     gitIn(fresh, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
     onFresh('git push origin main', 'deny:push', 'main pushed again after its first push');
+    gitIn(fresh, 'checkout', '-q', '--detach');
+    onFresh('git push origin HEAD:epic/E1-x', 'allow', 'a detached HEAD pushed to a named branch');
+    onFresh('git push origin HEAD:main', 'deny:push', 'a detached HEAD pushed onto main');
+    onFresh('git push', 'deny:push', 'a push from a detached HEAD with no branch named');
+    gitIn(fresh, 'checkout', '-q', 'main');
 
     // (d) The guards' switch.
     bash('rm .claude/pitwall.json', 'deny:switch');
@@ -1643,6 +1665,7 @@ step('hooks (recorded payloads)', (report) => {
     bash('mv build/out.js .', 'allow');
     bash('mv notes.md .claude/', 'allow');
     bash('mv .claude old-claude', 'deny:switch');
+    expect('main-pre-tool-use-bash', "PowerShell: Move-Item -Destination old -Path .claude", { tool: 'PowerShell', input: { tool_input: { command: "Move-Item -Destination old -Path .claude" } } }, 'deny:switch');
     expect('main-pre-tool-use-bash', 'PowerShell: Move-Item into the project folder', { tool: 'PowerShell', input: { tool_input: { command: 'Move-Item build/out.js .' } } }, 'allow');
     bash('git commit -m "chore: record merge protection" .claude/pitwall.json', 'allow');
     bash('git reset HEAD .claude/pitwall.json', 'allow');

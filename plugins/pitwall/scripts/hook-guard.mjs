@@ -72,6 +72,7 @@ const nameMatches = (name, globs) => globs.some((g) => globRegex(g).test(name));
 // ---- Commands ----
 
 const SHELLS = { bash: 'bash', sh: 'bash', zsh: 'bash', dash: 'bash', pwsh: 'powershell', powershell: 'powershell' };
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'elseif', 'fi', 'do', 'done', 'while', 'until', 'try', 'catch', 'finally', '!']);
 const INTERPRETERS = new Set(['node', 'python', 'python3', 'py', 'perl', 'ruby', 'deno', 'bun', 'php']);
 
 export const program = (word) =>
@@ -194,6 +195,27 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
       endCmd();
       continue;
     }
+    // ${NAME}: one word, braces and all.
+    if (c === '{' && word !== null && word.endsWith('$')) {
+      const end = text.indexOf('}', i + 1);
+      const stop = end < 0 ? text.length : end;
+      word += text.slice(i, stop + 1);
+      i = stop;
+      continue;
+    }
+    // Blocks and groups ("if ($?) { git push }", "{ a; }", "(cd x && b)"): each command inside is a command.
+    if (c === '(' || c === ')' || c === '{' || c === '}') {
+      endCmd();
+      continue;
+    }
+    // A PowerShell here-string, @'...'@ or @"..."@ to a line that starts with its closing mark: one word of text.
+    if (ps && c === '@' && (text[i + 1] === "'" || text[i + 1] === '"') && /^\r?\n/.test(text.slice(i + 2))) {
+      const close = new RegExp(`\\n${text[i + 1]}@`).exec(text.slice(i + 2));
+      const stop = close ? i + 2 + close.index : text.length;
+      word = (word ?? '') + text.slice(i + 2, stop).replace(/^\r?\n/, '');
+      i = close ? stop + 2 : text.length;
+      continue;
+    }
     if (c === '&') {
       if (text[i + 1] === '>') {
         endWord();
@@ -312,6 +334,8 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     let argv = cmd.argv;
     for (;;) {
       if (argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) argv = argv.slice(1);
+      // Keywords before a command: "if npm test; then git push ...", "else", "do", PowerShell's "try".
+      else if (KEYWORDS.has(String(argv[0] ?? '').toLowerCase())) argv = argv.slice(1);
       else if (['sudo', 'command', 'exec', 'nohup', 'time', 'nice', 'builtin'].includes(program(argv[0]))) argv = argv.slice(1);
       else if (program(argv[0]) === 'env') {
         argv = argv.slice(1);
@@ -529,7 +553,9 @@ export function guard(call, ctx) {
       return refuse('secrets', 'this inline script names a secret file: pitwall keeps agents out of it.');
     }
     // A recursive grep reads every file under its paths, ignored ones too, and prints what matches.
-    if (['grep', 'egrep', 'fgrep'].includes(p) && argv.some((a) => /^(--recursive|--dereference-recursive|-[a-zA-Z]*[rR][a-zA-Z]*)$/.test(a))) {
+    // rg reads ignored and hidden files only when told to: -uu, or --no-ignore with --hidden.
+    const rgReadsAll = p === 'rg' && (argv.some((a) => /^-u{2,}$/.test(a)) || (argv.some((a) => /^--no-ignore/.test(a)) && argv.includes('--hidden')));
+    if (rgReadsAll || (['grep', 'egrep', 'fgrep'].includes(p) && argv.some((a) => /^(--recursive|--dereference-recursive|-[a-zA-Z]*[rR][a-zA-Z]*)$/.test(a)))) {
       const leak = secretFilesSearched(argv, dir, home, ctx, isSecretName);
       if (leak) return refuse('secrets', `grep -r reads ${leak}, a secret file: search with the Grep tool or git grep, which skip it, or add --exclude for it.`);
     }
@@ -539,7 +565,10 @@ export function guard(call, ctx) {
     for (const t of redirects) {
       if (protectedFiles.some((f) => names(t, dir, home, f)) || inPlugin(norm(t, dir, home))) return refuse('switch', `${t} ${switchReason}`);
     }
-    const operands = words.filter((w) => !w.startsWith('-'));
+    // A copy's or a move's destination: PowerShell's -Destination wherever it stands, else the last operand.
+    const destFlag = argv.findIndex((a) => /^-destination$/i.test(a));
+    const operands = words.filter((w) => !w.startsWith('-') && (destFlag < 0 || w !== argv[destFlag + 1]));
+    if (destFlag >= 0 && argv[destFlag + 1]) operands.push(argv[destFlag + 1]);
     // What a command writes: a copier its destination, any other writer every path it names.
     const writes = (w) => (COPIERS.has(p) ? w === operands[operands.length - 1] : WRITERS.has(p) || (git && GIT_WRITERS.has(git.sub)) || (['sed', 'perl'].includes(p) && inPlace));
     for (const w of words) {
@@ -616,7 +645,9 @@ const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'select-
 const FILTERS = new Set(['jq', 'yq', 'gojq']);
 function patternOperands(p, git, argv) {
   const out = new Set();
-  const args = SEARCHERS.has(p) || FILTERS.has(p) ? argv.slice(1) : git?.sub === 'grep' ? git.args : null;
+  let args = SEARCHERS.has(p) || FILTERS.has(p) ? argv.slice(1) : git?.sub === 'grep' ? git.args : null;
+  // yq's subcommand comes before its filter: "yq e '.a.key' x.yaml".
+  if (p === 'yq' && /^(e|eval|ea|eval-all)$/.test(args?.[0] ?? '')) args = args.slice(1);
   if (args) {
     const given = args.some((a) => /^(-e|--regexp|-f|--file|-pattern)(=|$)/i.test(a));
     for (let i = 0; i < args.length; i += 1) {
@@ -642,13 +673,14 @@ function patternOperands(p, git, argv) {
 function secretFilesSearched(argv, dir, home, ctx, isSecretName) {
   const excludes = [];
   const excludeDirs = [];
+  const includes = [];
   const operands = [];
   let patternGiven = false;
   for (let i = 1; i < argv.length; i += 1) {
     const a = argv[i];
     const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a, undefined];
-    if (flag === '--exclude' || flag === '--exclude-dir') {
-      (flag === '--exclude' ? excludes : excludeDirs).push(inline ?? argv[(i += 1)] ?? '');
+    if (flag === '--exclude' || flag === '--exclude-dir' || flag === '--include') {
+      ({ '--exclude': excludes, '--exclude-dir': excludeDirs, '--include': includes })[flag].push(inline ?? argv[(i += 1)] ?? '');
     } else if (['-e', '--regexp', '-f', '--file'].includes(flag)) {
       patternGiven = true;
       if (inline === undefined) i += 1;
@@ -665,6 +697,8 @@ function secretFilesSearched(argv, dir, home, ctx, isSecretName) {
     const p = norm(f, ctx.root);
     if (!paths.some((d) => inside(p, d))) continue;
     if (excludes.some((g) => globRegex(g).test(basename(f)))) continue;
+    // With --include, grep opens only the files it names: "--include=*.ts" never opens .env.
+    if (includes.length && !includes.some((g) => globRegex(g).test(basename(f)))) continue;
     if (excludeDirs.some((g) => f.split('/').slice(0, -1).some((seg) => globRegex(g).test(seg)))) continue;
     return f;
   }
@@ -716,7 +750,10 @@ function pushChangesMain(git, base, dir, home, ctx, switchedTo) {
     const isCurrent = (x) => x === 'HEAD' || x === '@' || /[$`]/.test(x);
     if (isCurrent(src)) src = current();
     if (isCurrent(dst) || (colon < 0 && src !== s)) dst = colon < 0 ? src : current();
-    if (src === null || dst === null) return unknown;
+    if (dst === null) return unknown;
+    // A named destination that is not the base: what it is pushed from does not matter here.
+    if (src === null && dst.replace(/^refs\/heads\//, '') !== base) continue;
+    if (src === null) return unknown;
     targets.push({ src: src.replace(/^refs\/heads\//, ''), dst: dst.replace(/^refs\/heads\//, ''), plus, gone: colon === 0 });
   }
   for (const t of targets) {
