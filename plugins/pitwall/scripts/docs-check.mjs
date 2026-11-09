@@ -447,16 +447,18 @@ if (kinds.includes('ids')) {
   const defined = new Set();
   for (const f of adrFiles) defined.add(`ADR-${f.slice(0, 4)}`);
   const firstCells = (rel) => (has(rel) ? read(rel).split('\n').filter((l) => l.trim().startsWith('|')).map((l) => splitRow(l)[0]) : []);
-  const idIn = (cell) => /^\[?([A-Z]+-?\d+)\]?(?:\(.*\))?$/.exec(cell.replace(/`/g, ''))?.[1];
+  const idIn = (cell) => /^\[?([A-Z]+-?\d+[a-z]?)\]?(?:\(.*\))?$/.exec(cell.replace(/`/g, ''))?.[1];
   const rowFiles = ['docs/EPICS.md', 'docs/BUGS.md', 'docs/LESSONS.md', 'docs/RISKS.md', 'docs/DISCOVERY.md', ...filesIn('docs/archive').map((f) => `docs/archive/${f}`)];
   for (const rel of rowFiles) for (const cell of firstCells(rel)) if (idIn(cell)) defined.add(idIn(cell));
+  // An epic split in two keeps its number with a letter (T3a, T3b): both IDs exist, and so does
+  // the bare number, for what was written about the epic before it was split.
   for (const f of epicFiles) {
-    const epic = new RegExp(`^(${P}\\d+)-`).exec(f);
-    if (epic) defined.add(epic[1]);
-    for (const m of read(`docs/epics/${f}`).matchAll(new RegExp(`\\b(${P}\\d+-AC\\d+):`, 'g'))) defined.add(m[1]);
+    const epic = new RegExp(`^(${P}\\d+)([a-z]?)-`).exec(f);
+    if (epic) defined.add(epic[1] + epic[2]).add(epic[1]);
+    for (const m of read(`docs/epics/${f}`).matchAll(new RegExp(`\\b(${P}\\d+[a-z]?-AC\\d+):`, 'g'))) defined.add(m[1]);
   }
 
-  const patterns = [/\bADR-\d{4}\b/g, new RegExp(`\\b${P}\\d+(?:-AC\\d+)?\\b`, 'g'), /\bBUG-\d+\b/g, /\bL-\d+\b/g, /\bA-\d+\b/g, /\bR-\d+\b/g];
+  const patterns = [/\bADR-\d{4}\b/g, new RegExp(`\\b${P}\\d+[a-z]?(?:-AC\\d+)?\\b`, 'g'), /\bBUG-\d+\b/g, /\bL-\d+\b/g, /\bA-\d+\b/g, /\bR-\d+\b/g];
   const scan = ['CLAUDE.md', ...(has('docs') ? listFiles(join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`) : [])].filter(has);
   for (const rel of scan) {
     stripCode(read(rel))

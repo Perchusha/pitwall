@@ -1,7 +1,7 @@
 # T4 - Release and QA
 
 Goal: every merged epic ships as a tagged version, passes QA on staging and reaches production with a smoke check.
-Depends on: T3
+Depends on: T3b
 Risk class: normal
 
 ## Acceptance criteria (draft, refined when T4 starts)

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # continue - the epic loop conductor
 
-> Status: planned for epic T3, not implemented in v0.1.0. If this skill is invoked, tell the owner that the epic loop is not built yet and stop.
+> Status: planned for epic T3b, not implemented yet. If this skill is invoked, tell the owner that the epic loop is not built yet and stop.
 
 ## What it will do
 

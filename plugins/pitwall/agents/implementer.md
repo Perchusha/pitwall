@@ -1,11 +1,11 @@
 ---
 name: implementer
-description: (Planned for pitwall T3, not implemented in v0.1.0.) Implements one low or normal risk epic on its branch with tests and returns a DONE, PARTIAL or NEEDS_OWNER report. The continue skill dispatches it.
+description: (Planned for pitwall T3b, not implemented yet.) Implements one low or normal risk epic on its branch with tests and returns a DONE, PARTIAL or NEEDS_OWNER report. The continue skill dispatches it.
 ---
 
 Not implemented in v0.1.0. Return exactly this line and do nothing else:
 
-STATUS: NOT_IMPLEMENTED (pitwall implementer is planned for epic T3)
+STATUS: NOT_IMPLEMENTED (pitwall implementer is planned for epic T3b)
 
 ## Planned behaviour
 

@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.3.0, stages 0 to 5.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike` and `/pitwall:plan` work, with the `researcher` and `plan-reviewer` agents. The later commands still say that their stage is not built yet: T3 (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.3.0, stages 0 to 5.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike` and `/pitwall:plan` work, with the `researcher` and `plan-reviewer` agents. The later commands still say that their stage is not built yet: T3a (the hooks), T3b (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -50,10 +50,10 @@ Each stage ends with `scripts/docs-check.mjs --stage <stage>` from the plugin, w
 
 ## Review and merge
 
-The reviewer runs in your local session and publishes its verdict as the `ai-review` status check, through `scripts/review-status.mjs`, which sets success only when the review passes its check. The plan reviewer does this for the plan PR; the code reviewer will for every epic (T3). A PR merges only when both `gate` and `ai-review` are green:
+The reviewer runs in your local session and publishes its verdict as the `ai-review` status check, through `scripts/review-status.mjs`, which sets success only when the review passes its check. The plan reviewer does this for the plan PR; the code reviewer will for every epic (T3b). A PR merges only when both `gate` and `ai-review` are green:
 
 - on a public repository, or a private one on a paid plan, branch protection enforces it, admins included, and `gate` must come from GitHub Actions;
-- on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`; the hook that refuses the merge ships with the epic loop (T3).
+- on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`; the hook that refuses the merge ships with the hooks (T3a).
 
 The plan PR merges once you say yes, with a merge commit (the repository must allow merge commits, and must not require linear history). At every process level, low and normal risk epic PRs merge themselves; high-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) wait for you.
 

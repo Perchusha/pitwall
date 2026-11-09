@@ -15,7 +15,7 @@
 //   Plan approved by the owner, <date>, at <sha>
 // A failed precondition prints a HANDOFF block with the commands for the owner, each
 // on its own line, the same in bash and PowerShell (L-6). --dry-run reads, and merges
-// nothing. T3 extends it to epics by risk class (T3-AC5).
+// nothing. T3b extends it to epics by risk class (T3b-AC5).
 //
 // The last line is "RESULT: merged" or "RESULT: pending". Exit 0 merged (or already
 // merged), 1 refused (a check is red or the head moved: nothing to hand over), 2 usage,
@@ -32,7 +32,7 @@ const bad = (msg) => {
   console.error(`merge: ${msg}\nusage: ${usage}`);
   process.exit(2);
 };
-if (!args.plan) bad('--plan is required: the plan PR is the only one this script merges until T3');
+if (!args.plan) bad('--plan is required: the plan PR is the only one this script merges until T3b');
 if (!args['owner-approved']) bad('--owner-approved is required: the plan merges only after the owner says yes (pitwall ADR-0008)');
 const cfg = config();
 // Short enough that the whole run fits in one tool call; a gate still running is handed back, and the skill runs this again.

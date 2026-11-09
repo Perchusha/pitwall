@@ -3,7 +3,7 @@
 //
 //   node review-status.mjs --review plan --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]
 //
-// Only a reviewer runs it: the plan reviewer now, the code-reviewer from T3, when a
+// Only a reviewer runs it: the plan reviewer now, the code-reviewer from T3b, when a
 // hook lets only those two agents run it (ADR-0007). It commits nothing but the
 // review file, and sets the status on the head of the open PR from the review's
 // branch, after it checks that it may (L-5):

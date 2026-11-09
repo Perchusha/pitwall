@@ -1,11 +1,11 @@
 ---
 name: code-reviewer
-description: (Planned for pitwall T3, not implemented in v0.1.0.) Reviews a PR with a fresh context - the diff, the epic, its ADRs and docs/LESSONS.md, never the implementer's conversation - and publishes the verdict as the ai-review status check.
+description: (Planned for pitwall T3b, not implemented yet.) Reviews a PR with a fresh context - the diff, the epic, its ADRs and docs/LESSONS.md, never the implementer's conversation - and publishes the verdict as the ai-review status check.
 ---
 
 Not implemented in v0.1.0. Return exactly this line and do nothing else:
 
-STATUS: NOT_IMPLEMENTED (pitwall code-reviewer is planned for epic T3)
+STATUS: NOT_IMPLEMENTED (pitwall code-reviewer is planned for epic T3b)
 
 ## Planned behaviour
 

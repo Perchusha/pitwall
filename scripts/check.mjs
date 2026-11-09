@@ -442,6 +442,16 @@ step('docs check', (report) => {
       /SPEC\.md:\d+: ADR-0042 points nowhere/, /E7 points nowhere/, /E0-AC9 points nowhere/, /BUG-3 points nowhere/, /L-2 points nowhere/, /A-4 points nowhere/, /R-1 points nowhere/,
     ]);
     broken('IDs that resolve', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE0 and E0-AC1 exist; `ADR-0042` is an example.\n\n```\nBUG-99 in a code block\n```\n'), []);
+    // An epic split in two: both halves and their criteria resolve, and so does the bare number; another letter does not.
+    const split = (c) => writeFileSync(join(c, 'docs/epics/E1a-split.md'), '# E1a - Split\n\n## Acceptance criteria\n\n- [ ] E1a-AC1: One.\n\n## Out of scope\n\nNone.\n\n## Open questions\n\nNone.\n');
+    broken('a split epic resolves', (c) => {
+      split(c);
+      appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE1, E1a and E1a-AC1 exist.\n');
+    }, []);
+    broken('a split epic defines only its own letter', (c) => {
+      split(c);
+      appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE1b and E1a-AC2 do not.\n');
+    }, [/E1b points nowhere/, /E1a-AC2 points nowhere/]);
     broken('state file too big', (c) => appendFileSync(join(c, 'docs', 'BUGS.md'), 'x'.repeat(51 * 1024)), [/BUGS\.md: [\d.]+ KB, over the 50 KB limit/]);
     broken('CLAUDE.md too long', (c) => appendFileSync(join(c, 'CLAUDE.md'), '- line\n'.repeat(200)), [/CLAUDE\.md: \d+ lines, over the 200-line limit/]);
 
