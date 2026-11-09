@@ -155,7 +155,7 @@
     },
     "readOnlyCommands": [
       "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "wc", "ls", "stat", "file", "diff", "cmp", "jq",
-      "sha256sum", "sha1sum", "md5sum", "test", "[", "echo", "printf",
+      "sha256sum", "sha1sum", "md5sum", "test", "[", "[[", "echo", "printf",
       "get-content", "gc", "type", "select-string", "sls", "test-path", "get-item", "gi", "get-childitem", "gci", "dir", "get-filehash"
     ],
     "readOnlyGit": [

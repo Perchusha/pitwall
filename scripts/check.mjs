@@ -1749,6 +1749,14 @@ step('hooks (recorded payloads)', (report) => {
     bash('python -c "open(\'.claude/settings.json\', \'w\').write(\'{}\')"', 'deny:switch');
     bash('npx prettier --write .claude/settings.json', 'deny:switch');
     bash('head -5 .claude/settings.json && grep -n mergeProtection .claude/pitwall.json', 'allow');
+    // Commands that only read (owner, 2026-11-09): they pass on the switch files and the plugin folder; a write through them does not.
+    for (const command of ['ls -la .claude/', 'ls .claude/pitwall.json', 'test -f .claude/pitwall.json && echo yes', '[ -f .claude/settings.json ] && echo yes', '[[ -f .claude/settings.local.json ]] && echo yes', 'stat .claude/pitwall.json', 'wc -l .claude/settings.json', 'jq .mergeProtection .claude/pitwall.json', "jq -r '.processLevel' .claude/pitwall.json", 'diff .claude/settings.json .claude/settings.local.json', 'file .claude/pitwall.json', 'cmp .claude/settings.json .claude/settings.local.json', 'tail -3 .claude/pitwall.json', 'sha256sum .claude/settings.json']) {
+      bash(command, 'allow');
+    }
+    bash(`ls "${P}/scripts" && wc -l "${P}/config/defaults.json"`, 'allow');
+    bash('jq . .claude/pitwall.json > .claude/pitwall.json', 'deny:switch');
+    bash("jq '.mergeProtection = \"branch-protection\"' .claude/pitwall.json > /tmp/p.json && mv /tmp/p.json .claude/pitwall.json", 'deny:switch');
+    bash('diff .claude/settings.json backup.json > .claude/settings.local.json', 'deny:switch');
     bash('git diff .claude/settings.json && git log -p .claude/pitwall.json && git show HEAD:.claude/pitwall.json', 'allow');
     bash('git add docs/ .claude/pitwall.json && git commit -m "docs: discovery"', 'allow');
     bash('gh pr create --title x --body "explains .claude/settings.json"', 'allow');
