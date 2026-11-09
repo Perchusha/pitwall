@@ -470,8 +470,6 @@ const HTTP = new Set(['curl', 'wget', 'http', 'https', 'xh', 'invoke-restmethod'
 const NAMES_ONLY = new Set(['echo', 'printf', 'test', '[', '[[', 'ls', 'stat', 'find', 'test-path', 'write-output', 'write-host']);
 // What a secret file is called, to test a search pattern against.
 const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', 'server.pem', 'server.key', 'cert.p12', 'cert.pfx', 'id_rsa', 'id_ed25519'];
-// Inline code that writes, renames or removes files.
-const WRITES_CODE = /write|unlink|\brm|rename|append|truncate|copy|move|delete|remove|chmod|open\([^)]*['"][wax+]/i;
 
 const refuse = (rule, reason) => ({ rule, reason });
 
@@ -586,8 +584,7 @@ export function guard(call, ctx) {
       (git?.sub === 'restore' && git.args.includes('--staged') && !git.args.some((a) => a === '--worktree' || a === '-W')) ||
       // A commit, or a reset that keeps the files, changes the index and history, not the files.
       git?.sub === 'commit' ||
-      (git?.sub === 'reset' && !git.args.some((a) => ['--hard', '--merge', '--keep'].includes(a))) ||
-      (['sed', 'awk', 'gawk'].includes(p) && !inPlace);
+      (git?.sub === 'reset' && !git.args.some((a) => ['--hard', '--merge', '--keep'].includes(a)));
 
     // (a) Secret files, named by any command but one that only names them; a search pattern or a filter is no file.
     const namesOnly = NAMES_ONLY.has(p) || (git && (['check-ignore', 'ls-files', 'status'].includes(git.sub) || (git.sub === 'rm' && git.args.includes('--cached'))));
@@ -627,9 +624,18 @@ export function guard(call, ctx) {
       const moved = MOVERS.has(p) && w === operands[operands.length - 1] && operands.length > 1;
       if (DELETERS.has(p) && !moved && [...protectedFiles, ...plugins].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
     }
-    const codePaths = code === null ? '' : code.split('\\').join('/');
-    if (code !== null && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(codePaths) || plugins.some((d) => (WIN ? codePaths.toLowerCase() : codePaths).includes(d))) && WRITES_CODE.test(code)) {
-      return refuse('switch', 'this inline script writes one of the switches of pitwall\'s guards.');
+    // Any command that names a switch file or the plugin's folder is refused unless it only reads or stages
+    // them, or is one of pitwall's own scripts: that closes "node -e", "python -c", "sed -i", a formatter and
+    // a copy onto them alike (owner, 2026-11-09). A message or a search pattern is no path (pathWords).
+    const namesSwitch = (w) => {
+      const f = String(w).split('\\').join('/');
+      const g = WIN ? f.toLowerCase() : f;
+      return /\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(f) || /\$\{?CLAUDE_PLUGIN_ROOT\b/.test(f) || plugins.some((d) => g.includes(d) || g.includes(d.replace(/^([a-z]):/i, (_, x) => `/${x.toLowerCase()}`)));
+    };
+    const pitwallScript = p === 'node' && /\.mjs$/i.test(argv[1] ?? '') && plugins.some((d) => inside(norm(argv[1], dir, home), `${d}/scripts`)) && !argv.slice(2).some(namesSwitch);
+    const naming = [...words, ...inputs].find(namesSwitch) ?? (code !== null && namesSwitch(code) ? 'this inline script' : null);
+    if (naming && !readOnly && !pitwallScript) {
+      return refuse('switch', `${naming} names one of the switches of pitwall's guards (.claude/pitwall.json, the Claude Code settings, the plugin's folder). A command that names one may only read it (cat, head, grep, git diff, log, show) or stage it (git add); only the owner, or a pitwall script, changes it.`);
     }
     if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a)) && !git.args.some((a) => a === '--dry-run' || /^-[a-zA-Z]*n/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
     if (p === 'claude' && /^plugins?$/.test(argv[1] ?? '') && (/^(disable|uninstall|remove|rm)$/.test(argv[2] ?? '') || (argv[2] === 'marketplace' && /^(remove|rm)$/.test(argv[3] ?? '')))) {

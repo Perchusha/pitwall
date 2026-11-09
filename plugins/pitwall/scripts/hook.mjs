@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 var here = dirname(fileURLToPath(import.meta.url));
 var event = process.argv[2];
-var OFF = 'To turn pitwall off in this project, the owner runs: claude plugin disable pitwall@pitwall --scope local';
+var OFF = 'To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local';
 
 function print(answer) {
   if (answer) process.stdout.write(JSON.stringify(answer));

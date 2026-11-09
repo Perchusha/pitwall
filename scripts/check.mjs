@@ -297,6 +297,17 @@ step('layout', (report) => {
     const again = layOut(project);
     if (again.status !== 1 || !/REFUSED/.test(again.stderr)) report(`a second layout must be refused with exit 1, got ${again.status}\n${again.stderr}`);
     if (readFileSync(join(project, 'CLAUDE.md'), 'utf8') !== claude) report('a refused layout changed CLAUDE.md');
+    // T3a (owner): an agent cannot lay a project out again to reset its mode: a folder with .claude/pitwall.json is refused.
+    const settingsBefore = readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8');
+    for (const extra of [['--level', 'full'], ['--level', 'lite', '--name', 'other']]) {
+      const again2 = layOut(project, extra);
+      if (again2.status !== 1 || readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8') !== settingsBefore) report(`a layout over a project with ${extra.join(' ')} must be refused and leave .claude/pitwall.json as it was, got exit ${again2.status}`);
+    }
+    const onlySettings = join(dir, 'only-settings');
+    mkdirSync(join(onlySettings, '.claude'), { recursive: true });
+    writeFileSync(join(onlySettings, '.claude', 'pitwall.json'), '{"mergeProtection":"local-hook"}');
+    const onlyRun = layOut(onlySettings);
+    if (onlyRun.status !== 1 || readFileSync(join(onlySettings, '.claude', 'pitwall.json'), 'utf8') !== '{"mergeProtection":"local-hook"}') report(`a folder holding only .claude/pitwall.json must be refused and stay untouched, got exit ${onlyRun.status}`);
 
     const docsOnly = join(dir, 'docs-only');
     mkdirSync(join(docsOnly, 'docs'), { recursive: true });
@@ -1293,9 +1304,13 @@ step('merge protection (fake gh)', (report) => {
     const repo = (visibility, viewerPermission = 'ADMIN') => ({ nameWithOwner: 'o/r', visibility, viewerPermission });
     const ok = { auth: true, repo: repo('PUBLIC'), branch: true, probe: '404', put: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending', raw }) => {
+    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending', raw, remote }) => {
       const project = join(dir, `p${(n += 1)}`);
       mkdirSync(join(project, '.claude'), { recursive: true });
+      if (remote) {
+        gitIn(project, 'init', '-q');
+        gitIn(project, 'remote', 'add', 'origin', `https://github.com/${remote}.git`);
+      }
       if (raw !== undefined) writeFileSync(join(project, '.claude', 'pitwall.json'), raw);
       else if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
       const { r, calls } = withFakeGh('protect.mjs', project, scenario, ['--project', project, ...args], gh ? { PITWALL_GH: JSON.stringify(gh) } : {});
@@ -1366,10 +1381,10 @@ step('merge protection (fake gh)', (report) => {
     run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['    git push -u origin main\n'] });
     run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['cli.github.com'] });
     run('no settings file', ok, { before: null, code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not recorded'] });
-    const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
+    const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     if (!named.calls.some((c) => c.args[0] === 'repo' && c.args.includes('o/r'))) report('--repo: the repository was not passed to gh repo view');
     run('recorded mode dropped on weaker protection', { ...ok, protection: { ...protectedOk, enforce_admins: { enabled: false } } }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
-    run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
+    run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
     run('not admin, private', { ...ok, repo: repo('PRIVATE', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['Upgrade to GitHub Pro'] });
     run('settings that are not an object', ok, { raw: '[1]\n', code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not a JSON object'] });
     run('recorded protection gone, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
@@ -1394,6 +1409,19 @@ step('merge protection (fake gh)', (report) => {
     run('not admin, protected with linear history the summary hides', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
     run('admin, summary satisfies, probe refused', { ...ok, probe: 'denied', protection: protectedOk }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
+    // T3a (owner): no flag sets the mode, so an agent cannot use protect.mjs to weaken it. The mode comes only
+    // from what GitHub answers for the project's own repository; --repo names one of its remotes or is refused.
+    for (const args of [['--mode', 'branch-protection'], ['--mode=branch-protection'], ['--merge-protection', 'branch-protection'], ['--branch-protection'], ['--local-hook'], ['--pending']]) {
+      run(`a flag that would set the mode: ${args.join(' ')}`, { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args, before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    }
+    run('--repo naming another repository', ok, { args: ['--repo', 'other/public-repo'], remote: 'o/r', before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    run('--repo with no remote at all', ok, { args: ['--repo', 'o/r'], before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    run('--repo naming the upstream of a fork', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 0, result: 'local-hook', puts: 0, setting: 'local-hook' });
+    // On a private repository on GitHub Free, no flag the script takes records branch-protection, the mode in which the merge guard steps aside.
+    for (const args of [[], ['--dry-run'], ['--repo', 'o/r'], ['--repo', 'o/r', '--dry-run']]) {
+      const r = run(`GitHub Free with ${args.join(' ') || 'no flags'}`, { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args, remote: 'o/r', code: 0, result: 'local-hook', puts: 0, setting: args.includes('--dry-run') ? 'pending' : 'local-hook' });
+      if (/RESULT: branch-protection/.test(r.r.stdout)) report(`GitHub Free with ${args.join(' ')}: recorded branch-protection`);
+    }
   });
 });
 
@@ -1710,14 +1738,20 @@ step('hooks (recorded payloads)', (report) => {
     bash(`cp evil.mjs "${P}/scripts/hook.mjs"`, 'deny:switch');
     bash(`node "${P}/scripts/docs-check.mjs" --root .`, 'allow');
     bash(`cat "${P}/config/defaults.json"`, 'allow');
-    bash(`cp "${P}/template/docs/spikes/template.md" docs/spikes/x.md`, 'allow');
-    bash('sed -n 1,20p .claude/settings.json', 'allow');
-    bash("awk '{print}' .claude/settings.json", 'allow');
-    bash('cp .claude/settings.json /tmp/settings-copy.json', 'allow');
+    bash(`cp "${P}/template/docs/spikes/template.md" docs/spikes/x.md`, 'deny:switch');
+    bash('sed -n 1,20p .claude/settings.json', 'deny:switch');
+    bash("awk '{print}' .claude/settings.json", 'deny:switch');
+    bash('cp .claude/settings.json /tmp/settings-copy.json', 'deny:switch');
     bash('cp backup.json .claude/settings.json', 'deny:switch');
     bash('git restore --staged .claude/pitwall.json', 'allow');
     bash('git restore .claude/pitwall.json', 'deny:switch');
-    bash('node -p "require(\'./.claude/pitwall.json\').processLevel"', 'allow');
+    bash('node -p "require(\'./.claude/pitwall.json\').processLevel"', 'deny:switch');
+    bash('python -c "open(\'.claude/settings.json\', \'w\').write(\'{}\')"', 'deny:switch');
+    bash('npx prettier --write .claude/settings.json', 'deny:switch');
+    bash('head -5 .claude/settings.json && grep -n mergeProtection .claude/pitwall.json', 'allow');
+    bash('git diff .claude/settings.json && git log -p .claude/pitwall.json && git show HEAD:.claude/pitwall.json', 'allow');
+    bash('git add docs/ .claude/pitwall.json && git commit -m "docs: discovery"', 'allow');
+    bash('gh pr create --title x --body "explains .claude/settings.json"', 'allow');
     bash('python -c "print(open(\'config/settings.json\').read())"', 'allow');
     bash('git commit -m "fix the review-status.mjs call"', 'allow');
     bash('npm test', 'allow');
@@ -1941,7 +1975,7 @@ step('hooks (recorded payloads)', (report) => {
     for (const [what, opts] of brokenCases) {
       const r = hook('main-pre-tool-use-bash', { ...opts, input: { tool_input: { command: 'ls' } } });
       const reason = r.out?.hookSpecificOutput?.permissionDecisionReason ?? '';
-      if (verdict(r) !== 'deny:broken' || !reason.includes('claude plugin disable pitwall@pitwall --scope local')) report(`the guard with ${what}: expected a refusal that says how to turn pitwall off, got ${verdict(r)} ${reason}`);
+      if (verdict(r) !== 'deny:broken' || !reason.includes('run this yourself in a terminal, not through an agent') || !reason.includes('claude plugin disable pitwall@pitwall --scope local')) report(`the guard with ${what}: expected a refusal that says how to turn pitwall off, got ${verdict(r)} ${reason}`);
       const s2 = hook('main-session-start', opts);
       if (!s2.out?.systemMessage) report(`the session start with ${what} must warn the owner at once`);
       const p2 = hook('main-post-tool-use-write', { ...opts, input: { tool_input: { file_path: join(project, 'a.js') } } });

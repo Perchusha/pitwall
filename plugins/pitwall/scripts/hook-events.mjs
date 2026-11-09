@@ -81,7 +81,7 @@ function budgetFor({ cfg, settings, input }) {
   return { ...b.subagentToolCalls, name: 'budgets.subagentToolCalls' };
 }
 
-const OFF = 'To turn pitwall off in this project, the owner runs: claude plugin disable pitwall@pitwall --scope local.';
+const OFF = 'To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local.';
 // A refusal; one that comes from a part of the guard that could not run says how to turn pitwall off (T3a-AC1).
 const deny = (rule, reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `pitwall refused this call (${rule}): ${reason}${rule === 'broken' ? ` ${OFF}` : ''}` } });
 
@@ -321,6 +321,6 @@ function sessionStart(s) {
   lines.push(failed ? `- Hooks: the self-test FAILED: ${failed}.` : '- Hooks: the guards are on (secrets, ignored files, pushes to main, their own switch, merge protection, ai-review, the call budget), and the self-test passed.');
   const brief = lines.join('\n').slice(0, cfg.hooks.briefMaxChars);
   const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: brief } };
-  if (failed) out.systemMessage = `pitwall: the self-test of its guards failed: ${failed}. To turn pitwall off in this project, the owner runs: claude plugin disable pitwall@pitwall --scope local`;
+  if (failed) out.systemMessage = `pitwall: the self-test of its guards failed: ${failed}. To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local`;
   return out;
 }
