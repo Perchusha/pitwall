@@ -6,7 +6,7 @@ One entry per epic, newest first.
 
 T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop, both high risk, both merged by the owner. ADR-0010 records the owner's other one-way decision: merges without the owner are each project's owner's choice, with the allow rules written only once this epic's review guard is installed, and pitwall itself says no for now. The plugin now has hooks (`hooks/hooks.json`, `scripts/hook.mjs` with `hook-events.mjs` and `hook-guard.mjs`) that act in pitwall projects only: a brief at session start, with a self-test of the guards; guards on secrets, files git ignores, pushes that change `main`, writes to merge protection, commit statuses outside `review-status.mjs`, the plan reviewer's files and commands, and the guards' own switch; call budgets per agent; and the gate after edits and before stopping. The owner accepted the two-way list with five edits: the guards protect their own switch, `--admin` and protection writes are refused, a broken guard says how to turn pitwall off and the self-test warns at once, an unattended main conversation stops at its budget, and the plan reviewer's command takes no backtick or line break.
 
-**Numbers.** `scripts/check.mjs` grew from 20 to 21 steps; the new one runs about 290 cases through `hook.mjs` on 26 payloads recorded from Claude Code 2.1.318 in a real headless session, plus the `hooks.json` commands through bash. The headless runs, at API prices:
+**Numbers.** `scripts/check.mjs` grew from 20 to 21 steps; the new one runs about 330 cases through `hook.mjs` on 26 payloads recorded from Claude Code 2.1.318 in a real headless session, plus the `hooks.json` commands through bash. The headless runs, at API prices:
 
 | Run | Turns | Minutes | Cost | Result |
 | --- | --- | --- | --- | --- |
@@ -15,6 +15,8 @@ T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop,
 | hooks, on the code after the review | 18 each | 2.3, 2.1 | $0.82, $0.81 | pass, the same |
 | kickoff, under the hooks | 8 | 1.9 | $2.66 | pass |
 | plan, under the hooks | 12 | 40.2 | $62.15 | pass, four review rounds, approved; the plan reviewer's `cd` before its command was refused once a round (fixed after) |
+| kickoff, at the owner's request on 7c13d70 | 7 | 1.7 | $2.28 | pass, no refusal in the 11 calls the guard saw |
+| plan, at the owner's request on 7c13d70 | 9 | 38.6 | $42.79 | pass, four review rounds, approved; no refusal in 183 guarded calls (67 in the main conversation, 116 by the four plan reviewers) |
 
 **What only the work showed:**
 - Claude Code tells a hook whether anyone attends the session: `CLAUDE_CODE_SESSION_ATTENDED` is `0` under `claude -p` and `1` in an editor session (2.1.318). Undocumented, so the payload recording pins it.
@@ -34,8 +36,9 @@ T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop,
 | 5, verification | 1 (a regression of round 4) | 157,281 | 28 | 8.9 |
 | check of round 5's fixes | 3 (PowerShell forms the fix missed) | 121,766 | 24 | 6.7 |
 | recheck | none; three older PowerShell gaps listed, closed after | 110,142 | 21 | 5.4 |
+| short round on the owner's edits, false refusals only | 1 (a kickoff idea that names a settings file), 5 smaller | 170,761 | 34 | 9.2 |
 
-The seven come to about 1.28 million tokens, 254 tool calls and 77 minutes. Each fix has a case in `scripts/check.mjs`; the last recheck compared the guard before and after its commit on 261 commands and 600,000 random PowerShell strings and found no command it lost.
+The eight come to about 1.45 million tokens, 288 tool calls and 86 minutes. Each fix has a case in `scripts/check.mjs`; the last recheck compared the guard before and after its commit on 261 commands and 600,000 random PowerShell strings and found no command it lost.
 
 **After the review, the owner added:** any command that names a switch file or the plugin's folder is refused unless it only reads or stages it or is a pitwall script, which closes `node -e`, `python -c` and other one-off writes; `protect.mjs` takes no flag that sets the mode (its `--repo` now has to name a remote of the project), and `layout.mjs` refuses a folder with `.claude/pitwall.json`, each shown by cases in `scripts/check.mjs`; the turn-off command is the owner's to run in a terminal; R-2 in the owner's words.
 
