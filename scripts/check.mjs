@@ -174,6 +174,16 @@ step('agents', (report) => {
     if (text.includes('NOT_IMPLEMENTED') && !fm.description?.startsWith('(Planned')) {
       report(`agents/${file}: not implemented but the description does not say so`);
     }
+    // L-10: a skill an agent preloads names the plugin (pitwall:<skill>) and allows model invocation,
+    // or Claude Code leaves it out of the agent without a word (2.1.318).
+    const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
+    const preload = /^skills:\s*\r?\n((?:\s+- .+\r?\n?)+)/m.exec(block)?.[1].split(/\r?\n/).map((l) => l.replace(/^\s+- /, '').trim()).filter(Boolean) ?? [];
+    for (const s of preload) {
+      const skill = /^pitwall:([a-z-]+)$/.exec(s)?.[1];
+      const skillFile = skill ? join(plugin, 'skills', skill, 'SKILL.md') : null;
+      if (!skillFile || !existsSync(skillFile)) report(`agents/${file}: preloads "${s}", which is no skill of this plugin named pitwall:<skill>`);
+      else if (frontmatter(readFileSync(skillFile, 'utf8'))?.['disable-model-invocation'] === 'true') report(`agents/${file}: preloads ${s}, whose disable-model-invocation: true keeps it out of the agent (L-10)`);
+    }
   }
 });
 
