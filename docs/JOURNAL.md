@@ -2,6 +2,43 @@
 
 One entry per epic, newest first.
 
+## T3a - Hooks (2026-11-09)
+
+T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop, both high risk, both merged by the owner. ADR-0010 records the owner's other one-way decision: merges without the owner are each project's owner's choice, with the allow rules written only once this epic's review guard is installed, and pitwall itself says no for now. The plugin now has hooks (`hooks/hooks.json`, `scripts/hook.mjs` with `hook-events.mjs` and `hook-guard.mjs`) that act in pitwall projects only: a brief at session start, with a self-test of the guards; guards on secrets, files git ignores, pushes that change `main`, writes to merge protection, commit statuses outside `review-status.mjs`, the plan reviewer's files and commands, and the guards' own switch; call budgets per agent; and the gate after edits and before stopping. The owner accepted the two-way list with five edits: the guards protect their own switch, `--admin` and protection writes are refused, a broken guard says how to turn pitwall off and the self-test warns at once, an unattended main conversation stops at its budget, and the plan reviewer's command takes no backtick or line break.
+
+**Numbers.** `scripts/check.mjs` grew from 20 to 21 steps; the new one runs about 290 cases through `hook.mjs` on 26 payloads recorded from Claude Code 2.1.318 in a real headless session, plus the `hooks.json` commands through bash. The headless runs, at API prices:
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| hooks, first recording | 18 | 2.4 | $0.76 | the template's settings refused the `.env` read before the guard could, so the main conversation's Read payload was missing |
+| hooks, recordings 2 to 4 | 18 each | 2.6, 2.8, 2.5 | $0.63, $0.83, $0.81 | pass: each guarded step refused by its rule, each allowed one through |
+| hooks, on the code after the review | 18 each | 2.3, 2.1 | $0.82, $0.81 | pass, the same |
+| kickoff, under the hooks | 8 | 1.9 | $2.66 | pass |
+| plan, under the hooks | 12 | 40.2 | $62.15 | pass, four review rounds, approved; the plan reviewer's `cd` before its command was refused once a round (fixed after) |
+
+**What only the work showed:**
+- Claude Code tells a hook whether anyone attends the session: `CLAUDE_CODE_SESSION_ATTENDED` is `0` under `claude -p` and `1` in an editor session (2.1.318). Undocumented, so the payload recording pins it.
+- A sub-agent hands its report back through a `SubagentHandback` tool call, and Claude Code ends it there: a SubagentStop block afterwards does not bring it back, a refused handback does. The budget never refuses the handback, and an implementer's check before stopping runs at it.
+- The template's settings deny reading `.env` before any hook runs, so the headless run tests the guard's own refusal on a certificate.
+- The auto mode classifier refused a probe session started with `bypassPermissions` ("Create Unsafe Agents"); every probe after ran in auto mode with a narrow allow list.
+- Exec-form hooks need `node` on the PATH even outside a pitwall project, and with `onFailure: "block"` a machine without node would have refused every call in every project; every hook now starts through bash, which checks for the project and for node first.
+
+**What the review found.** Five fresh-context rounds ran on the branch, then a short check of the last fixes. Round one found the skeleton's push exception letting a planning branch onto `main`, a Git Bash path that hid the branch, stop retries reset by every edit, no planning stage in the brief, and node's absence blocking every project. After that, most blocking findings were false refusals of ordinary work: a commit message naming `.env`, an edit by a non-implementer sub-agent left unchecked, search patterns and jq filters read as secret files, Claude Code's `"$(cat <<'EOF' ...)"` bodies cut at their first `)`, PowerShell's `if ($?) { }` blocks and here-strings, a recursive grep with `--include`. The round-four fix for blocks split words at every brace and so let gh's `repos/{owner}/{repo}/...` writes through; round five caught it (L-9). The ways past the guards that only a deliberate attempt writes are one accepted risk, R-2.
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | 5 | 247,085 | 47 | 15.7 |
+| 2 | 2 | 226,590 | 46 | 15.2 |
+| 3 | 2 | 227,225 | 46 | 13.7 |
+| 4, verification | 3 | 193,875 | 42 | 10.9 |
+| 5, verification | 1 (a regression of round 4) | 157,281 | 28 | 8.9 |
+| check of round 5's fixes | 3 (PowerShell forms the fix missed) | 121,766 | 24 | 6.7 |
+| recheck | none; three older PowerShell gaps listed, closed after | 110,142 | 21 | 5.4 |
+
+The seven come to about 1.28 million tokens, 254 tool calls and 77 minutes. Each fix has a case in `scripts/check.mjs`; the last recheck compared the guard before and after its commit on 261 commands and 600,000 random PowerShell strings and found no command it lost.
+
+**Next:** T3b, the epic loop. It adds the code reviewer's row to `hooks.agents`, the conductor that reads the brief, and the owner's choice of ADR-0010, whose allow rules this epic's review guard now makes possible.
+
 ## T2 - Stages 3 to 5 (2026-11-09)
 
 `/pitwall:spike` and `/pitwall:plan` are built, with the `plan-reviewer` agent, and the plan of a new project now reaches `main` the way every later PR will: reviewed by a fresh agent, with `ai-review` set by that agent, merged with the owner's yes. The plugin gained two scripts, `review-status.mjs` (ADR-0007) and `merge.mjs` (ADR-0008), and `docs-check.mjs` three stages: `spike`, which reads git to show that the criterion came before the prototype (ADR-0009), `plan` and `plan-review`. `/pitwall:decide <area>` revisits one area after a failed spike. The T1 follow-ups the owner added are in: the GitHub plan read from the protection probe only, research budgets per level, handoffs with each command on its own line under a label, and the refused-probe case in the fake `gh`. The owner answered two one-way questions, added to the second one, and accepted the two-way list with five edits.

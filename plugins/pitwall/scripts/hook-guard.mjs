@@ -96,6 +96,7 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
   const inner = [];
   // Open { blocks, so a "}" that closes one ends a command and any other "}" is text ("{owner}/{repo}").
   let blocks = 0;
+  let textBraces = 0;
   const endWord = () => {
     if (word === null) return;
     if (redirect === 'out') cur.redirects.push(word);
@@ -220,9 +221,15 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
       blocks += 1;
       continue;
     }
-    // A "}" in the middle of a word closes a block only when the word has no "{" of its own ("repos/{owner}").
-    const ownBraces = word === null ? 0 : (word.match(/{/g) ?? []).length - (word.match(/}/g) ?? []).length;
-    if (c === '}' && blocks > 0 && (word === null || (ps && ownBraces <= 0))) {
+    // Any other "{" is text ("repos/{owner}", "src/{a,b}", "@{Key = 1}"), and so is the "}" that closes it;
+    // only a "}" with no such "{" open closes a block.
+    if (c === '{') textBraces += 1;
+    if (c === '}' && textBraces > 0) {
+      textBraces -= 1;
+      word = `${word ?? ''}}`;
+      continue;
+    }
+    if (c === '}' && blocks > 0 && (word === null || ps)) {
       endCmd();
       blocks -= 1;
       continue;
@@ -363,8 +370,9 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     let argv = cmd.argv;
     for (;;) {
       if (argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) argv = argv.slice(1);
-      // PowerShell's "$ok = (...)" or "$ok=(...)": the assignment, not a program.
+      // PowerShell's "$ok = (...)", "$ok=(...)" or "$r=git push": the assignment, not a program.
       else if (argv.length && /^\$[\w:]+=?$/.test(argv[0]) && (argv[0].endsWith('=') || argv[1] === '=')) argv = argv.slice(argv[0].endsWith('=') ? 1 : 2);
+      else if (argv.length && /^\$[\w:]+=./.test(argv[0])) argv = [argv[0].replace(/^\$[\w:]+=/, ''), ...argv.slice(1)];
       // Keywords before a command: "if npm test; then git push ...", "else", "do", PowerShell's "try".
       else if (KEYWORDS.has(String(argv[0] ?? '').toLowerCase())) argv = argv.slice(1);
       else if (['sudo', 'command', 'exec', 'nohup', 'time', 'nice', 'builtin'].includes(program(argv[0]))) argv = argv.slice(1);
@@ -556,6 +564,11 @@ export function guard(call, ctx) {
   const text = String(input.command ?? '');
   const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
   if (keyIn(text)) return refuse('secrets', 'this command holds what looks like a key or a token. Keep secrets out of commands; tests make their keys at run time.');
+  // PowerShell writing through .NET ([IO.File]::WriteAllText, the usual way to write without a byte order mark).
+  const flat = text.split('\\').join('/');
+  if (/\[(System\.)?IO\.(File|Directory)\]::\s*(Write|Append|Delete|Move|Copy|Replace|Create)/i.test(text) && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(flat) || plugins.some((d) => (WIN ? flat.toLowerCase() : flat).includes(d)))) {
+    return refuse('switch', 'this .NET call writes one of the switches of pitwall\'s guards: only the owner, or a pitwall script, changes it.');
+  }
   const reviewer = Boolean(agentId) && h.reviewers.includes(agentType);
   const base = ctx.cfg.mergeProtection.branch;
   // The branch a command switched to earlier in the same line ("git switch -c x && git push -u origin HEAD").
