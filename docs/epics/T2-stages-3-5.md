@@ -17,7 +17,7 @@ ADR: ADR-0002, ADR-0005, ADR-0006, ADR-0007, ADR-0008, ADR-0009
 
 ## Decisions
 
-One-way, asked one at a time (2026-11-06): the reviewer sets `ai-review` through one plugin script, and the T3 hook runs it only from the two pitwall reviewers, which the PreToolUse payload can tell apart (ADR-0007); the plan PR merges with a merge commit after the owner's yes, which the merge commit message records (ADR-0008).
+One-way, asked one at a time (2026-11-06): the reviewer sets `ai-review` through one plugin script, and the T3a hook runs it only from the two pitwall reviewers, which the PreToolUse payload can tell apart (ADR-0007); the plan PR merges with a merge commit after the owner's yes, which the merge commit message records (ADR-0008).
 
 Two-way, picked by the agent and accepted by the owner as a list, with the owner's edits (marked):
 
@@ -25,7 +25,7 @@ Two-way, picked by the agent and accepted by the owner as a list, with the owner
 | --- | --- | --- |
 | Criterion first | The spike file with the hypothesis and the criterion is committed on the planning branch before `spike/<topic>` starts from it; the check reads git, locally only, and fails closed on a shallow history (owner's edit, ADR-0009) | "Criterion first" and "code off main" are checked by a tool, and never pass quietly in CI |
 | Spike code | On `spike/<topic>`, pushed before the reachability check when there is a remote, never merged; the gate stub catches a leak until E0, the review after it (owner's edit, ADR-0009) | The prototype stays readable, and the gap after E0 is recorded |
-| Who builds and measures | The main conversation, within `budgets.subagentToolCalls.stop` calls; the result says whether a command or the owner measured | Implementers are T3, and some measurements need a person |
+| Who builds and measures | The main conversation, within `budgets.subagentToolCalls.stop` calls; the result says whether a command or the owner measured | Implementers are T3b, and some measurements need a person |
 | Spike template | `docs/spikes/template.md`: Hypothesis, Criterion, Result, Conclusion, with the fields Assumption, Branch, Outcome, Follow-up | The same pattern as `adr/0000-template.md`; a new file is a minor version |
 | A spike that fails | `/pitwall:decide <area>` revisits one area: a new ADR, the old one `superseded by`, `docs/STACK.md` updated; the spike's follow-up names that ADR or an accepted risk | "Back to decide with a new ADR" without copying decide into spike |
 | Spikes by level | At every level each high-risk assumption is covered by a spike, an ADR, an epic or an accepted risk; at full the riskiest has a concluded spike; at standard "unproven" is the reviewer's call | "Unproven" is judgement, coverage is checkable |
@@ -35,7 +35,7 @@ Two-way, picked by the agent and accepted by the owner as a list, with the owner
 | Review depth | `preMortemReasons` per level: lite 0, standard 5, full 10 (owner's edit); non-functional and launch items carry the levels they apply to | SPEC 3 and the config said it differently; now they agree |
 | Findings | `docs/PLAN-REVIEW.md` gains `## Findings`, a launch questions table and `## Approval` (filled by E0's first commit); every reason and finding is closed by an ID or an accepted risk | "Every finding closed or accepted" becomes a check; adding headings is minor (ADR-0006) |
 | Plan reviewer | Read, Grep, Glob, Write, Edit and Bash for two scripts; the brief holds paths and the level only; it writes only `docs/PLAN-REVIEW.md`, and the main conversation closes findings elsewhere (owner's edit, ADR-0007) | From the documents only, and the reviewer is not the author |
-| PR and merge | The plan skill pushes the planning branch and opens the PR before the last round; `merge.mjs` merges after the owner's yes; both scripts hand over when they may not act | The L-5 and L-6 pattern of T1, and parts T3 reuses |
+| PR and merge | The plan skill pushes the planning branch and opens the PR before the last round; `merge.mjs` merges after the owner's yes; both scripts hand over when they may not act | The L-5 and L-6 pattern of T1, and parts T3b reuses |
 | Skill runs | `e2e.mjs` adds spike and plan for the lite system; the scripted owner takes a spike on the riskiest assumption, measured by a command where one can measure it and by the scripted owner where a person has to look (the first run needed a person: lock and sleep cannot be done headless); a stage starts from saved state | Spike and the reviewer run headless before T5, without paying for stages 0 to 2 every time |
 | Version | 0.3.0 | New skills, scripts, a template file and headings are minor (ADR-0006) |
 
@@ -43,9 +43,9 @@ The owner added the T1 follow-ups in T2-AC6 to this epic.
 
 ## Out of scope
 
-- The hooks: running `review-status.mjs` only from the reviewers, and limiting the plan reviewer's writes (T3-AC4).
-- Writing the plan's merge commit into `docs/PLAN-REVIEW.md`: the first commit of E0's branch (T3-AC1).
-- Merging epics by risk class with `merge.mjs` (T3-AC5).
+- The hooks: running `review-status.mjs` only from the reviewers, and limiting the plan reviewer's writes (T3a-AC4).
+- Writing the plan's merge commit into `docs/PLAN-REVIEW.md`: the first commit of E0's branch (T3b-AC1).
+- Merging epics by risk class with `merge.mjs` (T3b-AC5).
 
 ## Open questions
 

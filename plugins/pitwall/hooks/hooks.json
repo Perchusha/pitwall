@@ -1,0 +1,68 @@
+{
+  "description": "pitwall (T3a): a session brief, guards on secrets, main, merge protection, ai-review and their own switch, call budgets, and the gate after edits and before stopping; in pitwall projects only. Each hook first checks for .claude/pitwall.json and for node, so a machine without node blocks no other project.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/pitwall.json\" ] || exit 0; command -v node >/dev/null 2>&1 || { printf '%s' '{\"systemMessage\":\"pitwall: Node.js is not on PATH, so its guards refuse every tool call. Install the Node LTS from https://nodejs.org, or turn pitwall off in this project: run this yourself in a terminal, not through an agent: claude plugin disable pitwall@pitwall --scope local\"}'; exit 0; }; exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" session-start",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/pitwall.json\" ] || exit 0; command -v node >/dev/null 2>&1 || { printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"pitwall refused this call (broken): Node.js is not on PATH, so its guard cannot run. Install the Node LTS from https://nodejs.org. To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local.\"}}'; exit 0; }; exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" pre-tool-use",
+            "timeout": 570,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/pitwall.json\" ] || exit 0; command -v node >/dev/null 2>&1 || exit 0; exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" post-tool-use",
+            "timeout": 150
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/pitwall.json\" ] || exit 0; command -v node >/dev/null 2>&1 || exit 0; exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" stop",
+            "timeout": 570
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/.claude/pitwall.json\" ] || exit 0; command -v node >/dev/null 2>&1 || exit 0; exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\" subagent-stop",
+            "timeout": 570
+          }
+        ]
+      }
+    ]
+  }
+}

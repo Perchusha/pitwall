@@ -23,7 +23,7 @@
 // the version in .claude-code-version (the one CI installs).
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -297,6 +297,17 @@ step('layout', (report) => {
     const again = layOut(project);
     if (again.status !== 1 || !/REFUSED/.test(again.stderr)) report(`a second layout must be refused with exit 1, got ${again.status}\n${again.stderr}`);
     if (readFileSync(join(project, 'CLAUDE.md'), 'utf8') !== claude) report('a refused layout changed CLAUDE.md');
+    // T3a (owner): an agent cannot lay a project out again to reset its mode: a folder with .claude/pitwall.json is refused.
+    const settingsBefore = readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8');
+    for (const extra of [['--level', 'full'], ['--level', 'lite', '--name', 'other']]) {
+      const again2 = layOut(project, extra);
+      if (again2.status !== 1 || readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8') !== settingsBefore) report(`a layout over a project with ${extra.join(' ')} must be refused and leave .claude/pitwall.json as it was, got exit ${again2.status}`);
+    }
+    const onlySettings = join(dir, 'only-settings');
+    mkdirSync(join(onlySettings, '.claude'), { recursive: true });
+    writeFileSync(join(onlySettings, '.claude', 'pitwall.json'), '{"mergeProtection":"local-hook"}');
+    const onlyRun = layOut(onlySettings);
+    if (onlyRun.status !== 1 || readFileSync(join(onlySettings, '.claude', 'pitwall.json'), 'utf8') !== '{"mergeProtection":"local-hook"}') report(`a folder holding only .claude/pitwall.json must be refused and stay untouched, got exit ${onlyRun.status}`);
 
     const docsOnly = join(dir, 'docs-only');
     mkdirSync(join(docsOnly, 'docs'), { recursive: true });
@@ -442,6 +453,16 @@ step('docs check', (report) => {
       /SPEC\.md:\d+: ADR-0042 points nowhere/, /E7 points nowhere/, /E0-AC9 points nowhere/, /BUG-3 points nowhere/, /L-2 points nowhere/, /A-4 points nowhere/, /R-1 points nowhere/,
     ]);
     broken('IDs that resolve', (c) => appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE0 and E0-AC1 exist; `ADR-0042` is an example.\n\n```\nBUG-99 in a code block\n```\n'), []);
+    // An epic split in two: both halves and their criteria resolve, and so does the bare number; another letter does not.
+    const split = (c) => writeFileSync(join(c, 'docs/epics/E1a-split.md'), '# E1a - Split\n\n## Acceptance criteria\n\n- [ ] E1a-AC1: One.\n\n## Out of scope\n\nNone.\n\n## Open questions\n\nNone.\n');
+    broken('a split epic resolves', (c) => {
+      split(c);
+      appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE1, E1a and E1a-AC1 exist.\n');
+    }, []);
+    broken('a split epic defines only its own letter', (c) => {
+      split(c);
+      appendFileSync(join(c, 'docs', 'SPEC.md'), '\nE1b and E1a-AC2 do not.\n');
+    }, [/E1b points nowhere/, /E1a-AC2 points nowhere/]);
     broken('state file too big', (c) => appendFileSync(join(c, 'docs', 'BUGS.md'), 'x'.repeat(51 * 1024)), [/BUGS\.md: [\d.]+ KB, over the 50 KB limit/]);
     broken('CLAUDE.md too long', (c) => appendFileSync(join(c, 'CLAUDE.md'), '- line\n'.repeat(200)), [/CLAUDE\.md: \d+ lines, over the 200-line limit/]);
 
@@ -1283,9 +1304,13 @@ step('merge protection (fake gh)', (report) => {
     const repo = (visibility, viewerPermission = 'ADMIN') => ({ nameWithOwner: 'o/r', visibility, viewerPermission });
     const ok = { auth: true, repo: repo('PUBLIC'), branch: true, probe: '404', put: 'ok' };
     let n = 0;
-    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending', raw }) => {
+    const run = (label, scenario, { args = [], gh, code, result, puts, setting, says = [], before = 'pending', raw, remote }) => {
       const project = join(dir, `p${(n += 1)}`);
       mkdirSync(join(project, '.claude'), { recursive: true });
+      if (remote) {
+        gitIn(project, 'init', '-q');
+        gitIn(project, 'remote', 'add', 'origin', `https://github.com/${remote}.git`);
+      }
       if (raw !== undefined) writeFileSync(join(project, '.claude', 'pitwall.json'), raw);
       else if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
       const { r, calls } = withFakeGh('protect.mjs', project, scenario, ['--project', project, ...args], gh ? { PITWALL_GH: JSON.stringify(gh) } : {});
@@ -1356,10 +1381,10 @@ step('merge protection (fake gh)', (report) => {
     run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['    git push -u origin main\n'] });
     run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['cli.github.com'] });
     run('no settings file', ok, { before: null, code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not recorded'] });
-    const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
+    const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     if (!named.calls.some((c) => c.args[0] === 'repo' && c.args.includes('o/r'))) report('--repo: the repository was not passed to gh repo view');
     run('recorded mode dropped on weaker protection', { ...ok, protection: { ...protectedOk, enforce_admins: { enabled: false } } }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
-    run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
+    run('repository not readable', { ...ok, repo: null }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['gh could not read the repository'] });
     run('not admin, private', { ...ok, repo: repo('PRIVATE', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['Upgrade to GitHub Pro'] });
     run('settings that are not an object', ok, { raw: '[1]\n', code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not a JSON object'] });
     run('recorded protection gone, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending' });
@@ -1384,6 +1409,649 @@ step('merge protection (fake gh)', (report) => {
     run('not admin, protected with linear history the summary hides', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
     run('admin, summary satisfies, probe refused', { ...ok, probe: 'denied', protection: protectedOk }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
+    // T3a (owner): no flag sets the mode, so an agent cannot use protect.mjs to weaken it. The mode comes only
+    // from what GitHub answers for the project's own repository; --repo names one of its remotes or is refused.
+    for (const args of [['--mode', 'branch-protection'], ['--mode=branch-protection'], ['--merge-protection', 'branch-protection'], ['--branch-protection'], ['--local-hook'], ['--pending']]) {
+      run(`a flag that would set the mode: ${args.join(' ')}`, { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args, before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    }
+    run('--repo naming another repository', ok, { args: ['--repo', 'other/public-repo'], remote: 'o/r', before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    run('--repo with no remote at all', ok, { args: ['--repo', 'o/r'], before: 'local-hook', code: 2, puts: 0, setting: 'local-hook' });
+    run('--repo naming the upstream of a fork', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args: ['--repo', 'o/r'], remote: 'o/r', code: 0, result: 'local-hook', puts: 0, setting: 'local-hook' });
+    // On a private repository on GitHub Free, no flag the script takes records branch-protection, the mode in which the merge guard steps aside.
+    for (const args of [[], ['--dry-run'], ['--repo', 'o/r'], ['--repo', 'o/r', '--dry-run']]) {
+      const r = run(`GitHub Free with ${args.join(' ') || 'no flags'}`, { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args, remote: 'o/r', code: 0, result: 'local-hook', puts: 0, setting: args.includes('--dry-run') ? 'pending' : 'local-hook' });
+      if (/RESULT: branch-protection/.test(r.r.stdout)) report(`GitHub Free with ${args.join(' ')}: recorded branch-protection`);
+    }
+  });
+});
+
+// 6i. T3a-AC1 to AC8: the hooks, run as Claude Code runs them, on the payloads it gave them in a
+// real session (scripts/hook-payloads/, from `node scripts/e2e.mjs --hooks --record`), with the
+// tool input of each case put in. The payloads must come from the pinned CLI: their fields
+// belong to Claude Code (ADR-0007).
+const payloadDir = join(root, 'scripts', 'hook-payloads');
+const PAYLOADS = [
+  'main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-pre-tool-use-agent', 'main-post-tool-use-write', 'main-stop',
+  'plan-reviewer-pre-tool-use-read', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop',
+  'researcher-pre-tool-use-glob', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop',
+  'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop',
+  'project-agent-pre-tool-use-read', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop',
+  'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
+];
+step('hooks (recorded payloads)', (report) => {
+  const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
+  const payloads = {};
+  for (const f of existsSync(payloadDir) ? readdirSync(payloadDir).filter((x) => x.endsWith('.json')) : []) {
+    const p = JSON.parse(readFileSync(join(payloadDir, f), 'utf8'));
+    if (p.claudeCode !== pinned) report(`${f} was recorded from Claude Code ${p.claudeCode}, and .claude-code-version pins ${pinned}: record again with node scripts/e2e.mjs --hooks --record`);
+    payloads[f.slice(0, -5)] = p;
+  }
+  const missing = PAYLOADS.filter((l) => !payloads[l]);
+  if (missing.length) return report(`no recorded payload for ${missing.join(', ')}: run node scripts/e2e.mjs --hooks --record`);
+  // What the recording tells about Claude Code, which the hooks rely on (ADR-0007).
+  if (payloads['main-pre-tool-use-bash'].input.agent_id !== undefined) report('a call from the main conversation carries agent_id');
+  if (payloads['plan-reviewer-pre-tool-use-read'].input.agent_type !== 'pitwall:plan-reviewer') report('the plan reviewer\'s calls do not carry agent_type pitwall:plan-reviewer');
+  if (payloads['project-agent-pre-tool-use-read'].input.agent_type !== 'plan-reviewer') report('a project agent named plan-reviewer does not carry agent_type plan-reviewer');
+  if (payloads['main-pre-tool-use-bash'].attended !== '0') report('the headless recording does not carry CLAUDE_CODE_SESSION_ATTENDED=0');
+
+  // hooks.json: every hook through bash, which checks for a pitwall project and for node first;
+  // the guard matches every tool, fails closed and outlasts the gate it may run at a handback.
+  const hooksCfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8')).hooks;
+  const hooks = JSON.parse(readFileSync(join(plugin, 'hooks', 'hooks.json'), 'utf8')).hooks;
+  const EVENTS = { SessionStart: 'session-start', PreToolUse: 'pre-tool-use', PostToolUse: 'post-tool-use', Stop: 'stop', SubagentStop: 'subagent-stop' };
+  const commands = {};
+  for (const [ev, arg] of Object.entries(EVENTS)) {
+    const hk = hooks[ev]?.[0]?.hooks?.[0];
+    commands[arg] = hk?.command ?? '';
+    if (hk?.shell !== 'bash' || !commands[arg].startsWith('[ -f "$CLAUDE_PROJECT_DIR/.claude/pitwall.json" ] || exit 0;') || !commands[arg].endsWith(`scripts/hook.mjs" ${arg}`)) report(`hooks.json: ${ev} must run through bash, check for .claude/pitwall.json first and end by running hook.mjs ${arg}`);
+  }
+  const pre = hooks.PreToolUse?.[0];
+  if (pre?.matcher !== '*' || pre.hooks?.[0]?.onFailure !== 'block') report('hooks.json: PreToolUse must match every tool with onFailure "block"');
+  if (!(pre?.hooks?.[0]?.timeout > hooksCfg.gateTimeoutSeconds.changed)) report('hooks.json: the PreToolUse timeout must outlast hooks.gateTimeoutSeconds.changed, which an implementer\'s handback may run');
+  const sessionCmd = commands['session-start'];
+
+  scratch('pitwall-hooks-', (dir) => {
+    const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+    const fwd = (p) => p.split('\\').join('/');
+    const home = join(dir, 'home');
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    const state = join(dir, 'state');
+    const origin = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    // A project as kickoff leaves it, plus a second commit on main, so the skeleton's first push is over.
+    const makeProject = (name, commits = 2) => {
+      const p = join(dir, name);
+      if (layOut(p).status !== 0) throw new Error('layout failed');
+      gitIn(p, 'init', '-q', '-b', 'main');
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'skeleton');
+      if (commits > 1) gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'second');
+      gitIn(p, 'remote', 'add', 'origin', origin);
+      return p;
+    };
+    const project = makeProject('p');
+    const setMode = (mode) => {
+      const f = join(project, '.claude', 'pitwall.json');
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), mergeProtection: mode }, null, 2));
+    };
+    const head = gitIn(project, 'rev-parse', 'HEAD').stdout.trim();
+    let sessions = 0;
+    // Runs one hook on a recorded payload with the case's input, and returns what it said.
+    const hook = (label, { input = {}, tool, env = {}, session, projectDir = project, script = join(scripts, 'hook.mjs'), stdin } = {}) => {
+      const p = payloads[label];
+      const text = JSON.stringify(p.input).split('<project>').join(fwd(projectDir)).split('<scratch>').join(fwd(dir)).split('<plugin>').join(fwd(plugin)).split('<home>').join(fwd(home));
+      const payload = { ...JSON.parse(text), session_id: session ?? `check-${(sessions += 1)}`, cwd: projectDir, ...(tool ? { tool_name: tool } : {}), ...input };
+      const hookEnv = { ...process.env, CLAUDE_PROJECT_DIR: projectDir, PITWALL_HOOK_STATE: state, HOME: home, USERPROFILE: home, CLAUDE_CODE_SESSION_ATTENDED: p.attended ?? '0', PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), FAKE_GH: JSON.stringify({}), FAKE_GH_LOG: join(dir, 'gh.log'), FAKE_GH_STATE: join(dir, 'gh-state.json'), ...env };
+      // An attendance of undefined: Claude Code did not set the variable.
+      for (const [k, v] of Object.entries(hookEnv)) if (v === undefined) delete hookEnv[k];
+      const r = spawnSync(process.execPath, [script, p.event], { input: stdin ?? JSON.stringify(payload), encoding: 'utf8', env: hookEnv });
+      let out = null;
+      try {
+        out = r.stdout.trim() ? JSON.parse(r.stdout) : null;
+      } catch {
+        out = { unparsed: r.stdout };
+      }
+      return { code: r.status, out, stderr: r.stderr };
+    };
+    // A short form of the answer: "allow", "deny:<rule>", "context", "block" or "message".
+    const verdict = ({ out }) => {
+      if (!out) return 'allow';
+      const h = out.hookSpecificOutput ?? {};
+      if (h.permissionDecision === 'deny') return `deny:${/pitwall refused this call \((\w+)\)/.exec(h.permissionDecisionReason ?? '')?.[1] ?? '?'}`;
+      if (out.decision === 'block') return 'block';
+      if (h.additionalContext) return 'context';
+      if (out.systemMessage) return 'message';
+      return JSON.stringify(out);
+    };
+    const expect = (label, what, opts, want) => {
+      const r = hook(label, opts);
+      const got = verdict(r);
+      if (got !== want) report(`${what}: expected ${want}, got ${got}${r.code !== 0 ? ` (exit ${r.code})` : ''}${r.stderr ? `\n${r.stderr}` : ''}${r.out ? `\n${JSON.stringify(r.out).slice(0, 400)}` : ''}`);
+      return r;
+    };
+    const bash = (command, want, extra = {}) => expect('main-pre-tool-use-bash', `main conversation: ${command.slice(0, 120)}`, { input: { tool_input: { command } }, ...extra }, want);
+    const AWS = 'AKIA' + 'IOSFODNN7EXAMPLE';
+    const P = fwd(plugin);
+
+    // No-op outside a pitwall project, for every event.
+    for (const label of ['main-session-start', 'main-pre-tool-use-bash', 'main-post-tool-use-write', 'main-stop', 'implementer-subagent-stop']) {
+      const r = hook(label, { projectDir: dir, input: { tool_input: { command: 'rm .env', file_path: join(dir, '.env') } } });
+      if (r.code !== 0 || r.out !== null) report(`${label} outside a pitwall project: exit ${r.code}, printed ${JSON.stringify(r.out)}`);
+    }
+
+    // (a) Secrets.
+    bash('cat .env', 'deny:secrets');
+    bash('cp .env.example .env', 'deny:secrets');
+    bash('cat .env.example', 'allow');
+    bash('node --env-file=.env app.js', 'deny:secrets');
+    bash('cat ~/.ssh/id_rsa', 'deny:secrets');
+    bash('node -e "console.log(require(\'fs\').readFileSync(\'.env\', \'utf8\'))"', 'deny:secrets');
+    bash(`echo ${AWS} > notes.txt`, 'deny:secrets');
+    bash('git commit -m "never commit .env"', 'allow');
+    bash("git commit -F - <<'EOF'\nrm .env from the docs\nEOF", 'allow');
+    expect('main-pre-tool-use-read', 'Read .env', { input: { tool_input: { file_path: join(project, '.env') } } }, 'deny:secrets');
+    expect('main-pre-tool-use-read', 'Read config/.env.local', { input: { tool_input: { file_path: join(project, 'config', '.env.local') } } }, 'deny:secrets');
+    expect('main-pre-tool-use-read', 'Read docs/IDEA.md', { input: { tool_input: { file_path: join(project, 'docs', 'IDEA.md') } } }, 'allow');
+    expect('main-pre-tool-use-read', 'Grep through .env files', { tool: 'Grep', input: { tool_input: { pattern: 'KEY', glob: '**/.env*' } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write a key into src/a.js', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), content: `const key = '${AWS}';` } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write a private key block', { input: { tool_input: { file_path: join(project, 'test', 'k.txt'), content: `-----BEGIN RSA ${'PRIVATE'} KEY-----\n${'MIIEpAIBAAKCAQEA'.repeat(4)}\n` } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write code that looks for a key header', { input: { tool_input: { file_path: join(project, 'src', 'pem.js'), content: `export const isKey = (s) => s.startsWith('-----BEGIN ${'PRIVATE'} KEY-----');` } } }, 'allow');
+    expect('main-pre-tool-use-edit', 'Edit a token into a file', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), old_string: 'x', new_string: `ghp_${'a1'.repeat(18)}` } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write .env.example', { input: { tool_input: { file_path: join(project, '.env.example'), content: 'API_KEY=\n' } } }, 'allow');
+    expect('main-pre-tool-use-read', 'Grep through .env.example files', { tool: 'Grep', input: { tool_input: { pattern: 'KEY', glob: '**/.env.example' } } }, 'allow');
+    expect('main-pre-tool-use-read', 'Grep through keymap files', { tool: 'Grep', input: { tool_input: { pattern: 'ctrl', glob: '**/*.keymap.json' } } }, 'allow');
+    bash('echo ".env" >> .gitignore', 'allow');
+    bash('test -f .env && echo there', 'allow');
+    bash('find . -name "*.pem"', 'allow');
+    bash('echo SECRET=1 > .env', 'deny:secrets');
+    bash('git commit -m "feat: load settings from config/.env"', 'allow');
+    bash('git commit -m "feat: read keys from certs/server.key"', 'allow');
+    // A path with a space in it is still a path.
+    bash(`rm "${fwd(project)}/.claude/pitwall.json"`, 'deny:switch');
+    bash('cat "./my notes/.env"', 'deny:secrets');
+    bash('git log --grep=".env"', 'allow');
+    bash("sed -n '/[z-a]/p' notes.txt", 'allow');
+    bash('grep -E "[\\w-.]+" notes.txt', 'allow');
+    // A recursive grep reads ignored files: with a .env in the project, it is refused unless it leaves .env out.
+    writeFileSync(join(project, '.env'), 'DATABASE_URL=postgres://x\n');
+    bash('grep -rn DATABASE_URL .', 'deny:secrets');
+    // A search pattern, a filter or a property is no file; a file named after the pattern still is.
+    bash('grep -n ".env" .gitignore', 'allow');
+    bash("grep -qx '.env' .gitignore", 'allow');
+    bash("git grep -n '.env'", 'allow');
+    bash("rg '\\.env' src", 'allow');
+    bash("git log -S '.env'", 'allow');
+    bash("grep -n 'cert.pem' docs/SPEC.md", 'allow');
+    bash("jq -r '.key' data.json", 'allow');
+    bash("yq e '.metadata.key' x.yaml", 'allow');
+    bash('node -e "const o = { key: 1 }; console.log(o.key)"', 'allow');
+    bash("git ls-files '*.pem'", 'allow');
+    bash('grep KEY .env', 'deny:secrets');
+    bash('grep -e KEY .env', 'deny:secrets');
+    expect('main-pre-tool-use-bash', 'PowerShell: Select-String for .env', { tool: 'PowerShell', input: { tool_input: { command: "Select-String -Path src/*.ts -Pattern '.env'" } } }, 'allow');
+    // git commands that only name a secret file, and untracking one.
+    bash('git check-ignore -v .env', 'allow');
+    bash('git ls-files .env', 'allow');
+    bash('git status --short .env', 'allow');
+    bash('git rm --cached .env', 'allow');
+    bash('git rm .env', 'deny:secrets');
+    bash('grep -r DATABASE_URL', 'deny:secrets');
+    bash('grep -rn --exclude=.env DATABASE_URL .', 'allow');
+    bash('grep -rn --include=*.ts useState .', 'allow');
+    bash('grep -rn --include=.env* KEY .', 'deny:secrets');
+    bash('rg -uu DATABASE_URL', 'deny:secrets');
+    bash('rg DATABASE_URL', 'allow');
+    bash('grep -rn DATABASE_URL docs', 'allow');
+    bash('grep -rn DATABASE_URL {src,docs}', 'allow');
+    bash("rg -uu -g '*' KEY", 'deny:secrets');
+    bash("rg -uu -g '*.ts' KEY", 'allow');
+    bash('git grep DATABASE_URL', 'allow');
+    rmSync(join(project, '.env'));
+
+    // (b) Files git ignores.
+    expect('main-pre-tool-use-write', 'Write dist/a.js', { input: { tool_input: { file_path: join(project, 'dist', 'a.js'), content: 'x' } } }, 'deny:ignored');
+    expect('main-pre-tool-use-edit', 'Edit node_modules/x/index.js', { input: { tool_input: { file_path: join(project, 'node_modules', 'x', 'index.js'), old_string: 'a', new_string: 'b' } } }, 'deny:ignored');
+    expect('main-pre-tool-use-write', 'Write src/a.js', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), content: 'x' } } }, 'allow');
+    expect('main-pre-tool-use-write', 'Write outside the project', { input: { tool_input: { file_path: join(dir, 'outside.txt'), content: 'x' } } }, 'allow');
+
+    // (c) Pushes that change main (main has two commits, the project is on main).
+    bash('git push origin HEAD:main', 'deny:push');
+    bash('git push', 'deny:push');
+    bash('git push origin', 'deny:push');
+    bash('git -C . push origin main', 'deny:push');
+    bash('git push --force origin main', 'deny:push');
+    bash('git push origin +HEAD:main', 'deny:push');
+    bash('git push origin :main', 'deny:push');
+    bash('git push origin --delete main', 'deny:push');
+    bash('git push --all', 'deny:push');
+    bash('git push --mirror origin', 'deny:push');
+    bash('git push --tags', 'allow');
+    bash('git push -n origin main', 'allow');
+    bash('git push -u origin epic/E1-x', 'allow');
+    bash('git push --force-with-lease origin epic/E1-x', 'allow');
+    bash('echo $(git push -f origin main)', 'deny:push');
+    bash('git push origin @', 'deny:push');
+    // Commands inside blocks and groups are commands: PowerShell's "A; if ($?) { B }", bash's if, { } and ( ).
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m \"feat: x\"; if ($?) { git push origin main }", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m \"feat: x\"; if ($?) { git push origin main }" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: gh pr checks 7; if ($?) { gh pr merge 7 --admin --squash }", { tool: 'PowerShell', input: { tool_input: { command: "gh pr checks 7; if ($?) { gh pr merge 7 --admin --squash }" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m \"feat: x\"; if ($?) { git push -u origin epic/E1-x }", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m \"feat: x\"; if ($?) { git push -u origin epic/E1-x }" } } }, 'allow');
+    bash('if npm test; then git push origin main; fi', 'deny:push');
+    bash('{ git push origin main; }', 'deny:push');
+    bash('(git push origin main)', 'deny:push');
+    bash('(cd docs && git push -u origin epic/E1-x)', 'allow');
+    // Braces inside a word are text: gh's {owner}/{repo} placeholders, brace expansion, stash@{0}.
+    bash('gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review', 'deny:review');
+    bash('gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json', 'deny:protection');
+    bash("gh api graphql -F owner={owner} -F name={repo} -f query='mutation { deleteBranchProtectionRule(input: {branchProtectionRuleId: \"x\"}) { clientMutationId } }'", 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection", { tool: 'PowerShell', input: { tool_input: { command: "Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: if($?){git push origin main}", { tool: 'PowerShell', input: { tool_input: { command: "if($?){git push origin main}" } } }, 'deny:push');
+    bash('mkdir -p src/{a,b} && git stash show stash@{0}', 'allow');
+    // PowerShell's keywords, negations and assignments may touch their ( and {.
+    expect('main-pre-tool-use-bash', "PowerShell: if (!(Test-Path .env)) { Write-Host \"no .env\" }", { tool: 'PowerShell', input: { tool_input: { command: "if (!(Test-Path .env)) { Write-Host \"no .env\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: if (-not(Test-Path .claude/pitwall.json)) { Write-Host \"not a pitwall project\" }", { tool: 'PowerShell', input: { tool_input: { command: "if (-not(Test-Path .claude/pitwall.json)) { Write-Host \"not a pitwall project\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: if(Test-Path .env){ Write-Host \"there\" }", { tool: 'PowerShell', input: { tool_input: { command: "if(Test-Path .env){ Write-Host \"there\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: $ok=(Test-Path .env)", { tool: 'PowerShell', input: { tool_input: { command: "$ok=(Test-Path .env)" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: try{npm test}catch{git push origin main}", { tool: 'PowerShell', input: { tool_input: { command: "try{npm test}catch{git push origin main}" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: try{git push origin main}catch{}", { tool: 'PowerShell', input: { tool_input: { command: "try{git push origin main}catch{}" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { npm test }else{ git push origin main }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { npm test }else{ git push origin main }" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: do{ git push origin main }while($false)", { tool: 'PowerShell', input: { tool_input: { command: "do{ git push origin main }while($false)" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($LASTEXITCODE -eq 0) { gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review }", { tool: 'PowerShell', input: { tool_input: { command: "if ($LASTEXITCODE -eq 0) { gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review }" } } }, 'deny:review');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json }" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: $r=git push origin main", { tool: 'PowerShell', input: { tool_input: { command: "$r=git push origin main" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection }" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText('.claude/pitwall.json', '{}')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText('.claude/pitwall.json', '{}')" } } }, 'deny:switch');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText(\"$PWD/docs/STACK.md\", \"Settings: .claude/pitwall.json holds the level.\")", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText(\"$PWD/docs/STACK.md\", \"Settings: .claude/pitwall.json holds the level.\")" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::Copy('backup.json', '.claude/settings.json')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::Copy('backup.json', '.claude/settings.json')" } } }, 'deny:switch');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText('notes.txt', 'x')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText('notes.txt', 'x')" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: $cfg = Get-Content .claude/pitwall.json | ConvertFrom-Json", { tool: 'PowerShell', input: { tool_input: { command: "$cfg = Get-Content .claude/pitwall.json | ConvertFrom-Json" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { git push -u origin epic/E1-x }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { git push -u origin epic/E1-x }" } } }, 'allow');
+    bash('find . -name "*.tmp" -exec rm {} \\;', 'allow');
+    bash('cp x.json ${HOME}/.claude/settings.json', 'deny:switch');
+    // A subshell keeps its cd to itself.
+    bash('(cd docs && ls) && rm .claude/pitwall.json', 'deny:switch');
+    bash('echo "${HOME}/x" && git push -u origin epic/E1-x', 'allow');
+    // A PowerShell here-string is one word of text, apostrophes and all.
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m @'\nfix: don't read .env in tests\n'@", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m @'\nfix: don't read .env in tests\n'@" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: git commit -m @'\nfix: the owner's choice\n'@; git push origin main", { tool: 'PowerShell', input: { tool_input: { command: "git commit -m @'\nfix: the owner's choice\n'@; git push origin main" } } }, 'deny:push');
+    // A heredoc inside $( ... ): its parentheses and backticks are text, and what comes after the substitution is still read.
+    bash("gh pr create --title x --body \"$(cat <<'EOF'\nSteps: a) install b) run `git push origin main` is not done here\nEOF\n)\"", 'allow');
+    bash("git commit -m \"$(cat <<'EOF'\nfix: three things\n\n1) the parser 2) the docs 3) docs mention `cat .env`\nEOF\n)\"", 'allow');
+    bash("git commit -m \"$(cat <<'EOF'\nfix: a) b)\nEOF\n)\" && git push origin main", 'deny:push');
+    bash('bash -c "git push origin main"', 'deny:push');
+    bash('bash -lc "git push origin main"', 'deny:push');
+    bash('git push origin "$(git branch --show-current)"', 'deny:push');
+    bash('git checkout -b epic/E9-x && git push -u origin HEAD', 'allow');
+    bash('git switch -c epic/E9-y && git push -u origin HEAD', 'allow');
+    bash('git switch --create epic/E9-z && git push -u origin HEAD', 'allow');
+    // Git Bash spells the project folder /c/...; on Linux that folder does not exist, and a branch git cannot read is refused too.
+    const bashPath = fwd(project).replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
+    bash(`cd ${bashPath} && git push`, 'deny:push');
+    bash(`git -C ${bashPath} push`, 'deny:push');
+    if (process.platform === 'win32') expect('main-pre-tool-use-write', 'Write .claude/settings.json by its Git Bash path', { input: { tool_input: { file_path: `${bashPath}/.claude/settings.json`, content: '{}' } } }, 'deny:switch');
+    // The skeleton's first push passes from main itself, while main holds one commit and was never pushed.
+    const fresh = makeProject('fresh', 1);
+    const onFresh = (command, want, what) => expect('main-pre-tool-use-bash', what, { projectDir: fresh, input: { tool_input: { command } } }, want);
+    onFresh('git push -u origin main', 'allow', 'the skeleton\'s first push');
+    onFresh('git push -f -u origin main', 'deny:push', 'a forced first push');
+    gitIn(fresh, 'checkout', '-qb', 'plan/initial');
+    onFresh('git push origin HEAD:main', 'deny:push', 'a planning branch pushed onto main while main holds the skeleton');
+    onFresh('git push origin plan/initial:main', 'deny:push', 'the planning branch pushed onto main by name');
+    onFresh('git push -u origin plan/initial', 'allow', 'the planning branch pushed');
+    gitIn(fresh, 'checkout', '-q', 'main');
+    gitIn(fresh, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    onFresh('git push origin main', 'deny:push', 'main pushed again after its first push');
+    gitIn(fresh, 'checkout', '-q', '--detach');
+    onFresh('git push origin HEAD:epic/E1-x', 'allow', 'a detached HEAD pushed to a named branch');
+    onFresh('git push origin HEAD:main', 'deny:push', 'a detached HEAD pushed onto main');
+    onFresh('git push', 'deny:push', 'a push from a detached HEAD with no branch named');
+    gitIn(fresh, 'checkout', '-q', 'main');
+
+    // (d) The guards' switch.
+    bash('rm .claude/pitwall.json', 'deny:switch');
+    bash('cat .claude/pitwall.json', 'allow');
+    bash('git add .claude/pitwall.json', 'allow');
+    bash('cd .claude && rm settings.json', 'deny:switch');
+    bash('bash -c "rm .claude/pitwall.json"', 'deny:switch');
+    bash("sed -i 's/true/false/' .claude/settings.json", 'deny:switch');
+    bash('echo {} > .claude/settings.local.json', 'deny:switch');
+    bash('mv .claude/pitwall.json /tmp/x.json', 'deny:switch');
+    bash('git rm --cached .claude/settings.json', 'deny:switch');
+    bash('git checkout -- .claude/settings.json', 'deny:switch');
+    bash('rm .claude/*.json', 'deny:switch');
+    bash('rm -rf .claude', 'deny:switch');
+    bash('rm -rf node_modules dist', 'allow');
+    bash('git clean -fdx', 'deny:switch');
+    bash('git clean -fd', 'allow');
+    bash('git clean -n -x', 'allow');
+    bash('mv build/out.js .', 'allow');
+    bash('mv notes.md .claude/', 'allow');
+    bash('mv .claude old-claude', 'deny:switch');
+    expect('main-pre-tool-use-bash', "PowerShell: Move-Item -Destination old -Path .claude", { tool: 'PowerShell', input: { tool_input: { command: "Move-Item -Destination old -Path .claude" } } }, 'deny:switch');
+    expect('main-pre-tool-use-bash', 'PowerShell: Move-Item into the project folder', { tool: 'PowerShell', input: { tool_input: { command: 'Move-Item build/out.js .' } } }, 'allow');
+    bash('git commit -m "chore: record merge protection" .claude/pitwall.json', 'allow');
+    bash('git reset HEAD .claude/pitwall.json', 'allow');
+    bash('git reset --hard', 'allow');
+    bash('node -e "require(\'fs\').writeFileSync(\'.claude/pitwall.json\', \'{}\')"', 'deny:switch');
+    bash('claude plugin disable pitwall@pitwall', 'deny:switch');
+    bash('claude plugin uninstall pitwall@pitwall --scope project', 'deny:switch');
+    bash('claude plugin marketplace remove pitwall', 'deny:switch');
+    bash('rm ~/.claude/settings.json', 'deny:switch');
+    bash(`rm -rf "${P}/hooks"`, 'deny:switch');
+    bash(`cp evil.mjs "${P}/scripts/hook.mjs"`, 'deny:switch');
+    bash(`node "${P}/scripts/docs-check.mjs" --root .`, 'allow');
+    bash(`cat "${P}/config/defaults.json"`, 'allow');
+    bash(`cp "${P}/template/docs/spikes/template.md" docs/spikes/x.md`, 'deny:switch');
+    bash('sed -n 1,20p .claude/settings.json', 'deny:switch');
+    bash("awk '{print}' .claude/settings.json", 'deny:switch');
+    bash('cp .claude/settings.json /tmp/settings-copy.json', 'deny:switch');
+    bash('cp backup.json .claude/settings.json', 'deny:switch');
+    bash('git restore --staged .claude/pitwall.json', 'allow');
+    bash('git restore .claude/pitwall.json', 'deny:switch');
+    bash('node -p "require(\'./.claude/pitwall.json\').processLevel"', 'deny:switch');
+    bash('python -c "open(\'.claude/settings.json\', \'w\').write(\'{}\')"', 'deny:switch');
+    bash('npx prettier --write .claude/settings.json', 'deny:switch');
+    bash('head -5 .claude/settings.json && grep -n mergeProtection .claude/pitwall.json', 'allow');
+    // Commands that only read (owner, 2026-11-09): they pass on the switch files and the plugin folder; a write through them does not.
+    for (const command of ['ls -la .claude/', 'ls .claude/pitwall.json', 'test -f .claude/pitwall.json && echo yes', '[ -f .claude/settings.json ] && echo yes', '[[ -f .claude/settings.local.json ]] && echo yes', 'stat .claude/pitwall.json', 'wc -l .claude/settings.json', 'jq .mergeProtection .claude/pitwall.json', "jq -r '.processLevel' .claude/pitwall.json", 'diff .claude/settings.json .claude/settings.local.json', 'file .claude/pitwall.json', 'cmp .claude/settings.json .claude/settings.local.json', 'tail -3 .claude/pitwall.json', 'sha256sum .claude/settings.json']) {
+      bash(command, 'allow');
+    }
+    bash(`ls "${P}/scripts" && wc -l "${P}/config/defaults.json"`, 'allow');
+    bash('jq . .claude/pitwall.json > .claude/pitwall.json', 'deny:switch');
+    // An exclusion leaves a switch file alone; a pitwall script's free text names no file; a "<" only reads.
+    bash("git checkout -- . ':!.claude/pitwall.json'", 'allow');
+    bash("git restore -- . ':(exclude).claude/settings.json'", 'allow');
+    bash("npx prettier --write . '!.claude/settings.json'", 'allow');
+    bash(`node "${P}/scripts/layout.mjs" --name 'x' --idea 'a linter for .claude/settings.json files' --level lite`, 'allow');
+    bash(`node --no-warnings "${P}/scripts/docs-check.mjs" --stage plan`, 'allow');
+    bash(`node "${P}/scripts/docs-check.mjs" --root .claude/pitwall.json`, 'deny:switch');
+    bash('while read -r l; do echo "$l"; done < .claude/settings.json', 'allow');
+    bash('python -m json.tool < .claude/settings.json', 'allow');
+    // The plugin's own files read the ways agents read them; the switch files keep the strict list.
+    bash(`sed -n '140,170p' "${P}/config/defaults.json"`, 'allow');
+    bash(`find "${P}/template/docs" -name '*.md'`, 'allow');
+    bash(`cd "${P}" && ls`, 'allow');
+    bash(`sort "${P}/config/defaults.json"`, 'allow');
+    bash(`find "${P}/template" -name '*.tmpl' -delete`, 'deny:switch');
+    bash(`sed -i 's/a/b/' "${P}/config/defaults.json"`, 'deny:switch');
+    bash(`cd "${P}" && rm -rf hooks`, 'deny:switch');
+    bash("sed -n '1,20p' .claude/settings.json", 'deny:switch');
+    bash("jq '.mergeProtection = \"branch-protection\"' .claude/pitwall.json > /tmp/p.json && mv /tmp/p.json .claude/pitwall.json", 'deny:switch');
+    bash('diff .claude/settings.json backup.json > .claude/settings.local.json', 'deny:switch');
+    bash('git diff .claude/settings.json && git log -p .claude/pitwall.json && git show HEAD:.claude/pitwall.json', 'allow');
+    bash('git add docs/ .claude/pitwall.json && git commit -m "docs: discovery"', 'allow');
+    bash('gh pr create --title x --body "explains .claude/settings.json"', 'allow');
+    bash('python -c "print(open(\'config/settings.json\').read())"', 'allow');
+    bash('git commit -m "fix the review-status.mjs call"', 'allow');
+    bash('npm test', 'allow');
+    expect('main-pre-tool-use-edit', 'Edit .claude/settings.json', { input: { tool_input: { file_path: join(project, '.claude', 'settings.json'), old_string: 'true', new_string: 'false' } } }, 'deny:switch');
+    expect('main-pre-tool-use-write', 'Write .claude/settings.local.json', { input: { tool_input: { file_path: join(project, '.claude', 'settings.local.json'), content: '{}' } } }, 'deny:switch');
+    expect('main-pre-tool-use-write', 'Write the user\'s settings', { input: { tool_input: { file_path: join(home, '.claude', 'settings.json'), content: '{}' } } }, 'deny:switch');
+    expect('main-pre-tool-use-write', 'Write into the plugin', { input: { tool_input: { file_path: join(plugin, 'scripts', 'hook-guard.mjs'), content: '' } } }, 'deny:switch');
+    expect('main-pre-tool-use-read', 'Read .claude/pitwall.json', { input: { tool_input: { file_path: join(project, '.claude', 'pitwall.json') } } }, 'allow');
+    for (const [command, want] of [['Remove-Item .claude\\pitwall.json', 'deny:switch'], ['Get-Content .claude\\pitwall.json', 'allow'], ['Set-Content -Path .claude\\settings.json -Value "{}"', 'deny:switch'], ['& gh pr merge 7 --admin', 'deny:protection']]) {
+      expect('main-pre-tool-use-bash', `PowerShell: ${command}`, { tool: 'PowerShell', input: { tool_input: { command } } }, want);
+    }
+
+    // (e) Merge protection, and AC4: commit statuses.
+    bash('gh pr merge 7 --admin', 'deny:protection');
+    bash('gh api -X PUT repos/o/r/branches/main/protection --input p.json', 'deny:protection');
+    bash('gh api --method DELETE repos/o/r/branches/main/protection/enforce_admins', 'deny:protection');
+    bash('gh api repos/o/r/branches/main/protection', 'allow');
+    bash('gh api repos/o/r/rulesets -f name=open', 'deny:protection');
+    bash('gh api graphql -f query=\'mutation { deleteBranchProtectionRule(input: {branchProtectionRuleId: "x"}) { clientMutationId } }\'', 'deny:protection');
+    bash('curl -X DELETE -H "Authorization: token x" https://api.github.com/repos/o/r/branches/main/protection', 'deny:protection');
+    bash(`gh api repos/o/r/statuses/${head} -f state=success -f context=ai-review`, 'deny:review');
+    bash('gh api -X POST repos/o/r/statuses/abc --input s.json', 'deny:review');
+    bash('gh api repos/o/r/commits/abc/statuses', 'allow');
+    bash('curl -X POST -d \'{"state":"success","context":"ai-review"}\' https://api.github.com/repos/o/r/statuses/abc', 'deny:review');
+    bash(`node "${P}/scripts/review-status.mjs" --review plan --state success`, 'deny:review');
+    bash(`grep -n state "${P}/scripts/review-status.mjs"`, 'allow');
+    expect('main-pre-tool-use-bash', 'an MCP tool that changes protection', { tool: 'mcp__github__update_branch_protection', input: { tool_input: { branch: 'main' } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', 'an MCP tool that sets ai-review', { tool: 'mcp__github__create_commit_status', input: { tool_input: { context: 'ai-review', state: 'success' } } }, 'deny:review');
+    expect('main-pre-tool-use-bash', 'an MCP tool that reads', { tool: 'mcp__github__get_pull_request', input: { tool_input: { number: 7 } } }, 'allow');
+    expect('main-pre-tool-use-bash', 'an MCP tool that writes any commit status', { tool: 'mcp__github__create_commit_status', input: { tool_input: { context: 'ci', state: 'success' } } }, 'deny:review');
+    expect('main-pre-tool-use-bash', 'an MCP tool that sets an issue status', { tool: 'mcp__linear__update_issue_status', input: { tool_input: { status: 'done' } } }, 'allow');
+    expect('main-pre-tool-use-bash', 'an MCP tool that merges a pull request', { tool: 'mcp__github__merge_pull_request', input: { tool_input: { number: 7 } } }, 'deny:merge');
+    expect('main-pre-tool-use-bash', 'an MCP tool that merges a database branch', { tool: 'mcp__supabase__merge_branch', input: { tool_input: { branch_id: 'x' } } }, 'allow');
+
+    // AC4: who runs review-status.mjs, and the plan reviewer's limits.
+    const reviewStatus = `node "${P}/scripts/review-status.mjs" --review plan --state success`;
+    const reviewer = (what, tool, toolInput, want) => expect('plan-reviewer-pre-tool-use-read', `plan reviewer: ${what}`, { tool, input: { tool_input: toolInput } }, want);
+    reviewer('review-status.mjs', 'Bash', { command: reviewStatus }, 'allow');
+    reviewer('the docs check', 'Bash', { command: `node "${P}/scripts/docs-check.mjs" --stage plan-review` }, 'allow');
+    // What the plan reviewer ran in each round of the headless plan stage: a cd to the project root first.
+    reviewer('cd to the project root first', 'Bash', { command: `cd "${fwd(project)}" && node "${P}/scripts/docs-check.mjs" --stage plan-review,spike` }, 'allow');
+    reviewer('cd to the project root, Windows spelling', 'Bash', { command: `cd "${project}" && node "${P}/scripts/docs-check.mjs" --stage plan-review,spike` }, 'allow');
+    reviewer('cd elsewhere first', 'Bash', { command: `cd "${fwd(dir)}" && node "${P}/scripts/docs-check.mjs" --stage plan-review` }, 'deny:agent');
+    reviewer('cd to the project root, then git', 'Bash', { command: `cd "${fwd(project)}" && git status` }, 'deny:agent');
+    reviewer('cd to the project root, then two commands', 'Bash', { command: `cd "${fwd(project)}" && ${reviewStatus} && git push` }, 'deny:agent');
+    reviewer('git status', 'Bash', { command: 'git status' }, 'deny:agent');
+    reviewer('merge.mjs', 'Bash', { command: `node "${P}/scripts/merge.mjs" --plan --owner-approved` }, 'deny:agent');
+    reviewer('a copy of review-status.mjs', 'Bash', { command: `node "${fwd(dir)}/review-status.mjs" --review plan --state success` }, 'deny:agent');
+    reviewer('two commands', 'Bash', { command: `${reviewStatus}; git push` }, 'deny:agent');
+    reviewer('a backtick', 'Bash', { command: `${reviewStatus} --description \`whoami\`` }, 'deny:agent');
+    reviewer('a line break', 'Bash', { command: `${reviewStatus}\ngit push` }, 'deny:agent');
+    reviewer('$(', 'Bash', { command: `${reviewStatus} --description "$(git log -1)"` }, 'deny:agent');
+    reviewer('a redirect', 'Bash', { command: `${reviewStatus} > out.txt` }, 'deny:agent');
+    // Claude Code spells the plugin's folder by its link; the script finds it with the link resolved.
+    const link = join(dir, 'plugin-link');
+    symlinkSync(plugin, link, 'junction');
+    expect('plan-reviewer-pre-tool-use-read', 'plan reviewer: review-status.mjs through the plugin folder as Claude Code spells it', { tool: 'Bash', env: { CLAUDE_PLUGIN_ROOT: link }, input: { tool_input: { command: `node "${fwd(link)}/scripts/review-status.mjs" --review plan --state success` } } }, 'allow');
+    expect('main-pre-tool-use-write', 'Write into the plugin through its link', { env: { CLAUDE_PLUGIN_ROOT: link }, input: { tool_input: { file_path: join(link, 'scripts', 'hook.mjs'), content: '' } } }, 'deny:switch');
+    reviewer('Write docs/PLAN-REVIEW.md', 'Write', { file_path: join(project, 'docs', 'PLAN-REVIEW.md'), content: '# Plan review\n' }, 'allow');
+    reviewer('Write docs/SPEC.md', 'Write', { file_path: join(project, 'docs', 'SPEC.md'), content: 'x' }, 'deny:agent');
+    reviewer('Edit docs/EPICS.md', 'Edit', { file_path: join(project, 'docs', 'EPICS.md'), old_string: 'a', new_string: 'b' }, 'deny:agent');
+    reviewer('Read docs/IDEA.md', 'Read', { file_path: join(project, 'docs', 'IDEA.md') }, 'allow');
+    expect('project-agent-pre-tool-use-read', 'a project agent named plan-reviewer runs review-status.mjs', { tool: 'Bash', input: { tool_input: { command: reviewStatus } } }, 'deny:review');
+    expect('project-agent-pre-tool-use-read', 'a project agent named plan-reviewer writes docs/SPEC.md', { tool: 'Write', input: { tool_input: { file_path: join(project, 'docs', 'SPEC.md'), content: 'x' } } }, 'allow');
+    expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs review-status.mjs', { input: { tool_input: { command: reviewStatus } } }, 'deny:review');
+
+    // AC7: the merge guard by mode.
+    bash('gh pr merge 7 --merge', 'deny:merge');
+    const pr = { number: 7, head, branch: 'epic/E1-x' };
+    const green = { auth: true, repo: { nameWithOwner: 'o/r' }, pr, statuses: { 'ai-review': 'success' }, gate: 'success' };
+    setMode('local-hook');
+    const merge = (what, scenario, want, command = 'gh pr merge 7 --merge') => bash(command, want, { env: { FAKE_GH: JSON.stringify(scenario) } });
+    merge('both green', green, 'allow');
+    merge('both green, by branch', green, 'allow', 'gh pr merge epic/E1-x --squash --delete-branch');
+    merge('ai-review not set', { ...green, statuses: {} }, 'deny:merge');
+    merge('ai-review failed', { ...green, statuses: { 'ai-review': 'failure' } }, 'deny:merge');
+    merge('gate red', { ...green, gate: 'failure' }, 'deny:merge');
+    merge('gate running', { ...green, gate: 'pending' }, 'deny:merge');
+    merge('gate from another app', { ...green, gateApp: 1 }, 'deny:merge');
+    merge('no PR', { ...green, pr: null }, 'deny:merge');
+    merge('statuses unreadable', { ...green, reads: 'statuses' }, 'deny:merge');
+    merge('check runs unreadable', { ...green, reads: 'check-runs' }, 'deny:merge');
+    merge('an API merge', green, 'deny:merge', 'gh api -X PUT repos/o/r/pulls/7/merge');
+    setMode('branch-protection');
+    merge('branch protection', { ...green, statuses: {} }, 'allow');
+    merge('branch protection, --admin', green, 'deny:protection', 'gh pr merge 7 --admin');
+    setMode('something else');
+    merge('an unknown mode', green, 'deny:merge');
+    setMode(undefined);
+    merge('no mode recorded', green, 'deny:merge');
+    setMode('pending');
+
+    // AC5: the call budget. A researcher at lite: warned once at warn, refused past stop; its handback always passes.
+    const lite = cfg.budgets.researcherToolCalls.lite;
+    const rs = 'budget-researcher';
+    mkdirSync(join(state, rs), { recursive: true });
+    writeFileSync(join(state, rs, 'agent-recorded-researcher.calls'), '.'.repeat(lite.warn - 2));
+    const seen = [];
+    for (let i = lite.warn - 1; i <= lite.stop + 1; i += 1) seen.push(`${i}:${verdict(hook('researcher-pre-tool-use-glob', { session: rs, input: { tool_input: { pattern: 'docs/*.md' } } }))}`);
+    const want = [];
+    for (let i = lite.warn - 1; i <= lite.stop + 1; i += 1) want.push(`${i}:${i === lite.warn ? 'context' : i > lite.stop ? 'deny:budget' : 'allow'}`);
+    if (seen.join(' ') !== want.join(' ')) report(`researcher budget: expected ${want.join(' ')}\n  got ${seen.join(' ')}`);
+    expect('researcher-pre-tool-use-glob', 'a researcher past its budget hands back', { session: rs, tool: 'SubagentHandback', input: { tool_input: {} } }, 'allow');
+    // The main conversation: warned at warn and at stop; refused past stop only when unattended.
+    const s = cfg.budgets.sessionToolCalls;
+    // A session that has made calls - 1 calls (and had the warnings that go with them) makes one more.
+    const mainBudget = (attended, calls, want, what) => {
+      const sid = `budget-main-${(sessions += 1)}`;
+      mkdirSync(join(state, sid), { recursive: true });
+      writeFileSync(join(state, sid, 'main.calls'), '.'.repeat(calls - 1));
+      if (calls > s.warn) writeFileSync(join(state, sid, 'main.warned'), '');
+      if (calls > s.stop) writeFileSync(join(state, sid, 'main.stopped'), '');
+      const r = hook('main-pre-tool-use-read', { session: sid, env: { CLAUDE_CODE_SESSION_ATTENDED: attended }, input: { tool_input: { file_path: join(project, 'docs', 'IDEA.md') } } });
+      if (verdict(r) !== want) report(`${what}: expected ${want}, got ${verdict(r)}`);
+    };
+    mainBudget('1', s.warn, 'context', 'main conversation at warn');
+    mainBudget('1', s.stop, 'context', 'main conversation at stop');
+    mainBudget('1', s.stop + 1, 'allow', 'attended main conversation past stop');
+    mainBudget('0', s.stop + 1, 'deny:budget', 'unattended main conversation past stop');
+    mainBudget(undefined, s.stop + 1, 'allow', 'main conversation past stop, attendance unknown');
+
+    // AC6: the gate after edits and before stopping.
+    writeFileSync(join(project, 'src.js'), 'console.log(1)\n');
+    const post = (session, extra = {}) => hook('main-post-tool-use-write', { session, input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' }, ...extra } });
+    if (verdict(post('gate-main')) !== 'allow') report('an edit on main must not run the gate');
+    gitIn(project, 'checkout', '-qb', 'epic/E1-x');
+    const red = post('gate-main');
+    if (verdict(red) !== 'context' || !/gate --fast is red/.test(red.out.hookSpecificOutput.additionalContext)) report(`an edit on an epic branch with a red gate: expected the gate's report, got ${verdict(red)}`);
+    if (verdict(hook('main-post-tool-use-write', { session: 'gate-docs', input: { tool_input: { file_path: join(project, 'docs', 'NOTES.md') } } })) !== 'allow') report('an edit under docs/ must not run the gate');
+    const stops = [1, 2, 3, 4].map((i) => verdict(hook('main-stop', { session: 'gate-main', input: { stop_hook_active: i > 1 } })));
+    if (stops.join(' ') !== 'block block message allow') report(`stops after an edit with a red gate: expected block block message allow, got ${stops.join(' ')}`);
+    // The tries are used up until the gate is green: edits in between do not bring them back.
+    post('gate-main');
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'message') report('an edit after the tries are used up must not block the stop again while the gate is red');
+    rmSync(join(project, 'src.js'));
+    // An edit outside docs/ that leaves the gate green (the stub passes on CLAUDE.md): the next stop runs it, and the tries come back.
+    hook('main-post-tool-use-write', { session: 'gate-main', input: { tool_input: { file_path: join(project, 'CLAUDE.md') } } });
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'allow') report('a green gate must let the session stop');
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'allow' || existsSync(join(state, 'gate-main', 'main.dirty'))) report('after a green run, a stop must run nothing');
+    writeFileSync(join(project, 'src.js'), 'console.log(1)\n');
+    post('gate-main');
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'block') report('after a green run, a red gate must block the stop again');
+    if (verdict(hook('main-stop', { session: 'gate-none' })) !== 'allow') report('a stop with no edit must run nothing');
+    // An implementer: Claude Code ends it at its handback, so the handback waits for the gate.
+    const impl = payloads['implementer-pre-tool-use-subagenthandback'].input;
+    post('gate-sub', { agent_id: impl.agent_id, agent_type: impl.agent_type });
+    const handbacks = [1, 2, 3].map(() => verdict(hook('implementer-pre-tool-use-subagenthandback', { session: 'gate-sub' })));
+    if (handbacks.join(' ') !== 'deny:gate deny:gate message') report(`an implementer handing back after an edit with a red gate: expected deny:gate deny:gate message, got ${handbacks.join(' ')}`);
+    if (verdict(hook('implementer-subagent-stop', { session: 'gate-sub' })) !== 'allow') report('an implementer\'s stop after its handback check must run nothing');
+    post('gate-sub2', { agent_id: impl.agent_id, agent_type: impl.agent_type });
+    if (verdict(hook('implementer-subagent-stop', { session: 'gate-sub2' })) !== 'block') report('an implementer that ends without a handback after an edit with a red gate must be blocked');
+    const helper = payloads['other-plugin-post-tool-use-write'].input;
+    hook('other-plugin-post-tool-use-write', { session: 'gate-other', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
+    for (const label of ['other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop']) if (verdict(hook(label, { session: 'gate-other' })) !== 'allow') report(`${label}: another plugin's agent must not wait for the gate`);
+    if (verdict(hook('main-stop', { session: 'gate-other' })) !== 'block') report(`an edit by another plugin's agent (${helper.agent_type}) must be checked when the main conversation stops`);
+    rmSync(join(project, 'src.js'));
+    gitIn(project, 'checkout', '-q', 'main');
+    // Every recorded payload not used above passes in a project with nothing to refuse.
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
+      const r = hook(label);
+      if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
+    }
+
+    // AC2 and AC1: the brief and the self-test.
+    const brief = hook('main-session-start', { env: { CLAUDE_CODE_SESSION_ATTENDED: '1' } });
+    const text = brief.out?.hookSpecificOutput?.additionalContext ?? '';
+    for (const part of ['pitwall brief', 'process level lite', 'merge protection pending', 'Branch: main', 'E0', 'E0-AC1', 'never refused', 'self-test passed']) if (!text.includes(part)) report(`the brief does not say "${part}":\n${text}`);
+    if (brief.out?.systemMessage) report(`a passing self-test must not warn the owner: ${brief.out.systemMessage}`);
+    if (text.length > cfg.hooks.briefMaxChars) report(`the brief is ${text.length} characters, over hooks.briefMaxChars`);
+    if (!(hook('main-session-start').out?.hookSpecificOutput?.additionalContext ?? '').includes('unattended')) report('the brief of an unattended session does not say so');
+    // A file in a submodule: git check-ignore does not answer for it, and nothing refuses the write.
+    const subSrc = join(dir, 'sub-src');
+    mkdirSync(subSrc);
+    gitIn(subSrc, 'init', '-q', '-b', 'main');
+    gitIn(subSrc, 'commit', '-q', '--allow-empty', '-m', 'sub');
+    gitIn(project, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', fwd(subSrc), 'vendor/sub');
+    expect('main-pre-tool-use-write', 'Write into a submodule', { input: { tool_input: { file_path: join(project, 'vendor', 'sub', 'x.js'), content: 'x' } } }, 'allow');
+    // Before kickoff's first commit, main has no commits: the brief still gives the planning stage.
+    const unborn = join(dir, 'unborn');
+    if (layOut(unborn).status !== 0) throw new Error('layout failed');
+    gitIn(unborn, 'init', '-q', '-b', 'main');
+    const early = hook('main-session-start', { projectDir: unborn }).out?.hookSpecificOutput?.additionalContext ?? '';
+    if (!/Stage: planning/.test(early)) report(`the brief before the skeleton's commit must give the planning stage:\n${early}`);
+    // While the plan is made, the brief gives the stage, not E0.
+    // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.
+    const odd = makeProject('odd', 1);
+    rmSync(join(odd, 'docs', 'spikes'), { recursive: true, force: true });
+    writeFileSync(join(odd, 'docs', 'spikes'), 'not a folder');
+    const oddBrief = hook('main-session-start', { projectDir: odd }).out;
+    if (!/could not read the docs/.test(oddBrief?.hookSpecificOutput?.additionalContext ?? '') || oddBrief?.systemMessage) report(`a brief that cannot read the docs must say so in the brief alone: ${JSON.stringify(oddBrief)}`);
+    const planning = hook('main-session-start', { projectDir: fresh }).out?.hookSpecificOutput?.additionalContext ?? '';
+    if (!/Stage: planning on plan\/initial; the next stage is kickoff/.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage:\n${planning}`);
+
+    // AC1: failing closed. A copy of the plugin breaks one part at a time.
+    const copy = (name, breakIt) => {
+      const c = join(dir, name);
+      cpSync(plugin, c, { recursive: true });
+      breakIt(c);
+      return join(c, 'scripts', 'hook.mjs');
+    };
+    const brokenCases = [
+      ['input that is not JSON', { stdin: 'not json' }],
+      ['an old Node', { script: copy('old-node', (c) => writeFileSync(join(c, 'config', 'defaults.json'), readFileSync(join(c, 'config', 'defaults.json'), 'utf8').replace('"nodeMinMajor": 20', '"nodeMinMajor": 999'))) }],
+      ['hook-events.mjs that does not load', { script: copy('no-events', (c) => writeFileSync(join(c, 'scripts', 'hook-events.mjs'), 'throw new Error("broken on purpose");\n')) }],
+    ];
+    // A part of the guard that cannot run (here git, missing from PATH) refuses and says how to turn pitwall off.
+    const noGit = hook('main-pre-tool-use-write', { env: { PATH: '' }, input: { tool_input: { file_path: join(project, 'src', 'a.js'), content: 'x' } } });
+    if (verdict(noGit) !== 'deny:broken' || !/claude plugin disable pitwall@pitwall --scope local/.test(noGit.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`a guard that cannot run git must refuse and say how to turn pitwall off: ${JSON.stringify(noGit.out)}`);
+    // A gate slower than its time limit: reported once, not red, and not run again until the next edit.
+    const slowHook = copy('slow-gate', (c) => {
+      const f = join(c, 'config', 'defaults.json');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('"fast": 120', '"fast": 1').replace('"changed": 540', '"changed": 1'));
+    });
+    const slow = makeProject('slow', 2);
+    gitIn(slow, 'checkout', '-qb', 'epic/E1-slow');
+    writeFileSync(join(slow, 'scripts', 'gate'), '#!/usr/bin/env bash\nsleep 5\n');
+    const slowPost = hook('main-post-tool-use-write', { script: slowHook, projectDir: slow, session: 'slow', input: { tool_input: { file_path: join(slow, 'src.js'), content: 'x' } } });
+    if (!/did not finish/.test(slowPost.out?.hookSpecificOutput?.additionalContext ?? '')) report(`a slow gate after an edit must be reported as not finished: ${JSON.stringify(slowPost.out)}`);
+    const slowStops = [1, 2].map(() => hook('main-stop', { script: slowHook, projectDir: slow, session: 'slow' }));
+    if (!/did not finish/.test(slowStops[0].out?.systemMessage ?? '') || verdict(slowStops[1]) !== 'allow') report(`a slow gate before stopping: expected one report, then nothing, got ${slowStops.map((r) => verdict(r)).join(' ')}`);
+    for (const [what, opts] of brokenCases) {
+      const r = hook('main-pre-tool-use-bash', { ...opts, input: { tool_input: { command: 'ls' } } });
+      const reason = r.out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      if (verdict(r) !== 'deny:broken' || !reason.includes('run this yourself in a terminal, not through an agent') || !reason.includes('claude plugin disable pitwall@pitwall --scope local')) report(`the guard with ${what}: expected a refusal that says how to turn pitwall off, got ${verdict(r)} ${reason}`);
+      const s2 = hook('main-session-start', opts);
+      if (!s2.out?.systemMessage) report(`the session start with ${what} must warn the owner at once`);
+      const p2 = hook('main-post-tool-use-write', { ...opts, input: { tool_input: { file_path: join(project, 'a.js') } } });
+      if (p2.out?.hookSpecificOutput?.permissionDecision || p2.code !== 0) report(`the check after an edit with ${what} must fail open`);
+    }
+    const settingsFile = join(project, '.claude', 'pitwall.json');
+    const good = readFileSync(settingsFile, 'utf8');
+    writeFileSync(settingsFile, '{ not json');
+    if (verdict(hook('main-pre-tool-use-bash', { input: { tool_input: { command: 'ls' } } })) !== 'deny:broken') report('a .claude/pitwall.json that does not parse must make the guard refuse');
+    writeFileSync(settingsFile, good);
+    const blind = copy('blind-guard', (c) => {
+      const f = join(c, 'scripts', 'hook-guard.mjs');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('export function guard(call, ctx) {', 'export function guard(call, ctx) {\n  return null;'));
+    });
+    const st = hook('main-session-start', { script: blind });
+    if (!/self-test/.test(st.out?.systemMessage ?? '')) report(`a guard that refuses nothing must fail the self-test and warn the owner, got ${JSON.stringify(st.out)}`);
+
+    // The commands in hooks.json, through bash as Claude Code runs them: nothing outside a pitwall
+    // project, even without node; in one, the hook runs, and without node the guard refuses and the brief warns.
+    const sh = (event, label, projectDir, { prefix = '', toolInput } = {}) => {
+      const input = { ...JSON.parse(JSON.stringify(payloads[label].input).split('<project>').join(fwd(projectDir))), session_id: `sh-${event}`, cwd: projectDir, ...(toolInput ? { tool_input: toolInput } : {}) };
+      const r = spawnSync('bash', ['-c', `${prefix}${commands[event].split('${CLAUDE_PLUGIN_ROOT}').join(fwd(plugin))}`], { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: fwd(projectDir), PITWALL_HOOK_STATE: state } });
+      return { code: r.status, stdout: r.stdout, stderr: r.stderr, out: r.stdout.trim() ? parseOut(r.stdout) : null };
+    };
+    const parseOut = (text) => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { unparsed: text };
+      }
+    };
+    const noNode = 'PATH=/nonexistent; ';
+    const labels = { 'session-start': 'main-session-start', 'pre-tool-use': 'main-pre-tool-use-bash', 'post-tool-use': 'main-post-tool-use-write', stop: 'main-stop', 'subagent-stop': 'implementer-subagent-stop' };
+    for (const [event, label] of Object.entries(labels)) {
+      for (const prefix of ['', noNode]) {
+        const r = sh(event, label, dir, { prefix, toolInput: { command: 'rm .claude/pitwall.json' } });
+        if (r.code !== 0 || r.stdout !== '') report(`the ${event} command outside a pitwall project${prefix ? ', without node,' : ''}: exit ${r.code}, printed ${r.stdout}${r.stderr}`);
+      }
+    }
+    if (!/pitwall brief/.test(sh('session-start', 'main-session-start', project).stdout)) report('the SessionStart command gives no brief in a pitwall project');
+    if (!/Node\.js is not on PATH/.test(sh('session-start', 'main-session-start', project, { prefix: noNode }).out?.systemMessage ?? '')) report('the SessionStart command without node must warn the owner');
+    if (verdict(sh('pre-tool-use', 'main-pre-tool-use-bash', project, { toolInput: { command: 'rm .claude/pitwall.json' } })) !== 'deny:switch') report('the PreToolUse command must run the guard in a pitwall project');
+    const blocked = sh('pre-tool-use', 'main-pre-tool-use-bash', project, { prefix: noNode, toolInput: { command: 'ls' } });
+    if (verdict(blocked) !== 'deny:broken' || !/claude plugin disable pitwall@pitwall --scope local/.test(blocked.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`the PreToolUse command without node must refuse and say how to turn pitwall off: ${blocked.stdout}${blocked.stderr}`);
+    for (const event of ['post-tool-use', 'stop', 'subagent-stop']) {
+      const r = sh(event, labels[event], project, { prefix: noNode });
+      if (r.code !== 0 || r.stdout !== '') report(`the ${event} command without node must let the session go on: exit ${r.code}, printed ${r.stdout}${r.stderr}`);
+    }
   });
 });
 

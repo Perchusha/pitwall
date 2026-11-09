@@ -1,0 +1,87 @@
+{
+  "claudeCode": "2.1.318",
+  "recorded": "2026-11-09",
+  "event": "post-tool-use",
+  "attended": "0",
+  "input": {
+    "session_id": "recorded-session",
+    "transcript_path": "<home>/.claude/recorded/transcript_path",
+    "cwd": "<project>",
+    "scratchpad_dir": "<home>/.claude/recorded/scratchpad_dir",
+    "prompt_id": "recorded-prompt_id",
+    "permission_mode": "auto",
+    "agent_id": "recorded-plan-reviewer",
+    "agent_type": "pitwall:plan-reviewer",
+    "effort": {
+      "level": "xhigh"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "<project>\\docs\\PLAN-REVIEW.md",
+      "content": "hook test\n"
+    },
+    "tool_response": {
+      "type": "update",
+      "filePath": "<project>\\docs\\PLAN-REVIEW.md",
+      "content": "hook test\n",
+      "structuredPatch": [
+        {
+          "oldStart": 1,
+          "oldLines": 42,
+          "newStart": 1,
+          "newLines": 1,
+          "lines": [
+            "-# Plan review",
+            "-",
+            "-Written at stage 5 by the `plan-reviewer` agent, from the documents only; it is the only file the reviewer writes. The main conversation closes findings in the epics, `SPEC.md` and `RISKS.md`, and the next review round records them here. Development starts when every reason and finding is closed or accepted as a risk. A closed row starts its last cell with the ID that closes it (an epic, a criterion, an ADR, or a risk `R-n` the owner accepted); an open one starts with `open:`.",
+            "-",
+            "-## Pre-mortem",
+            "-",
+            "-\"A year from now the project failed. Why?\" As many reasons as pitwall's `preMortemReasons` asks for the process level.",
+            "-",
+            "-| # | Reason | Closed by (epic, ADR) or accepted risk |",
+            "-| --- | --- | --- |",
+            "-",
+            "-## Non-functional requirements",
+            "-",
+            "-One row per item of pitwall's `planReview.nonFunctional` for the process level.",
+            "-",
+            "-| Requirement | Answer | Where it lives |",
+            "-| --- | --- | --- |",
+            "-",
+            "-## Launch questions",
+            "-",
+            "-One row per item of pitwall's `planReview.launch` for the process level, as the owner confirmed it in `SPEC.md`.",
+            "-",
+            "-| Question | Answer | Confirmed on |",
+            "-| --- | --- | --- |",
+            "-",
+            "-## Epic sizing",
+            "-",
+            "-| Epic | Size (S, M, L) | Uncertainty (known, partly, unknown) | Action |",
+            "-| --- | --- | --- | --- |",
+            "-",
+            "-An epic whose size or uncertainty is in pitwall's `planReview.needsAction` has an action: split it, clarify it, or a spike first.",
+            "-",
+            "-## Findings",
+            "-",
+            "-Gaps in the plan: a scenario no criterion covers, a criterion QA cannot check, an epic too big for one PR, a risky assumption nothing covers.",
+            "-",
+            "-| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |",
+            "-| --- | --- | --- | --- |",
+            "-",
+            "-## Approval",
+            "-",
+            "-Filled in by the first commit of E0's branch, from the plan's merge commit: who approved the plan, when, and the merge commit.",
+            "+hook test"
+          ]
+        }
+      ],
+      "originalFile": "# Plan review\n\nWritten at stage 5 by the `plan-reviewer` agent, from the documents only; it is the only file the reviewer writes. The main conversation closes findings in the epics, `SPEC.md` and `RISKS.md`, and the next review round records them here. Development starts when every reason and finding is closed or accepted as a risk. A closed row starts its last cell with the ID that closes it (an epic, a criterion, an ADR, or a risk `R-n` the owner accepted); an open one starts with `open:`.\n\n## Pre-mortem\n\n\"A year from now the project failed. Why?\" As many reasons as pitwall's `preMortemReasons` asks for the process level.\n\n| # | Reason | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- |\n\n## Non-functional requirements\n\nOne row per item of pitwall's `planReview.nonFunctional` for the process level.\n\n| Requirement | Answer | Where it lives |\n| --- | --- | --- |\n\n## Launch questions\n\nOne row per item of pitwall's `planReview.launch` for the process level, as the owner confirmed it in `SPEC.md`.\n\n| Question | Answer | Confirmed on |\n| --- | --- | --- |\n\n## Epic sizing\n\n| Epic | Size (S, M, L) | Uncertainty (known, partly, unknown) | Action |\n| --- | --- | --- | --- |\n\nAn epic whose size or uncertainty is in pitwall's `planReview.needsAction` has an action: split it, clarify it, or a spike first.\n\n## Findings\n\nGaps in the plan: a scenario no criterion covers, a criterion QA cannot check, an epic too big for one PR, a risky assumption nothing covers.\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n\n## Approval\n\nFilled in by the first commit of E0's branch, from the plan's merge commit: who approved the plan, when, and the merge commit.\n",
+      "userModified": false
+    },
+    "tool_use_id": "recorded-tool_use_id",
+    "duration_ms": 19
+  }
+}

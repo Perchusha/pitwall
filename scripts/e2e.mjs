@@ -2,6 +2,7 @@
 // Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7).
 //
 //   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>]
+//   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
 // Stages, in order: kickoff, discovery, decide, spike, plan. A run goes from --from
 // (default kickoff) to --until (default plan). Every stage that passes saves the
@@ -35,6 +36,14 @@ const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'ut
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 
 const argv = process.argv.slice(2);
+// The hooks have a run of their own (T3a-AC8): scripts/e2e-hooks.mjs, which exits when done.
+if (argv[0] === '--hooks') {
+  if (argv.slice(1).some((a) => a !== '--record')) {
+    console.error('usage: node scripts/e2e.mjs --hooks [--record]');
+    process.exit(2);
+  }
+  await import('./e2e-hooks.mjs');
+}
 const opt = (name, fallback) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;

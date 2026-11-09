@@ -3,6 +3,9 @@
 //
 //   node protect.mjs [--project <dir>] [--repo <owner/name>] [--dry-run]
 //
+// No flag sets the mode it records: that comes only from what GitHub answers for the
+// project's own repository, and --repo names one of the project's remotes or is refused.
+//
 // First it checks that it may (L-5): gh is installed and signed in, there is a
 // repository, the branch is on GitHub, and the account is admin. The branch's
 // protection summary, which any reader can see, shows when the job is already
@@ -27,6 +30,7 @@
 // to the owner, 2 usage. Set PITWALL_GH to a JSON array to run another gh
 // binary (the checks use a fake one).
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +47,16 @@ const gateContext = cfg.review.gateContext;
 const reviewContext = cfg.review.statusContext;
 const settingsFile = join(project, '.claude', 'pitwall.json');
 const rerun = `node "${fileURLToPath(import.meta.url)}" --project "${project}"${args.repo ? ` --repo ${args.repo}` : ''}`;
+// No flag sets the mode: it comes from what GitHub answers for the project's own repository. --repo only
+// picks among the project's remotes (a fork with an upstream), so it cannot point the probe elsewhere.
+if (args.repo) {
+  const remotes = spawnSync('git', ['-C', project, 'remote', '-v'], { encoding: 'utf8' }).stdout ?? '';
+  const own = new RegExp(`github\\.com[:/]${args.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\.git)?(\\s|$)`, 'im');
+  if (!own.test(remotes)) {
+    console.error(`protect: --repo ${args.repo} is not a remote of ${project}: the mode records the project's own repository (git remote -v lists them)`);
+    process.exit(2);
+  }
+}
 
 const gh = ghRunner(project, 'protect');
 const log = (msg) => console.log(`protect: ${msg}`);

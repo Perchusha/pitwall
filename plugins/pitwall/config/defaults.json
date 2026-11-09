@@ -95,6 +95,73 @@
     },
     "epicsPerSession": 3
   },
+  "hooks": {
+    "briefMaxChars": 2000,
+    "stopRetries": 2,
+    "gateTimeoutSeconds": {
+      "fast": 120,
+      "changed": 540
+    },
+    "gateOutputChars": 3000,
+    "reviewers": [
+      "pitwall:plan-reviewer",
+      "pitwall:code-reviewer"
+    ],
+    "implementers": [
+      "pitwall:implementer",
+      "pitwall:implementer-deep"
+    ],
+    "agents": {
+      "pitwall:plan-reviewer": {
+        "write": [
+          "docs/PLAN-REVIEW.md"
+        ],
+        "run": [
+          "docs-check.mjs",
+          "review-status.mjs"
+        ]
+      }
+    },
+    "handback": [
+      "SubagentHandback"
+    ],
+    "secrets": {
+      "files": [
+        ".env",
+        ".env.*",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519"
+      ],
+      "notSecret": [
+        ".env.example"
+      ],
+      "content": [
+        "-----BEGIN [A-Z ]*PRIVATE KEY-----\\s+[A-Za-z0-9+/=]{40,}",
+        "\\bAKIA[0-9A-Z]{16}\\b",
+        "\\bgh[pousr]_[A-Za-z0-9]{36,}\\b",
+        "\\bgithub_pat_[A-Za-z0-9_]{50,}\\b",
+        "\\bxox[abprs]-[A-Za-z0-9-]{10,}\\b",
+        "\\bsk-ant-[A-Za-z0-9_-]{20,}\\b",
+        "\\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\\b",
+        "\\bAIza[0-9A-Za-z_-]{35}\\b",
+        "\\b[rs]k_live_[0-9A-Za-z]{20,}\\b"
+      ]
+    },
+    "readOnlyCommands": [
+      "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "wc", "ls", "stat", "file", "diff", "cmp", "jq",
+      "sha256sum", "sha1sum", "md5sum", "test", "[", "[[", "echo", "printf",
+      "get-content", "gc", "type", "select-string", "sls", "test-path", "get-item", "gi", "get-childitem", "gci", "dir", "get-filehash"
+    ],
+    "readOnlyGit": [
+      "diff", "log", "show", "status", "add", "blame", "ls-files", "cat-file", "rev-parse", "check-ignore"
+    ]
+  },
   "review": {
     "statusContext": "ai-review",
     "gateContext": "gate",

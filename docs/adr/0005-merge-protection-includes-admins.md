@@ -22,7 +22,7 @@ Kickoff sets branch protection with `enforce_admins` on (owner, 2026-11-05). In 
 
 - `gate` is required from GitHub Actions only, so a status set by hand cannot pass it; `ai-review` is accepted from any source, because the review flow sets it from the owner's account.
 - A private repository on a paid plan gets branch protection too, since it is stronger than the hook. The mode comes from a read-only probe of the protection API: `404 Branch not protected` means available, `403 Upgrade to GitHub Pro` means a private repository on GitHub Free.
-- On GitHub Free, kickoff records the mode `local-hook` in `.claude/pitwall.json`; the hook itself is built with the other hooks in T3 (T3-AC5). Nothing merges by itself before T3.
+- On GitHub Free, kickoff records the mode `local-hook` in `.claude/pitwall.json`; the hook itself is built with the other hooks in T3a (T3a-AC7). Nothing merges by itself before T3b.
 - The values (`mergeProtection` and `review` in `config/defaults.json`) are read by `scripts/protect.mjs`, never repeated in a skill.
 
 ## Consequences

@@ -91,6 +91,26 @@ export function ghRunner(cwd, caller) {
   };
 }
 
+// The two checks on a commit, as merge.mjs and the merge guard read them (ADR-0005). A read
+// that fails returns { failed, read }, never "not set": gh prints an error body as JSON.
+// ai-review: the latest status with that context.
+export function readReview(gh, name, sha, cfg) {
+  const read = gh(['api', `repos/${name}/commits/${sha}/statuses`]);
+  const statuses = read.ok ? parseJson(read.out) : null;
+  if (!Array.isArray(statuses)) return { failed: 'statuses', read };
+  return { review: statuses.find((s) => s.context === cfg.review.statusContext) ?? null };
+}
+// gate: the latest run of that name from GitHub Actions; a re-run replaces the run before it.
+// foreign is a run of that name from another app, which never passes.
+export function readGate(gh, name, sha, cfg) {
+  const read = gh(['api', `repos/${name}/commits/${sha}/check-runs`]);
+  const runs = read.ok ? parseJson(read.out)?.check_runs : null;
+  if (!Array.isArray(runs)) return { failed: 'check runs', read };
+  const named = runs.filter((c) => c.name === cfg.review.gateContext);
+  const gate = named.filter((c) => c.app?.id === cfg.mergeProtection.githubActionsAppId).sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0] ?? null;
+  return { gate, foreign: !gate && named.length > 0 ? named[0] : null };
+}
+
 export function gitRunner(cwd) {
   return (...args) => {
     const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
