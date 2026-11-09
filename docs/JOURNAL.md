@@ -37,6 +37,10 @@ T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop,
 
 The seven come to about 1.28 million tokens, 254 tool calls and 77 minutes. Each fix has a case in `scripts/check.mjs`; the last recheck compared the guard before and after its commit on 261 commands and 600,000 random PowerShell strings and found no command it lost.
 
+**After the review, the owner added:** any command that names a switch file or the plugin's folder is refused unless it only reads or stages it or is a pitwall script, which closes `node -e`, `python -c` and other one-off writes; `protect.mjs` takes no flag that sets the mode (its `--repo` now has to name a remote of the project), and `layout.mjs` refuses a folder with `.claude/pitwall.json`, each shown by cases in `scripts/check.mjs`; the turn-off command is the owner's to run in a terminal; R-2 in the owner's words.
+
+**First meeting with the real GitHub API.** On PR #4, from a scratch copy of the plugin whose planning branch was this epic's branch: `merge.mjs --dry-run` read the account, the repository, the PR and its statuses, and refused because `ai-review` was not set; `review-status.mjs --dry-run` refused success (pitwall's own docs are no project plan) and would have posted failure on the PR's head. The reads after `ai-review`, run read-only through the same functions, found `gate` from GitHub Actions (app 15368) in progress, no rules on `main`, and the protection kickoff asks for: `gate` from GitHub Actions and `ai-review` from any source, admins included, linear history off. Every answer had the shape the fake `gh` gives.
+
 **Next:** T3b, the epic loop. It adds the code reviewer's row to `hooks.agents`, the conductor that reads the brief, and the owner's choice of ADR-0010, whose allow rules this epic's review guard now makes possible.
 
 ## T2 - Stages 3 to 5 (2026-11-09)
