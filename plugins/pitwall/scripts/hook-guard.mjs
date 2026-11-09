@@ -72,7 +72,7 @@ const nameMatches = (name, globs) => globs.some((g) => globRegex(g).test(name));
 // ---- Commands ----
 
 const SHELLS = { bash: 'bash', sh: 'bash', zsh: 'bash', dash: 'bash', pwsh: 'powershell', powershell: 'powershell' };
-const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'elseif', 'fi', 'do', 'done', 'while', 'until', 'try', 'catch', 'finally', '!']);
+const KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'elseif', 'fi', 'do', 'done', 'while', 'until', 'try', 'catch', 'finally', 'foreach', 'switch', '!', '-not']);
 const INTERPRETERS = new Set(['node', 'python', 'python3', 'py', 'perl', 'ruby', 'deno', 'bun', 'php']);
 
 export const program = (word) =>
@@ -208,17 +208,21 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     // Blocks and groups ("if ($?) { git push }", "{ a; }", "(cd x && b)"): each command inside is a command.
     // A "{" opens a block only where a word starts (and, in bash, before a blank: "{src,docs}" is a word);
     // a "(" or ")" where a word starts or ends; a subshell's cd ends with it.
-    if ((c === '(' || c === ')') && (word === null || c === ')' || /[\s;|&]/.test(text[i - 1] ?? ' '))) {
+    // In PowerShell a keyword, a negation or an assignment may touch its "(" or "{": "if(", "!(", "$ok=(", "try{", "}else{".
+    const opener = word !== null && ps && (KEYWORDS.has(word.toLowerCase()) || word === '-not' || /^\$[\w:]+=$/.test(word));
+    if ((c === '(' || c === ')') && (word === null || c === ')' || opener)) {
       endCmd();
       cmds.push({ group: c });
       continue;
     }
-    if (c === '{' && word === null && (ps || /\s/.test(text[i + 1] ?? ' '))) {
+    if (c === '{' && (word === null ? ps || /\s/.test(text[i + 1] ?? ' ') : opener)) {
       endCmd();
       blocks += 1;
       continue;
     }
-    if (c === '}' && blocks > 0 && (word === null || ps)) {
+    // A "}" in the middle of a word closes a block only when the word has no "{" of its own ("repos/{owner}").
+    const ownBraces = word === null ? 0 : (word.match(/{/g) ?? []).length - (word.match(/}/g) ?? []).length;
+    if (c === '}' && blocks > 0 && (word === null || (ps && ownBraces <= 0))) {
       endCmd();
       blocks -= 1;
       continue;
@@ -359,6 +363,8 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     let argv = cmd.argv;
     for (;;) {
       if (argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) argv = argv.slice(1);
+      // PowerShell's "$ok = (...)" or "$ok=(...)": the assignment, not a program.
+      else if (argv.length && /^\$[\w:]+=?$/.test(argv[0]) && (argv[0].endsWith('=') || argv[1] === '=')) argv = argv.slice(argv[0].endsWith('=') ? 1 : 2);
       // Keywords before a command: "if npm test; then git push ...", "else", "do", PowerShell's "try".
       else if (KEYWORDS.has(String(argv[0] ?? '').toLowerCase())) argv = argv.slice(1);
       else if (['sudo', 'command', 'exec', 'nohup', 'time', 'nice', 'builtin'].includes(program(argv[0]))) argv = argv.slice(1);

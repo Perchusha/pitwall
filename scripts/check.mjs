@@ -1618,6 +1618,18 @@ step('hooks (recorded payloads)', (report) => {
     expect('main-pre-tool-use-bash', "PowerShell: Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection", { tool: 'PowerShell', input: { tool_input: { command: "Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection" } } }, 'deny:protection');
     expect('main-pre-tool-use-bash', "PowerShell: if($?){git push origin main}", { tool: 'PowerShell', input: { tool_input: { command: "if($?){git push origin main}" } } }, 'deny:push');
     bash('mkdir -p src/{a,b} && git stash show stash@{0}', 'allow');
+    // PowerShell's keywords, negations and assignments may touch their ( and {.
+    expect('main-pre-tool-use-bash', "PowerShell: if (!(Test-Path .env)) { Write-Host \"no .env\" }", { tool: 'PowerShell', input: { tool_input: { command: "if (!(Test-Path .env)) { Write-Host \"no .env\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: if (-not(Test-Path .claude/pitwall.json)) { Write-Host \"not a pitwall project\" }", { tool: 'PowerShell', input: { tool_input: { command: "if (-not(Test-Path .claude/pitwall.json)) { Write-Host \"not a pitwall project\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: if(Test-Path .env){ Write-Host \"there\" }", { tool: 'PowerShell', input: { tool_input: { command: "if(Test-Path .env){ Write-Host \"there\" }" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: $ok=(Test-Path .env)", { tool: 'PowerShell', input: { tool_input: { command: "$ok=(Test-Path .env)" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: try{npm test}catch{git push origin main}", { tool: 'PowerShell', input: { tool_input: { command: "try{npm test}catch{git push origin main}" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: try{git push origin main}catch{}", { tool: 'PowerShell', input: { tool_input: { command: "try{git push origin main}catch{}" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { npm test }else{ git push origin main }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { npm test }else{ git push origin main }" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: do{ git push origin main }while($false)", { tool: 'PowerShell', input: { tool_input: { command: "do{ git push origin main }while($false)" } } }, 'deny:push');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($LASTEXITCODE -eq 0) { gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review }", { tool: 'PowerShell', input: { tool_input: { command: "if ($LASTEXITCODE -eq 0) { gh api repos/{owner}/{repo}/statuses/abc -f state=success -f context=ai-review }" } } }, 'deny:review');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input p.json }" } } }, 'deny:protection');
+    expect('main-pre-tool-use-bash', "PowerShell: if ($?) { git push -u origin epic/E1-x }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { git push -u origin epic/E1-x }" } } }, 'allow');
     bash('find . -name "*.tmp" -exec rm {} \\;', 'allow');
     bash('cp x.json ${HOME}/.claude/settings.json', 'deny:switch');
     // A subshell keeps its cd to itself.
