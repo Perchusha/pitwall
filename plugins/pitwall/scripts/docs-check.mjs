@@ -222,9 +222,14 @@ function decodeRefs(text) {
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => code(parseInt(h, 16)))
     .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m);
 }
+// A strikethrough as GitHub finds one: a run of one or two tildes before a non-space opens it, the
+// same run closes it after a non-space (after punctuation only when a space, punctuation or the
+// end follows), and it never runs past a blank line or the start of a list item. So "~2 s ...
+// (~1 s)" strikes nothing, and "within ~1 s~" does (tested against GitHub's renderer in T2).
+const STRIKE = /(~~?)(?=[^\s~])(?:(?!\n[ \t]*(?:\n|[-*+] |\d+[.)] ))[^~])*?(?:[^\s~\p{P}\p{S}]|[\p{P}\p{S}](?=\1(?:[\s\p{P}\p{S}]|$)))\1(?!~)/u;
 function visible(text) {
   const shown = (text ?? '')
-    .replace(/(~~?)(?=[^\s~])[^~]*?[^\s~]\1(?!~)/g, ' ')
+    .replace(new RegExp(STRIKE.source, 'gu'), ' ')
     .replace(/<(s|del|strike)\b[^>]*>.*?<\/\1>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
@@ -257,15 +262,14 @@ function plainCells(rel, section, n) {
 }
 // What keeps a cell from being plain text, outside its code spans, or '' when nothing does.
 function notPlain(cell) {
-  // Only what GitHub would show differently: "<" that opens a tag, a comment or an autolink, two
-  // tildes (a strikethrough needs a pair), a backslash before punctuation (an escape). A "<" in
-  // "< 1 s", one "~" in a path, a "\" in a Windows path show as written.
+  // Only what GitHub would show differently: "<" that opens a tag, a comment or an autolink,
+  // tildes that strike text through (STRIKE), a backslash before punctuation (an escape). A "<" in
+  // "< 1 s", tildes for "about" or in a path, a "\" in a Windows path show as written.
   const t = blankCodeSpans(cell);
   if (t.includes('`')) return 'a backtick that opens no code span';
   if (/<[A-Za-z/!?]/.test(t)) return 'HTML or an angle bracket';
   if (/&[#A-Za-z0-9]+;/.test(t)) return 'a character reference';
-  // A strikethrough opens with a tilde before a non-space and closes with one after a non-space.
-  if (/~~?(?=[^\s~])[^~]*[^\s~]~/.test(t)) return 'tildes, which can strike text through';
+  if (STRIKE.test(t)) return 'tildes, which can strike text through';
   if (/[[\]]/.test(t)) return 'a link, an image or a bracket';
   if (/\\[!-/:-@[-`{-~]/.test(t)) return 'a backslash escape';
   return '';
@@ -1054,8 +1058,9 @@ function checkPlanReview() {
   const place = (cell) => {
     if (blank(cell)) return false;
     const ids = cellText(cell).match(/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/g) ?? [];
-    // One settled ID is enough: a cell may also name the decision a newer one superseded.
-    if (ids.some(settled)) return true;
+    // Every ID is settled, or an ADR a newer one superseded (named next to its successor), and one is settled.
+    const superseded = (id) => id.startsWith('ADR-') && adrFiles.some((f) => f.startsWith(id.slice(4) + '-') && field(read(`docs/adr/${f}`), 'Status').startsWith('superseded'));
+    if (ids.length > 0) return ids.every((id) => settled(id) || superseded(id)) && ids.some(settled);
     const doc = /([\w./-]+\.md)\b/.exec(visible((cell ?? '').replace(/`/g, '')))?.[1];
     return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
   };
@@ -1116,12 +1121,13 @@ function checkPlanReview() {
   // accepted. Read as shown, so an ID in a link's address does not count. Whether the words
   // there settle it or put it off is for the plan reviewer to read; the check sees only where.
   const shownText = (text) => visible(stripCode(text ?? ''));
-  // A criterion's lines: the list item and the indented lines that continue it.
+  // A criterion's lines: the list item and the indented lines that continue it, blank lines
+  // between them included, up to a line that is neither.
   const criteriaLines = (lines) => {
     let inItem = false;
     return lines.filter((l) => {
       if (/^(?:[-*]|\d+\.)\s+\S/.test(l)) inItem = true;
-      else if (!/^[ \t]+\S/.test(l)) inItem = false;
+      else if (!/^[ \t]+\S/.test(l) && !/^[ \t]*$/.test(l)) inItem = false;
       return inItem;
     });
   };

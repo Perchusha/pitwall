@@ -1041,6 +1041,32 @@ step('plan and spike checks', (report) => {
       e('docs/adr/0001-stack.md', (t) => t.replace('A desktop app.', 'A desktop app; this decision settles A-1.'));
       rmSync(join(p, 'docs/spikes/notify.md'));
     }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk: name it in a spike's "- Assumption:", the "## Decision" of an accepted ADR/], 'plan-review');
+    // T2 final check: tildes strike only where GitHub strikes, and a place names settled IDs.
+    const noSpikeNoAc = (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    };
+    planCase('tildes for "about" around a covering criterion', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('- [ ] E1-AC2: Snooze delays it by 10 minutes.', '- [ ] E1-AC2: Snooze pauses in ~2 s.\n- [ ] E1-AC3: Settles A-1.\n- [ ] E1-AC4: It resumes (~1 s).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" in one covering criterion', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('Snooze delays it by 10 minutes.', 'It starts in ~1 s, which settles A-1 (~3 s on the first start).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" around a covering ADR decision', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/adr/0001-stack.md', (t) => t.replace('## Decision\n\nTauri.', '## Decision\n\nTauri, ~5 ms to start.\n\nThis settles A-1.\n\nA reminder draws in (~2 ms).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" in a fallback', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| Retry after ~2 s (~5 s on a cold start) |')), [], 'plan-review');
+    planCase('a place with a proposed ADR next to a criterion', (p, e) => {
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Status: accepted', '- Status: proposed'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0004, E1-AC1 |'));
+    }, [/"Backups and restore" has no place where it lives/], 'plan-review');
+    planCase('an assumption on a criterion line after a blank line', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('- [ ] E1-AC2: Snooze delays it by 10 minutes.', '- [ ] E1-AC2: Snooze delays it by 10 minutes.\n\n  This settles A-1.'));
+    }, [], 'plan-review');
     // Ordinary Markdown from the round-6 review stays allowed.
     planCase('free tables, repeated rows and plain words', (p, e) => {
       e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Date |\n| --- | --- |\n| 1 | 2026-11-08 |\n| 1 | 2026-11-08 |'));

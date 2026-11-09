@@ -6,7 +6,7 @@ One entry per epic, newest first.
 
 `/pitwall:spike` and `/pitwall:plan` are built, with the `plan-reviewer` agent, and the plan of a new project now reaches `main` the way every later PR will: reviewed by a fresh agent, with `ai-review` set by that agent, merged with the owner's yes. The plugin gained two scripts, `review-status.mjs` (ADR-0007) and `merge.mjs` (ADR-0008), and `docs-check.mjs` three stages: `spike`, which reads git to show that the criterion came before the prototype (ADR-0009), `plan` and `plan-review`. `/pitwall:decide <area>` revisits one area after a failed spike. The T1 follow-ups the owner added are in: the GitHub plan read from the protection probe only, research budgets per level, handoffs with each command on its own line under a label, and the refused-probe case in the fake `gh`. The owner answered two one-way questions, added to the second one, and accepted the two-way list with five edits.
 
-**Numbers.** `scripts/check.mjs` grew from 17 to 20 steps: the plan and spike checks run more than 110 cases on projects built with real git history, `review-status.mjs` 26 and `merge.mjs` 36 scenarios against the shared fake `gh` in `scripts/fake-gh.mjs`, and the protection step 43 (from 38). The headless run of the lite system (`scripts/e2e.mjs`, a scripted owner, `gh` signed out) started from an empty folder and saved each stage it passed:
+**Numbers.** `scripts/check.mjs` grew from 17 to 20 steps: the plan and spike checks run about 150 cases on projects built with real git history, `review-status.mjs` 26 and `merge.mjs` 36 scenarios against the shared fake `gh` in `scripts/fake-gh.mjs`, and the protection step 43 (from 38). The headless run of the lite system (`scripts/e2e.mjs`, a scripted owner, `gh` signed out) started from an empty folder and saved each stage it passed:
 
 | Stage | Turns | Minutes | Cost at API prices | Output |
 | --- | --- | --- | --- | --- |
@@ -41,8 +41,9 @@ The first run was stopped in its plan stage, before it printed its costs, so the
 | 6 | 7 | 208,210 | 37 | 19.0 |
 | 7 | 1 realistic, 3 exotic | 204,493 | 21 | 5.8 |
 | 8, verification | none | 149,040 | 32 | 14.1 |
+| 9, check of the last fixes | 1 realistic | 109,805 | 14 | 8.9 |
 
-The eight rounds come to about 1.82 million tokens, 399 tool calls and 143 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The verification round found no realistic blocking finding, which ends the review under the owner's rule; its five smaller findings (a superseded ADR next to the new one in a place, two tildes that strike nothing, where a cover counts, a stage list) were fixed after it. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
+The nine rounds come to about 1.93 million tokens, 413 tool calls and 152 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The verification round found no realistic blocking finding, which ends the review under the owner's rule; its five smaller findings (a superseded ADR next to the new one in a place, two tildes that strike nothing, where a cover counts, a stage list) were fixed after it. A short check of those fixes found that one of them read tildes for "about" ("~2 s ... (~1 s)") as a strikethrough and so lost a cover, a realistic false failure; the strikethrough rule now follows GitHub's, as the checker tested it against GitHub's renderer. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
 
 **Next:** T3, the epic loop. It takes the hook rule of ADR-0007, the Approval line of ADR-0008 and the verification rounds of L-8 for the code-reviewer.
 
