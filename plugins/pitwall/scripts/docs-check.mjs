@@ -224,7 +224,7 @@ function decodeRefs(text) {
 }
 function visible(text) {
   const shown = (text ?? '')
-    .replace(/~~.*?~~/g, ' ')
+    .replace(/(~~?)(?=[^\s~])[^~]*?[^\s~]\1(?!~)/g, ' ')
     .replace(/<(s|del|strike)\b[^>]*>.*?<\/\1>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
@@ -264,7 +264,8 @@ function notPlain(cell) {
   if (t.includes('`')) return 'a backtick that opens no code span';
   if (/<[A-Za-z/!?]/.test(t)) return 'HTML or an angle bracket';
   if (/&[#A-Za-z0-9]+;/.test(t)) return 'a character reference';
-  if ((t.match(/~/g) ?? []).length > 1) return 'tildes, which can strike text through';
+  // A strikethrough opens with a tilde before a non-space and closes with one after a non-space.
+  if (/~~?(?=[^\s~])[^~]*[^\s~]~/.test(t)) return 'tildes, which can strike text through';
   if (/[[\]]/.test(t)) return 'a link, an image or a bracket';
   if (/\\[!-/:-@[-`{-~]/.test(t)) return 'a backslash escape';
   return '';
@@ -1053,7 +1054,8 @@ function checkPlanReview() {
   const place = (cell) => {
     if (blank(cell)) return false;
     const ids = cellText(cell).match(/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/g) ?? [];
-    if (ids.length > 0) return ids.every(settled);
+    // One settled ID is enough: a cell may also name the decision a newer one superseded.
+    if (ids.some(settled)) return true;
     const doc = /([\w./-]+\.md)\b/.exec(visible((cell ?? '').replace(/`/g, '')))?.[1];
     return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
   };
@@ -1110,13 +1112,23 @@ function checkPlanReview() {
   const top = cfg.discovery.riskOrder[0];
   // What covers an assumption is where it is settled, not where it is mentioned: a spike's
   // "- Assumption:" field, the Decision of an accepted ADR (a superseded or proposed one decides
-  // nothing), an epic's acceptance criterion, a risk the owner accepted. Read as shown, so an ID
-  // in a link's address does not count.
+  // nothing), an epic's acceptance criterion with its continuation lines, a risk the owner
+  // accepted. Read as shown, so an ID in a link's address does not count. Whether the words
+  // there settle it or put it off is for the plan reviewer to read; the check sees only where.
   const shownText = (text) => visible(stripCode(text ?? ''));
+  // A criterion's lines: the list item and the indented lines that continue it.
+  const criteriaLines = (lines) => {
+    let inItem = false;
+    return lines.filter((l) => {
+      if (/^(?:[-*]|\d+\.)\s+\S/.test(l)) inItem = true;
+      else if (!/^[ \t]+\S/.test(l)) inItem = false;
+      return inItem;
+    });
+  };
   const covering = [
     ...spikeFiles.map((f) => field(read(`docs/spikes/${f}`), 'Assumption')),
     ...adrFiles.filter((f) => adrAccepted(`ADR-${f.slice(0, 4)}`)).map((f) => (sections(read(`docs/adr/${f}`)).get('Decision') ?? []).join('\n')),
-    ...epicFiles.map((f) => listItems(sections(read(`docs/epics/${f}`)).get('Acceptance criteria') ?? []).join('\n')),
+    ...epicFiles.map((f) => criteriaLines(sections(read(`docs/epics/${f}`)).get('Acceptance criteria') ?? []).join('\n')),
   ].map(shownText);
   const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
   for (const row of risks) if (accepted.get(row[0])) covering.push(shownText(row.join(' | ')));
@@ -1128,7 +1140,9 @@ function checkPlanReview() {
     if (!/^A-\d+$/.test(shownId)) report('docs/DISCOVERY.md', `assumption "${id}" has no ID A-n`);
     if (!cfg.discovery.riskOrder.includes(shownRisk)) report('docs/DISCOVERY.md', `assumption ${shownId}: risk "${risk}" is not one of ${cfg.discovery.riskOrder.join(', ')}`);
     if (shownRisk !== top || !/^A-\d+$/.test(shownId)) continue;
-    if (!covering.some((text) => new RegExp(`\\b${shownId}\\b`).test(text))) report(rel, `high-risk assumption ${shownId} is covered by no spike, ADR, epic or accepted risk`);
+    if (!covering.some((text) => new RegExp(`\\b${shownId}\\b`).test(text))) {
+      report(rel, `high-risk assumption ${shownId} is covered by no spike, ADR, epic or accepted risk: name it in a spike's "- Assumption:", the "## Decision" of an accepted ADR, an acceptance criterion, or the row of an accepted risk`);
+    }
   }
   if (level.spikeRequired && assumptions[0]) {
     const riskiest = assumptions[0][0];

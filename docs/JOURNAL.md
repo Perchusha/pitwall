@@ -40,8 +40,9 @@ The first run was stopped in its plan stage, before it printed its costs, so the
 | 5 | 2 | 236,156 | 57 | 30.1 |
 | 6 | 7 | 208,210 | 37 | 19.0 |
 | 7 | 1 realistic, 3 exotic | 204,493 | 21 | 5.8 |
+| 8, verification | none | 149,040 | 32 | 14.1 |
 
-Rounds 1 to 7 come to about 1.67 million tokens, 367 tool calls and 129 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
+The eight rounds come to about 1.82 million tokens, 399 tool calls and 143 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The verification round found no realistic blocking finding, which ends the review under the owner's rule; its five smaller findings (a superseded ADR next to the new one in a place, two tildes that strike nothing, where a cover counts, a stage list) were fixed after it. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
 
 **Next:** T3, the epic loop. It takes the hook rule of ADR-0007, the Approval line of ADR-0008 and the verification rounds of L-8 for the code-reviewer.
 

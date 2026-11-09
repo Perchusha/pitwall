@@ -990,7 +990,7 @@ step('plan and spike checks', (report) => {
     hide('an epic ID with a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E&#8203;2 second half | L | unknown | - |\n'), [/epic cell of "E&#8203;2 second half" holds a character reference/]);
     hide('a high risk in emphasis that nothing covers', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n| A-3 | Cloud sync works | **high** | nothing yet |\n'), [/high-risk assumption A-3 is covered by no spike/]);
     for (const [label, cell, pattern] of [
-      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /holds tildes/],
+      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /finding 1 is not closed/],
       ['an open written with a character reference', 'E1-AC2 was cut, open&colon; nothing covers it', /holds a character reference/],
       ['an open in angle brackets', 'E1-AC2 <open: nothing covers it>', /holds HTML or an angle bracket/],
       ['an open as a broken link', '[E1-AC2](open: nothing covers it)', /holds a link, an image or a bracket/],
@@ -1025,6 +1025,22 @@ step('plan and spike checks', (report) => {
     }, [/high-risk assumption A-1 is covered by no spike/], 'plan-review');
     hide('a non-breaking space after a closing fence', 'docs/PLAN-REVIEW.md', afterRow2(`\n\`\`\`\nnotes\n\`\`\`${NBSP}\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 15 | Reboot | blocking | open: add a criterion |\n\n\`\`\`\n`), [/an invisible character on a fence line/]);
     hide('rows indented with a tab', 'docs/RISKS.md', (t) => t.replace('| ID | Risk |', '\t| R-3 | Hidden | none | 2026-11-08 |\n\n| ID | Risk |'), [/an indented table row/]);
+    // T2 verification round: what an honest reviewer writes passes, and the rule says where to write it.
+    planCase('a place that also names the decision a newer one superseded', (p, e) => {
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0003, which supersedes ADR-0002 |'));
+    }, [], 'plan-review');
+    planCase('two tildes that strike nothing', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge, in ~/Library/Caches/x on macOS and ~/.cache/x on Linux, about ~0.4 s |')), [], 'plan-review');
+    hide('tildes that strike text through', 'docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge within ~1 s~ |'), [/the fallback cell of "R-1" holds tildes/]);
+    planCase('an assumption on a criterion continuation line', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', '\n  This settles A-1 on both systems.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [], 'plan-review');
+    planCase('an assumption named only in an ADR context', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      e('docs/adr/0001-stack.md', (t) => t.replace('A desktop app.', 'A desktop app; this decision settles A-1.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk: name it in a spike's "- Assumption:", the "## Decision" of an accepted ADR/], 'plan-review');
     // Ordinary Markdown from the round-6 review stays allowed.
     planCase('free tables, repeated rows and plain words', (p, e) => {
       e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Date |\n| --- | --- |\n| 1 | 2026-11-08 |\n| 1 | 2026-11-08 |'));

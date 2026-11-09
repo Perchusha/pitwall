@@ -10,7 +10,7 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 
 - All checks, as CI runs them: `node scripts/check.mjs`
 - Headless runs of the stage skills, before a PR (signed-in CLI, spends the subscription, not in CI): `node scripts/e2e.mjs`; one stage from the state the stage before it saved: `node scripts/e2e.mjs --from <stage> --until <stage>`
-- The docs check on any project: `node plugins/pitwall/scripts/docs-check.mjs --root <dir> [--stage kickoff|discovery|decide|spike|plan|plan-review]` (several stages joined by commas)
+- The docs check on any project: `node plugins/pitwall/scripts/docs-check.mjs --root <dir> [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review]` (several stages joined by commas)
 - The official validator alone: `claude plugin validate --strict .` (marketplace) and `claude plugin validate --strict plugins/pitwall` (plugin)
 - Try the plugin from this checkout: `claude --plugin-dir plugins/pitwall`
 - Install it from the local marketplace in a scratch home: `export HOME=$(mktemp -d)`, then `claude plugin marketplace add <this checkout>`, `claude plugin install pitwall@pitwall` and `claude plugin details pitwall@pitwall` to list its parts
