@@ -81,7 +81,9 @@ function budgetFor({ cfg, settings, input }) {
   return { ...b.subagentToolCalls, name: 'budgets.subagentToolCalls' };
 }
 
-const deny = (rule, reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `pitwall refused this call (${rule}): ${reason}` } });
+const OFF = 'To turn pitwall off in this project, the owner runs: claude plugin disable pitwall@pitwall --scope local.';
+// A refusal; one that comes from a part of the guard that could not run says how to turn pitwall off (T3a-AC1).
+const deny = (rule, reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `pitwall refused this call (${rule}): ${reason}${rule === 'broken' ? ` ${OFF}` : ''}` } });
 
 function preToolUse(s) {
   const { cfg, input, dir, key } = s;
@@ -202,8 +204,10 @@ function checkBeforeStop({ cfg, root, dir, key }, who) {
     rmSync(dirty, { force: true });
     return null;
   }
+  // A gate that cannot run or does not finish is not red, and does not run again at every turn's end: the next edit runs it.
+  if (g.error || g.timedOut) rmSync(dirty, { force: true });
   if (g.error) return { message: `pitwall: scripts/gate --changed could not run before ${who} stopped (${g.error}); the edits on ${branch} are not checked.` };
-  if (g.timedOut) return { message: `pitwall: scripts/gate --changed did not finish in ${seconds} seconds before ${who} stopped; that is not counted as red, and it runs again at the next stop.` };
+  if (g.timedOut) return { message: `pitwall: scripts/gate --changed did not finish in ${seconds} seconds before ${who} stopped; that is not counted as red, and it runs again after the next edit.` };
   const retries = join(dir, `${key}.retries`);
   if (g.status === 0) {
     rmSync(dirty, { force: true });
@@ -297,8 +301,13 @@ function sessionStart(s) {
     const changed = status.out ? status.out.split('\n').length : 0;
     lines.push(`- Branch: ${branch.ok ? branch.out : 'a detached HEAD'}, ${changed ? `${changed} changed or untracked files` : 'tree clean'}.`);
   }
-  const stage = branch.ok ? planningStage(root, cfg, branch.out) : null;
-  lines.push(stage ? `- Stage: ${stage}` : `- Current epic: ${currentEpic(root)}`);
+  // The brief reads the docs; one it cannot read is said in the brief and stops nothing else.
+  try {
+    const stage = branch.ok ? planningStage(root, cfg, branch.out) : null;
+    lines.push(stage ? `- Stage: ${stage}` : `- Current epic: ${currentEpic(root)}`);
+  } catch (e) {
+    lines.push(`- Stage: the brief could not read the docs (${String(e.message).split(/\r?\n/)[0]}).`);
+  }
   const b = cfg.budgets.sessionToolCalls;
   const attended = process.env.CLAUDE_CODE_SESSION_ATTENDED;
   lines.push(

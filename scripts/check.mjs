@@ -1408,7 +1408,7 @@ const PAYLOADS = [
   'researcher-pre-tool-use-glob', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop',
   'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop',
   'project-agent-pre-tool-use-read', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop',
-  'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop',
+  'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
 ];
 step('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -1547,6 +1547,25 @@ step('hooks (recorded payloads)', (report) => {
     // A recursive grep reads ignored files: with a .env in the project, it is refused unless it leaves .env out.
     writeFileSync(join(project, '.env'), 'DATABASE_URL=postgres://x\n');
     bash('grep -rn DATABASE_URL .', 'deny:secrets');
+    // A search pattern, a filter or a property is no file; a file named after the pattern still is.
+    bash('grep -n ".env" .gitignore', 'allow');
+    bash("grep -qx '.env' .gitignore", 'allow');
+    bash("git grep -n '.env'", 'allow');
+    bash("rg '\\.env' src", 'allow');
+    bash("git log -S '.env'", 'allow');
+    bash("grep -n 'cert.pem' docs/SPEC.md", 'allow');
+    bash("jq -r '.key' data.json", 'allow');
+    bash('node -e "const o = { key: 1 }; console.log(o.key)"', 'allow');
+    bash("git ls-files '*.pem'", 'allow');
+    bash('grep KEY .env', 'deny:secrets');
+    bash('grep -e KEY .env', 'deny:secrets');
+    expect('main-pre-tool-use-bash', 'PowerShell: Select-String for .env', { tool: 'PowerShell', input: { tool_input: { command: "Select-String -Path src/*.ts -Pattern '.env'" } } }, 'allow');
+    // git commands that only name a secret file, and untracking one.
+    bash('git check-ignore -v .env', 'allow');
+    bash('git ls-files .env', 'allow');
+    bash('git status --short .env', 'allow');
+    bash('git rm --cached .env', 'allow');
+    bash('git rm .env', 'deny:secrets');
     bash('grep -r DATABASE_URL', 'deny:secrets');
     bash('grep -rn --exclude=.env DATABASE_URL .', 'allow');
     bash('grep -rn DATABASE_URL docs', 'allow');
@@ -1575,6 +1594,11 @@ step('hooks (recorded payloads)', (report) => {
     bash('git push -u origin epic/E1-x', 'allow');
     bash('git push --force-with-lease origin epic/E1-x', 'allow');
     bash('echo $(git push -f origin main)', 'deny:push');
+    bash('git push origin @', 'deny:push');
+    // A heredoc inside $( ... ): its parentheses and backticks are text, and what comes after the substitution is still read.
+    bash("gh pr create --title x --body \"$(cat <<'EOF'\nSteps: a) install b) run `git push origin main` is not done here\nEOF\n)\"", 'allow');
+    bash("git commit -m \"$(cat <<'EOF'\nfix: three things\n\n1) the parser 2) the docs 3) docs mention `cat .env`\nEOF\n)\"", 'allow');
+    bash("git commit -m \"$(cat <<'EOF'\nfix: a) b)\nEOF\n)\" && git push origin main", 'deny:push');
     bash('bash -c "git push origin main"', 'deny:push');
     bash('bash -lc "git push origin main"', 'deny:push');
     bash('git push origin "$(git branch --show-current)"', 'deny:push');
@@ -1616,6 +1640,13 @@ step('hooks (recorded payloads)', (report) => {
     bash('git clean -fdx', 'deny:switch');
     bash('git clean -fd', 'allow');
     bash('git clean -n -x', 'allow');
+    bash('mv build/out.js .', 'allow');
+    bash('mv notes.md .claude/', 'allow');
+    bash('mv .claude old-claude', 'deny:switch');
+    expect('main-pre-tool-use-bash', 'PowerShell: Move-Item into the project folder', { tool: 'PowerShell', input: { tool_input: { command: 'Move-Item build/out.js .' } } }, 'allow');
+    bash('git commit -m "chore: record merge protection" .claude/pitwall.json', 'allow');
+    bash('git reset HEAD .claude/pitwall.json', 'allow');
+    bash('git reset --hard', 'allow');
     bash('node -e "require(\'fs\').writeFileSync(\'.claude/pitwall.json\', \'{}\')"', 'deny:switch');
     bash('claude plugin disable pitwall@pitwall', 'deny:switch');
     bash('claude plugin uninstall pitwall@pitwall --scope project', 'deny:switch');
@@ -1785,7 +1816,7 @@ step('hooks (recorded payloads)', (report) => {
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
-    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
       const r = hook(label);
       if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
     }
@@ -1811,6 +1842,12 @@ step('hooks (recorded payloads)', (report) => {
     const early = hook('main-session-start', { projectDir: unborn }).out?.hookSpecificOutput?.additionalContext ?? '';
     if (!/Stage: planning/.test(early)) report(`the brief before the skeleton's commit must give the planning stage:\n${early}`);
     // While the plan is made, the brief gives the stage, not E0.
+    // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.
+    const odd = makeProject('odd', 1);
+    rmSync(join(odd, 'docs', 'spikes'), { recursive: true, force: true });
+    writeFileSync(join(odd, 'docs', 'spikes'), 'not a folder');
+    const oddBrief = hook('main-session-start', { projectDir: odd }).out;
+    if (!/could not read the docs/.test(oddBrief?.hookSpecificOutput?.additionalContext ?? '') || oddBrief?.systemMessage) report(`a brief that cannot read the docs must say so in the brief alone: ${JSON.stringify(oddBrief)}`);
     const planning = hook('main-session-start', { projectDir: fresh }).out?.hookSpecificOutput?.additionalContext ?? '';
     if (!/Stage: planning on plan\/initial; the next stage is kickoff/.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage:\n${planning}`);
 
@@ -1826,6 +1863,21 @@ step('hooks (recorded payloads)', (report) => {
       ['an old Node', { script: copy('old-node', (c) => writeFileSync(join(c, 'config', 'defaults.json'), readFileSync(join(c, 'config', 'defaults.json'), 'utf8').replace('"nodeMinMajor": 20', '"nodeMinMajor": 999'))) }],
       ['hook-events.mjs that does not load', { script: copy('no-events', (c) => writeFileSync(join(c, 'scripts', 'hook-events.mjs'), 'throw new Error("broken on purpose");\n')) }],
     ];
+    // A part of the guard that cannot run (here git, missing from PATH) refuses and says how to turn pitwall off.
+    const noGit = hook('main-pre-tool-use-write', { env: { PATH: '' }, input: { tool_input: { file_path: join(project, 'src', 'a.js'), content: 'x' } } });
+    if (verdict(noGit) !== 'deny:broken' || !/claude plugin disable pitwall@pitwall --scope local/.test(noGit.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`a guard that cannot run git must refuse and say how to turn pitwall off: ${JSON.stringify(noGit.out)}`);
+    // A gate slower than its time limit: reported once, not red, and not run again until the next edit.
+    const slowHook = copy('slow-gate', (c) => {
+      const f = join(c, 'config', 'defaults.json');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('"fast": 120', '"fast": 1').replace('"changed": 540', '"changed": 1'));
+    });
+    const slow = makeProject('slow', 2);
+    gitIn(slow, 'checkout', '-qb', 'epic/E1-slow');
+    writeFileSync(join(slow, 'scripts', 'gate'), '#!/usr/bin/env bash\nsleep 5\n');
+    const slowPost = hook('main-post-tool-use-write', { script: slowHook, projectDir: slow, session: 'slow', input: { tool_input: { file_path: join(slow, 'src.js'), content: 'x' } } });
+    if (!/did not finish/.test(slowPost.out?.hookSpecificOutput?.additionalContext ?? '')) report(`a slow gate after an edit must be reported as not finished: ${JSON.stringify(slowPost.out)}`);
+    const slowStops = [1, 2].map(() => hook('main-stop', { script: slowHook, projectDir: slow, session: 'slow' }));
+    if (!/did not finish/.test(slowStops[0].out?.systemMessage ?? '') || verdict(slowStops[1]) !== 'allow') report(`a slow gate before stopping: expected one report, then nothing, got ${slowStops.map((r) => verdict(r)).join(' ')}`);
     for (const [what, opts] of brokenCases) {
       const r = hook('main-pre-tool-use-bash', { ...opts, input: { tool_input: { command: 'ls' } } });
       const reason = r.out?.hookSpecificOutput?.permissionDecisionReason ?? '';

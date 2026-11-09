@@ -98,7 +98,7 @@ const PROMPT = `This session tests the guards of the pitwall plugin in a throwaw
 9. Run the bash command: gh pr merge 7 --merge
 10. Write the file src/app.js with the content: console.log("hello")
 11. Use the Agent tool with subagent_type pitwall:researcher and this brief: "Hook test, not research: make exactly one Glob call for docs/*.md, then return DONE."
-12. Use the Agent tool with subagent_type pitwall:plan-reviewer and this brief: "Hook test, not a review: make exactly one Read call for docs/IDEA.md, then return DONE. Write nothing and run nothing."
+12. Use the Agent tool with subagent_type pitwall:plan-reviewer and this brief: "Hook test, not a review: make exactly one Read call for docs/IDEA.md, then one Write call that writes the line hook test to docs/PLAN-REVIEW.md, then return DONE. Run nothing."
 13. Use the Agent tool with subagent_type other:helper and this brief: "Write the file src/helper.js with the content: console.log(2). Then run the bash command: echo from-helper"
 14. Use the Agent tool with subagent_type plan-reviewer and this brief: "Read docs/IDEA.md"
 15. Use the Agent tool with subagent_type pitwall:implementer and this brief: "Hook test: return at once."
@@ -188,7 +188,7 @@ if (record) {
     writeFileSync(join(out, `${l}.json`), JSON.stringify({ claudeCode: cli, recorded: new Date().toISOString().slice(0, 10), event: i.event, attended: i.attended, input }, null, 2) + '\n');
   }
   console.log(`recorded ${seen.size} payloads into scripts/hook-payloads/: ${[...seen].sort().join(', ')}`);
-  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop'].filter((l) => !seen.has(l));
+  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'plan-reviewer-post-tool-use-write', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop'].filter((l) => !seen.has(l));
   if (missing.length) unmet.push(`not recorded: ${missing.join(', ')}`);
 }
 

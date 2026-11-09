@@ -121,15 +121,62 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     }
     return j;
   };
-  // The text of a $( ... ) from position i (just after the "("), and where it ends.
+  // The text of a $( ... ) from position i (just after the "("), and the position after its ")".
+  // Parentheses inside quotes and heredocs do not count: "$(cat <<'EOF' ... a) step ... EOF\n)".
   const balanced = (i) => {
     let level = 1;
     let j = i;
-    for (; j < text.length && level > 0; j += 1) {
-      if (text[j] === '(') level += 1;
-      else if (text[j] === ')') level -= 1;
+    const ends = [];
+    while (j < text.length) {
+      const ch = text[j];
+      if (ch === '\\') {
+        j += 2;
+        continue;
+      }
+      if (ch === "'") {
+        const e = text.indexOf("'", j + 1);
+        j = e < 0 ? text.length : e + 1;
+        continue;
+      }
+      if (ch === '"') {
+        j += 1;
+        while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+        j += 1;
+        continue;
+      }
+      if (ch === '<' && text[j + 1] === '<' && text[j + 2] !== '<') {
+        let k = j + 2;
+        if (text[k] === '-') k += 1;
+        while (text[k] === ' ') k += 1;
+        const m = /^(['"]?)([A-Za-z0-9_]+)\1/.exec(text.slice(k));
+        if (m) {
+          ends.push(m[2]);
+          j = k + m[0].length;
+          continue;
+        }
+      }
+      if (ch === '\n' && ends.length) {
+        // A heredoc's lines, up to its end line.
+        while (ends.length) {
+          const end = ends.shift();
+          for (;;) {
+            const next = text.indexOf('\n', j + 1);
+            const line = text.slice(j + 1, next < 0 ? text.length : next).replace(/\r$/, '');
+            j = next < 0 ? text.length : next;
+            if (line.replace(/^\t+/, '') === end || next < 0) break;
+          }
+        }
+        j += 1;
+        continue;
+      }
+      if (ch === '(') level += 1;
+      else if (ch === ')') {
+        level -= 1;
+        if (level === 0) return [text.slice(i, j), j + 1];
+      }
+      j += 1;
     }
-    return [text.slice(i, j - 1), j];
+    return [text.slice(i), text.length];
   };
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
@@ -353,6 +400,7 @@ const WRITERS = new Set([
 // Copiers write only their last path, the destination; the paths before it are read.
 const COPIERS = new Set(['cp', 'copy', 'install', 'rsync', 'copy-item', 'cpi']);
 const DELETERS = new Set(['rm', 'rmdir', 'del', 'erase', 'rd', 'mv', 'move', 'unlink', 'shred', 'remove-item', 'ri', 'move-item', 'mi']);
+const MOVERS = new Set(['mv', 'move', 'move-item', 'mi']);
 const GIT_WRITERS = new Set(['rm', 'mv', 'checkout', 'restore', 'clean', 'apply', 'stash', 'reset', 'switch']);
 const HTTP = new Set(['curl', 'wget', 'http', 'https', 'xh', 'invoke-restmethod', 'irm', 'invoke-webrequest', 'iwr']);
 // Programs whose operands are names or text, not files they open: "echo .env >> .gitignore", "test -f .env".
@@ -465,13 +513,19 @@ export function guard(call, ctx) {
       h.readOnlyCommands.includes(p) ||
       (git && h.readOnlyGit.includes(git.sub)) ||
       (git?.sub === 'restore' && git.args.includes('--staged') && !git.args.some((a) => a === '--worktree' || a === '-W')) ||
+      // A commit, or a reset that keeps the files, changes the index and history, not the files.
+      git?.sub === 'commit' ||
+      (git?.sub === 'reset' && !git.args.some((a) => ['--hard', '--merge', '--keep'].includes(a))) ||
       (['sed', 'awk', 'gawk'].includes(p) && !inPlace);
 
-    // (a) Secret files, named by any command but one that only names them.
-    for (const w of [...(NAMES_ONLY.has(p) ? [] : words), ...redirects, ...inputs]) {
+    // (a) Secret files, named by any command but one that only names them; a search pattern or a filter is no file.
+    const namesOnly = NAMES_ONLY.has(p) || (git && (['check-ignore', 'ls-files', 'status'].includes(git.sub) || (git.sub === 'rm' && git.args.includes('--cached'))));
+    const patterns = patternOperands(p, git, argv);
+    for (const w of [...(namesOnly ? [] : words.filter((x) => !patterns.has(x))), ...redirects, ...inputs]) {
       if (isSecretName(basename(w.split('\\').join('/')))) return refuse('secrets', `${w} is a secret file: pitwall keeps agents out of it. Use .env.example or test values; a run that needs the real secrets is the owner's.`);
     }
-    if (code !== null && code.split(/[\s'"`(),;=:+]+/).some((piece) => isSecretName(basename(piece.split('\\').join('/'))))) {
+    // In inline code, the quoted strings: "readFileSync('.env')", not a property such as "o.key".
+    if (code !== null && [...code.matchAll(/(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)].some((m) => isSecretName(basename(m[2].split('\\').join('/'))))) {
       return refuse('secrets', 'this inline script names a secret file: pitwall keeps agents out of it.');
     }
     // A recursive grep reads every file under its paths, ignored ones too, and prints what matches.
@@ -493,7 +547,9 @@ export function guard(call, ctx) {
       if (named && !readOnly && (!COPIERS.has(p) || writes(w))) return refuse('switch', `${w} ${switchReason}`);
       const wp = norm(w, dir, home);
       if (writes(w) && inPlugin(wp)) return refuse('switch', `${w} is inside the pitwall plugin, one of the switches of its guards.`);
-      if (DELETERS.has(p) && [...protectedFiles, ...plugins].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
+      // A move takes its sources away, not its destination ("mv build/out.js ." keeps "." where it is).
+      const moved = MOVERS.has(p) && w === operands[operands.length - 1] && operands.length > 1;
+      if (DELETERS.has(p) && !moved && [...protectedFiles, ...plugins].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
     }
     const codePaths = code === null ? '' : code.split('\\').join('/');
     if (code !== null && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(codePaths) || plugins.some((d) => (WIN ? codePaths.toLowerCase() : codePaths).includes(d))) && WRITES_CODE.test(code)) {
@@ -552,6 +608,33 @@ export function guard(call, ctx) {
     }
   }
   return null;
+}
+
+// The words of a command that are a search pattern or a filter, not a file: the pattern of grep,
+// rg, git grep and Select-String, a jq or yq filter, and the value of git log -S and -G.
+const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'select-string', 'sls']);
+const FILTERS = new Set(['jq', 'yq', 'gojq']);
+function patternOperands(p, git, argv) {
+  const out = new Set();
+  const args = SEARCHERS.has(p) || FILTERS.has(p) ? argv.slice(1) : git?.sub === 'grep' ? git.args : null;
+  if (args) {
+    const given = args.some((a) => /^(-e|--regexp|-f|--file|-pattern)(=|$)/i.test(a));
+    for (let i = 0; i < args.length; i += 1) {
+      const a = args[i];
+      if (/^-pattern$/i.test(a) || /^(-e|--regexp)$/.test(a)) {
+        out.add(args[i + 1]);
+        i += 1;
+      } else if (/^-[ABCmdDfg]$/.test(a) || /^--(max-count|context|after-context|before-context|file|glob|type|arg|argjson)$/.test(a) || /^-(path|literalpath)$/i.test(a)) {
+        i += 1;
+      } else if (!given && !a.startsWith('-')) {
+        out.add(a);
+        break;
+      }
+    }
+  }
+  if (git) for (let i = 0; i < git.args.length; i += 1) if (/^-[SG]$/.test(git.args[i])) out.add(git.args[i + 1]);
+  out.delete(undefined);
+  return out;
 }
 
 // The first secret file a recursive grep reads, as the project names it, or null: the project's
@@ -630,7 +713,7 @@ function pushChangesMain(git, base, dir, home, ctx, switchedTo) {
     let src = colon < 0 ? s : s.slice(0, colon);
     let dst = colon < 0 ? s : s.slice(colon + 1);
     // HEAD, or a name the shell works out ("$(git branch --show-current)"), is the current branch.
-    const isCurrent = (x) => x === 'HEAD' || /[$`]/.test(x);
+    const isCurrent = (x) => x === 'HEAD' || x === '@' || /[$`]/.test(x);
     if (isCurrent(src)) src = current();
     if (isCurrent(dst) || (colon < 0 && src !== s)) dst = colon < 0 ? src : current();
     if (src === null || dst === null) return unknown;
