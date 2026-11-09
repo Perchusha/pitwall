@@ -1,0 +1,24 @@
+{
+  "claudeCode": "2.1.318",
+  "recorded": "2026-11-09",
+  "event": "pre-tool-use",
+  "attended": "0",
+  "input": {
+    "session_id": "recorded-session",
+    "transcript_path": "<home>/.claude/recorded/transcript_path",
+    "cwd": "<project>",
+    "scratchpad_dir": "<home>/.claude/recorded/scratchpad_dir",
+    "prompt_id": "recorded-prompt_id",
+    "permission_mode": "auto",
+    "effort": {
+      "level": "xhigh"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "<project>\\dist\\bundle.js",
+      "content": "console.log(1)"
+    },
+    "tool_use_id": "recorded-tool_use_id"
+  }
+}

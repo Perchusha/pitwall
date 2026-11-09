@@ -1,0 +1,24 @@
+{
+  "claudeCode": "2.1.318",
+  "recorded": "2026-11-09",
+  "event": "subagent-stop",
+  "attended": "0",
+  "input": {
+    "session_id": "recorded-session",
+    "transcript_path": "<home>/.claude/recorded/transcript_path",
+    "cwd": "<project>",
+    "scratchpad_dir": "<home>/.claude/recorded/scratchpad_dir",
+    "prompt_id": "recorded-prompt_id",
+    "permission_mode": "auto",
+    "agent_id": "recorded-project-agent",
+    "agent_type": "plan-reviewer",
+    "effort": {
+      "level": "xhigh"
+    },
+    "hook_event_name": "SubagentStop",
+    "stop_hook_active": false,
+    "agent_transcript_path": "<home>/.claude/recorded/agent_transcript_path",
+    "background_tasks": [],
+    "session_crons": []
+  }
+}

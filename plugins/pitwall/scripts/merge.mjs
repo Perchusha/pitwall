@@ -23,7 +23,7 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, requireNode, sleep } from './lib.mjs';
+import { config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, sleep } from './lib.mjs';
 
 requireNode();
 const usage = 'node merge.mjs --plan --owner-approved [--project <dir>] [--wait <seconds>] [--dry-run]';
@@ -102,23 +102,19 @@ if (pr.headRefOid !== sha) refuse(`PR #${pr.number} has head ${String(pr.headRef
 // 4. Both checks are green on that commit: ai-review from the review flow, gate from GitHub Actions only (ADR-0005).
 // gh prints an error body, a JSON object, on a failed read: a read that fails is handed back, never read as "not set".
 const readFailed = (what, r) => handoff(`gh could not read the ${what} of ${sha.slice(0, 7)}: ${(r.err.trim() || r.out.trim()).split('\n').pop()}`, [{ note: 'when GitHub answers again (a rate limit passes, the network is back), then' }, { run: 'gh auth status' }]);
-const statusRead = gh(['api', `repos/${name}/commits/${sha}/statuses`]);
-const statuses = statusRead.ok ? parseJson(statusRead.out) : null;
-if (!Array.isArray(statuses)) readFailed('statuses', statusRead);
-const review = statuses.find((s) => s.context === cfg.review.statusContext);
+const reviewRead = readReview(gh, name, sha, cfg);
+if (reviewRead.failed) readFailed(reviewRead.failed, reviewRead.read);
+const review = reviewRead.review;
 if (review?.state !== 'success') refuse(`${cfg.review.statusContext} is ${review?.state ?? 'not set'} on ${sha.slice(0, 7)}: the plan reviewer sets it (pitwall ADR-0007)`);
 const pollMs = Number(process.env.PITWALL_POLL_MS ?? 15000);
 const deadline = Date.now() + wait * 1000;
 let gate;
 for (;;) {
-  const runRead = gh(['api', `repos/${name}/commits/${sha}/check-runs`]);
-  const runs = runRead.ok ? parseJson(runRead.out)?.check_runs : null;
-  if (!Array.isArray(runs)) readFailed('check runs', runRead);
-  const named = runs.filter((c) => c.name === cfg.review.gateContext);
-  // The latest run from GitHub Actions decides: a re-run replaces the run before it.
-  gate = named.filter((c) => c.app?.id === cfg.mergeProtection.githubActionsAppId).sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0];
+  const gateRead = readGate(gh, name, sha, cfg);
+  if (gateRead.failed) readFailed(gateRead.failed, gateRead.read);
+  gate = gateRead.gate;
   // A gate from anything but GitHub Actions never passes (ADR-0005), so there is nothing to wait for.
-  if (!gate && named.length > 0) refuse(`the ${cfg.review.gateContext} check on ${sha.slice(0, 7)} comes from app ${named[0].app?.id ?? 'unknown'}, not GitHub Actions`);
+  if (gateRead.foreign) refuse(`the ${cfg.review.gateContext} check on ${sha.slice(0, 7)} comes from app ${gateRead.foreign.app?.id ?? 'unknown'}, not GitHub Actions`);
   if (gate?.status === 'completed' || Date.now() >= deadline) break;
   sleep(Math.max(0, Math.min(pollMs, deadline - Date.now())));
 }

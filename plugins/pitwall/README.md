@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.3.0, stages 0 to 5.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike` and `/pitwall:plan` work, with the `researcher` and `plan-reviewer` agents. The later commands still say that their stage is not built yet: T3a (the hooks), T3b (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.4.0, stages 0 to 5 and the hooks.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike` and `/pitwall:plan` work, with the `researcher` and `plan-reviewer` agents, and the hooks guard every pitwall project. The later commands still say that their stage is not built yet: T3b (the epic loop), T4 (release and QA). See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -15,7 +15,8 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 
 ## Requirements
 
-- Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of `config/defaults.json`: the plugin's scripts (layout, docs check, merge protection) run on it. Your project's own stack can be anything.
+- Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of `config/defaults.json`: the plugin's scripts (layout, docs check, merge protection) and its hooks run on it. Your project's own stack can be anything.
+- bash (Git Bash on Windows): the gate contract, `scripts/gate`, is a bash script, and the session brief checks for Node through it.
 - The GitHub CLI, `gh`, signed in as an admin of the repository, for merge protection (the commands it hands over were tested with gh 2.98). Without it, kickoff hands you the commands to run.
 
 ## Stages
@@ -53,9 +54,21 @@ Each stage ends with `scripts/docs-check.mjs --stage <stage>` from the plugin, w
 The reviewer runs in your local session and publishes its verdict as the `ai-review` status check, through `scripts/review-status.mjs`, which sets success only when the review passes its check. The plan reviewer does this for the plan PR; the code reviewer will for every epic (T3b). A PR merges only when both `gate` and `ai-review` are green:
 
 - on a public repository, or a private one on a paid plan, branch protection enforces it, admins included, and `gate` must come from GitHub Actions;
-- on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`; the hook that refuses the merge ships with the hooks (T3a).
+- on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`, and a hook refuses `gh pr merge` until both are green on the PR's head.
 
 The plan PR merges once you say yes, with a merge commit (the repository must allow merge commits, and must not require linear history). At every process level, low and normal risk epic PRs merge themselves; high-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) wait for you.
+
+## Hooks
+
+In a pitwall project, a folder with `.claude/pitwall.json`, the plugin's hooks (`hooks/hooks.json`, `scripts/hook.mjs`) do this; anywhere else they do nothing:
+
+- **A brief at session start**: the process level, the merge protection mode, the branch, the current epic with its unchecked criteria, the call budget, and a self-test of the guards that warns you at once when it fails.
+- **Guards** on every tool call, commands included: secret files and key formats, files git ignores, a push that changes `main`, `gh pr merge --admin` and writes to branch protection or rulesets, and the guards' own switch, which only you change: `.claude/pitwall.json`, the project's and your Claude Code settings, the plugin's folder and `claude plugin disable`.
+- **The review status**: only the plan reviewer and the code reviewer run `review-status.mjs`, and no commit status is written any other way. The plan reviewer writes only `docs/PLAN-REVIEW.md` and runs only its two scripts.
+- **Call budgets** (`budgets` in the config): a sub-agent is told to wrap up at `warn` and refused past `stop`; the main conversation is told, and refused past `stop` only when nobody attends it (`claude -p`).
+- **The gate**: on an `epic/*` branch, `scripts/gate --fast` after each edit outside `docs/`, reported to the agent, and `scripts/gate --changed` before the session or an implementer stops, which a red gate blocks a few times (`hooks.stopRetries`).
+
+A guard that cannot run refuses the call and says why. To turn pitwall off in one project: `claude plugin disable pitwall@pitwall --scope local`. The guards catch mistakes, not a command built to hide what it does (`review.threatModel`).
 
 ## The project template
 
@@ -63,7 +76,7 @@ The plan PR merges once you say yes, with a merge commit (the repository must al
 
 ## Configuration
 
-`config/defaults.json` holds the process levels (with the pre-mortem length, whether a spike is required and the size of a lite plan), risk classes, call budgets (researchers per level), review and merge protection settings, the planning branch, the discovery, decide, spike, plan and plan review settings (counts, constraints, the list of decision areas, the checklists per level), maturity criteria and registries for new dependencies, and size limits for the docs.
+`config/defaults.json` holds the process levels (with the pre-mortem length, whether a spike is required and the size of a lite plan), risk classes, call budgets (researchers per level), the hooks (the brief's size, the gate's time limits, the agents with limits of their own, the secret patterns), review and merge protection settings, the planning branch, the discovery, decide, spike, plan and plan review settings (counts, constraints, the list of decision areas, the checklists per level), maturity criteria and registries for new dependencies, and size limits for the docs.
 
 ## License
 
