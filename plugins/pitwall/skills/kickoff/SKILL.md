@@ -1,6 +1,6 @@
 ---
 name: kickoff
-description: Stage 0 of pitwall. Starts a new project from a one-line idea - asks about it one question at a time, proposes a process level, lays out the project template, writes docs/IDEA.md and sets up merge protection on GitHub. The owner runs it as /pitwall:kickoff, with the idea as the argument.
+description: Stage 0 of pitwall. Starts a new project from a one-line idea - asks about it one question at a time, proposes a process level, lays out the project template, writes docs/IDEA.md, sets up merge protection on GitHub and asks whether low and normal risk PRs may merge without the owner. The owner runs it as /pitwall:kickoff, with the idea as the argument.
 argument-hint: "[one-line idea]"
 disable-model-invocation: true
 ---
@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Turns a one-line idea into a laid-out project with a confirmed process level and protected `main`. The owner makes every call here; this skill asks, proposes, records and hands over to `discovery`.
 
-Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kickoff`, `processLevels`, `planning`) and the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/`: `layout.mjs`, `docs-check.mjs`, `protect.mjs`.
+Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kickoff`, `processLevels`, `planning`) and the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/`: `layout.mjs`, `docs-check.mjs`, `protect.mjs` (and `merge-choice.mjs`, which only the owner runs).
 
 ## Rules
 
@@ -50,12 +50,13 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
     - `branch-protection`: done;
     - `local-hook`: tell the owner, as it says, that nothing blocks a merge there yet except the review flow;
     - `pending` (exit 3): show the HANDOFF block verbatim; the commands under "Run this yourself" are for the owner, and the one under "Then run this to record the result" records it once they are done.
-11. **The planning branch.** Create the branch named in `planning.branch` with `git switch -c <branch>`. If `.claude/pitwall.json` changed in step 10, commit it there: `git commit -am "chore: record merge protection"`. With a remote, `git push -u origin <branch>`.
-12. **Hand over.** Tell the owner, in a few lines: the level, the protection mode (and the pending command, if any), the branch, and that the next stage is `/pitwall:discovery`.
+11. **Merges without the owner** (ADR-0010). Ask one question: once `gate` and `ai-review` are green, may low and normal risk epics merge without the owner? High risk and bug fixes always wait for them, and the answer can change later. Do not recommend either answer: it is the owner's. On no, nothing changes: `.claude/pitwall.json` already says `autoMerge: false`. On yes, hand the owner the command to run themselves in a terminal, which pitwall's guard keeps from every agent: `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge-choice.mjs" --allow`, from the project folder. It records the yes and the two narrow allow rules, and the next stage commits it.
+12. **The planning branch.** Create the branch named in `planning.branch` with `git switch -c <branch>`. If `.claude/pitwall.json` changed in step 10, commit it there: `git commit -am "chore: record merge protection"`. With a remote, `git push -u origin <branch>`.
+13. **Hand over.** Tell the owner, in a few lines: the level, the protection mode (and the pending command, if any), the answer on merges without them (and the command, if they said yes), the branch, and that the next stage is `/pitwall:discovery`.
 
 ## Output
 
-- The project skeleton from the template, with `.claude/pitwall.json`: `templateVersion`, `processLevel`, `mergeProtection`.
+- The project skeleton from the template, with `.claude/pitwall.json`: `templateVersion`, `processLevel`, `mergeProtection`, `autoMerge`.
 - `docs/IDEA.md`: the problem, who it is for, what is out of scope, why this level.
 - One commit on `main`, pushed and protected when there is a GitHub repository, and the planning branch (`planning.branch`) for stages 1 to 5.
 
