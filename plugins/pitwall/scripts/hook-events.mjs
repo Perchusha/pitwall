@@ -1,12 +1,13 @@
 // The work of pitwall's hooks (T3a), one function per event; hook.mjs calls run() and prints
 // what it returns. The guard's decisions are in hook-guard.mjs.
 //
-// State lives in one folder per session under PITWALL_HOOK_STATE, or the system temp folder:
+// State lives in one folder per session under PITWALL_HOOK_STATE, or the account's own folder in
+// the system temp folder:
 // a file per agent with one byte per tool call (T3a-AC5), and markers for the checks (T3a-AC6).
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { config, ghRunner, parseJson, pluginRoot, pluginVersion, readGate, readReview } from './lib.mjs';
 import { guard, norm } from './hook-guard.mjs';
@@ -18,6 +19,15 @@ function git(args, dir) {
   return { ok: !r.error && r.status === 0, status: r.error ? -1 : r.status, out: (r.stdout ?? '').trim(), err: `${r.stderr ?? ''}${r.error?.message ?? ''}`.trim() };
 }
 
+// The account, so two users of one machine keep apart state folders.
+function account() {
+  try {
+    return safe(userInfo().username);
+  } catch {
+    return safe(process.getuid?.() ?? 'user');
+  }
+}
+
 const safe = (s) => String(s ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
 const lastLine = (text) => String(text).trim().split('\n').pop();
 
@@ -25,7 +35,7 @@ export function run(event, input, root) {
   const cfg = config();
   const settings = parseJson(readFileSync(join(root, '.claude', 'pitwall.json'), 'utf8'));
   if (!settings || typeof settings !== 'object') throw new Error('.claude/pitwall.json is not JSON');
-  const dir = join(process.env.PITWALL_HOOK_STATE || join(tmpdir(), 'pitwall'), safe(input.session_id));
+  const dir = join(process.env.PITWALL_HOOK_STATE || join(tmpdir(), `pitwall-${account()}`), safe(input.session_id));
   mkdirSync(dir, { recursive: true });
   const key = input.agent_id ? `agent-${safe(input.agent_id)}` : 'main';
   const s = { cfg, settings, root, dir, key, input };
@@ -51,6 +61,7 @@ function guardContext({ cfg, settings, root, input }) {
     root,
     home: homedir(),
     pluginRoot,
+    pluginRoots: [process.env.CLAUDE_PLUGIN_ROOT],
     cfg,
     settings,
     cwd: input.cwd || root,
@@ -82,6 +93,8 @@ function preToolUse(s) {
     if (!input.agent_id || !cfg.hooks.implementers.includes(input.agent_type)) return null;
     const check = checkBeforeStop(s, input.agent_type);
     if (check?.block) return deny('gate', check.block);
+    // The sub-agent ends with this handback: a gate that could not run is not run again at its SubagentStop.
+    rmSync(join(s.dir, `${s.key}.dirty`), { force: true });
     return check?.message ? { systemMessage: check.message } : null;
   }
 
@@ -163,7 +176,9 @@ function postToolUse({ cfg, input, root, dir, key }) {
   if (!p.startsWith(`${r}/`) || p.startsWith(`${r}/docs/`) || p.startsWith(`${r}/.git/`)) return null;
   const branch = git(['symbolic-ref', '--short', '-q', 'HEAD'], root).out;
   if (!branch.startsWith('epic/')) return null;
-  writeFileSync(join(dir, `${key}.dirty`), branch);
+  // An implementer answers for its own edits; any other sub-agent's edits are the main conversation's.
+  const owner = input.agent_id && !cfg.hooks.implementers.includes(input.agent_type) ? 'main' : key;
+  writeFileSync(join(dir, `${owner}.dirty`), branch);
   const seconds = cfg.hooks.gateTimeoutSeconds.fast;
   const g = runGate(root, '--fast', seconds);
   const say = (text) => ({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } });
@@ -248,8 +263,9 @@ function currentEpic(root) {
 // the first stage whose docs check does not pass yet. Null once planning is over.
 function planningStage(root, cfg, branch) {
   const plan = cfg.planning.branch;
-  const mainCommits = git(['rev-list', '--count', `refs/heads/${cfg.mergeProtection.branch}`], root).out;
-  if (branch !== plan && mainCommits !== '1') return null;
+  // main with one commit is the skeleton; with none yet (or unreadable), kickoff has not committed it.
+  const count = git(['rev-list', '--count', `refs/heads/${cfg.mergeProtection.branch}`], root);
+  if (branch !== plan && count.ok && Number(count.out) > 1) return null;
   const spikes = existsSync(join(root, 'docs', 'spikes')) && readdirSync(join(root, 'docs', 'spikes')).some((f) => f.endsWith('.md') && !['README.md', 'template.md'].includes(f));
   const stages = ['kickoff', 'discovery', 'decide', ...(spikes ? ['spike'] : []), 'plan', 'plan-review'];
   for (const stage of stages) {

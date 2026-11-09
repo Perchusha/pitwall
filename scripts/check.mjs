@@ -23,7 +23,7 @@
 // the version in .claude-code-version (the one CI installs).
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -1526,7 +1526,8 @@ step('hooks (recorded payloads)', (report) => {
     expect('main-pre-tool-use-read', 'Read docs/IDEA.md', { input: { tool_input: { file_path: join(project, 'docs', 'IDEA.md') } } }, 'allow');
     expect('main-pre-tool-use-read', 'Grep through .env files', { tool: 'Grep', input: { tool_input: { pattern: 'KEY', glob: '**/.env*' } } }, 'deny:secrets');
     expect('main-pre-tool-use-write', 'Write a key into src/a.js', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), content: `const key = '${AWS}';` } } }, 'deny:secrets');
-    expect('main-pre-tool-use-write', 'Write a private key block', { input: { tool_input: { file_path: join(project, 'test', 'k.txt'), content: `-----BEGIN RSA ${'PRIVATE'} KEY-----\nx` } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write a private key block', { input: { tool_input: { file_path: join(project, 'test', 'k.txt'), content: `-----BEGIN RSA ${'PRIVATE'} KEY-----\n${'MIIEpAIBAAKCAQEA'.repeat(4)}\n` } } }, 'deny:secrets');
+    expect('main-pre-tool-use-write', 'Write code that looks for a key header', { input: { tool_input: { file_path: join(project, 'src', 'pem.js'), content: `export const isKey = (s) => s.startsWith('-----BEGIN ${'PRIVATE'} KEY-----');` } } }, 'allow');
     expect('main-pre-tool-use-edit', 'Edit a token into a file', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), old_string: 'x', new_string: `ghp_${'a1'.repeat(18)}` } } }, 'deny:secrets');
     expect('main-pre-tool-use-write', 'Write .env.example', { input: { tool_input: { file_path: join(project, '.env.example'), content: 'API_KEY=\n' } } }, 'allow');
     expect('main-pre-tool-use-read', 'Grep through .env.example files', { tool: 'Grep', input: { tool_input: { pattern: 'KEY', glob: '**/.env.example' } } }, 'allow');
@@ -1535,6 +1536,22 @@ step('hooks (recorded payloads)', (report) => {
     bash('test -f .env && echo there', 'allow');
     bash('find . -name "*.pem"', 'allow');
     bash('echo SECRET=1 > .env', 'deny:secrets');
+    bash('git commit -m "feat: load settings from config/.env"', 'allow');
+    bash('git commit -m "feat: read keys from certs/server.key"', 'allow');
+    // A path with a space in it is still a path.
+    bash(`rm "${fwd(project)}/.claude/pitwall.json"`, 'deny:switch');
+    bash('cat "./my notes/.env"', 'deny:secrets');
+    bash('git log --grep=".env"', 'allow');
+    bash("sed -n '/[z-a]/p' notes.txt", 'allow');
+    bash('grep -E "[\\w-.]+" notes.txt', 'allow');
+    // A recursive grep reads ignored files: with a .env in the project, it is refused unless it leaves .env out.
+    writeFileSync(join(project, '.env'), 'DATABASE_URL=postgres://x\n');
+    bash('grep -rn DATABASE_URL .', 'deny:secrets');
+    bash('grep -r DATABASE_URL', 'deny:secrets');
+    bash('grep -rn --exclude=.env DATABASE_URL .', 'allow');
+    bash('grep -rn DATABASE_URL docs', 'allow');
+    bash('git grep DATABASE_URL', 'allow');
+    rmSync(join(project, '.env'));
 
     // (b) Files git ignores.
     expect('main-pre-tool-use-write', 'Write dist/a.js', { input: { tool_input: { file_path: join(project, 'dist', 'a.js'), content: 'x' } } }, 'deny:ignored');
@@ -1563,6 +1580,7 @@ step('hooks (recorded payloads)', (report) => {
     bash('git push origin "$(git branch --show-current)"', 'deny:push');
     bash('git checkout -b epic/E9-x && git push -u origin HEAD', 'allow');
     bash('git switch -c epic/E9-y && git push -u origin HEAD', 'allow');
+    bash('git switch --create epic/E9-z && git push -u origin HEAD', 'allow');
     // Git Bash spells the project folder /c/...; on Linux that folder does not exist, and a branch git cannot read is refused too.
     const bashPath = fwd(project).replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
     bash(`cd ${bashPath} && git push`, 'deny:push');
@@ -1597,6 +1615,7 @@ step('hooks (recorded payloads)', (report) => {
     bash('rm -rf node_modules dist', 'allow');
     bash('git clean -fdx', 'deny:switch');
     bash('git clean -fd', 'allow');
+    bash('git clean -n -x', 'allow');
     bash('node -e "require(\'fs\').writeFileSync(\'.claude/pitwall.json\', \'{}\')"', 'deny:switch');
     bash('claude plugin disable pitwall@pitwall', 'deny:switch');
     bash('claude plugin uninstall pitwall@pitwall --scope project', 'deny:switch');
@@ -1661,6 +1680,11 @@ step('hooks (recorded payloads)', (report) => {
     reviewer('a line break', 'Bash', { command: `${reviewStatus}\ngit push` }, 'deny:agent');
     reviewer('$(', 'Bash', { command: `${reviewStatus} --description "$(git log -1)"` }, 'deny:agent');
     reviewer('a redirect', 'Bash', { command: `${reviewStatus} > out.txt` }, 'deny:agent');
+    // Claude Code spells the plugin's folder by its link; the script finds it with the link resolved.
+    const link = join(dir, 'plugin-link');
+    symlinkSync(plugin, link, 'junction');
+    expect('plan-reviewer-pre-tool-use-read', 'plan reviewer: review-status.mjs through the plugin folder as Claude Code spells it', { tool: 'Bash', env: { CLAUDE_PLUGIN_ROOT: link }, input: { tool_input: { command: `node "${fwd(link)}/scripts/review-status.mjs" --review plan --state success` } } }, 'allow');
+    expect('main-pre-tool-use-write', 'Write into the plugin through its link', { env: { CLAUDE_PLUGIN_ROOT: link }, input: { tool_input: { file_path: join(link, 'scripts', 'hook.mjs'), content: '' } } }, 'deny:switch');
     reviewer('Write docs/PLAN-REVIEW.md', 'Write', { file_path: join(project, 'docs', 'PLAN-REVIEW.md'), content: '# Plan review\n' }, 'allow');
     reviewer('Write docs/SPEC.md', 'Write', { file_path: join(project, 'docs', 'SPEC.md'), content: 'x' }, 'deny:agent');
     reviewer('Edit docs/EPICS.md', 'Edit', { file_path: join(project, 'docs', 'EPICS.md'), old_string: 'a', new_string: 'b' }, 'deny:agent');
@@ -1757,7 +1781,7 @@ step('hooks (recorded payloads)', (report) => {
     const helper = payloads['other-plugin-post-tool-use-write'].input;
     hook('other-plugin-post-tool-use-write', { session: 'gate-other', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
     for (const label of ['other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop']) if (verdict(hook(label, { session: 'gate-other' })) !== 'allow') report(`${label}: another plugin's agent must not wait for the gate`);
-    if (!existsSync(join(state, 'gate-other', `agent-${helper.agent_id}.dirty`))) report('an edit by another plugin\'s agent must still be marked for the gate');
+    if (verdict(hook('main-stop', { session: 'gate-other' })) !== 'block') report(`an edit by another plugin's agent (${helper.agent_type}) must be checked when the main conversation stops`);
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
@@ -1773,6 +1797,19 @@ step('hooks (recorded payloads)', (report) => {
     if (brief.out?.systemMessage) report(`a passing self-test must not warn the owner: ${brief.out.systemMessage}`);
     if (text.length > cfg.hooks.briefMaxChars) report(`the brief is ${text.length} characters, over hooks.briefMaxChars`);
     if (!(hook('main-session-start').out?.hookSpecificOutput?.additionalContext ?? '').includes('unattended')) report('the brief of an unattended session does not say so');
+    // A file in a submodule: git check-ignore does not answer for it, and nothing refuses the write.
+    const subSrc = join(dir, 'sub-src');
+    mkdirSync(subSrc);
+    gitIn(subSrc, 'init', '-q', '-b', 'main');
+    gitIn(subSrc, 'commit', '-q', '--allow-empty', '-m', 'sub');
+    gitIn(project, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', fwd(subSrc), 'vendor/sub');
+    expect('main-pre-tool-use-write', 'Write into a submodule', { input: { tool_input: { file_path: join(project, 'vendor', 'sub', 'x.js'), content: 'x' } } }, 'allow');
+    // Before kickoff's first commit, main has no commits: the brief still gives the planning stage.
+    const unborn = join(dir, 'unborn');
+    if (layOut(unborn).status !== 0) throw new Error('layout failed');
+    gitIn(unborn, 'init', '-q', '-b', 'main');
+    const early = hook('main-session-start', { projectDir: unborn }).out?.hookSpecificOutput?.additionalContext ?? '';
+    if (!/Stage: planning/.test(early)) report(`the brief before the skeleton's commit must give the planning stage:\n${early}`);
     // While the plan is made, the brief gives the stage, not E0.
     const planning = hook('main-session-start', { projectDir: fresh }).out?.hookSpecificOutput?.additionalContext ?? '';
     if (!/Stage: planning on plan\/initial; the next stage is kickoff/.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage:\n${planning}`);

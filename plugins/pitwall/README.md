@@ -16,7 +16,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 ## Requirements
 
 - Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of `config/defaults.json`: the plugin's scripts (layout, docs check, merge protection) and its hooks run on it. Your project's own stack can be anything.
-- bash (Git Bash on Windows): the gate contract, `scripts/gate`, is a bash script, and the session brief checks for Node through it.
+- bash (Git Bash on Windows): the gate contract, `scripts/gate`, is a bash script, and every hook starts through bash, which checks for a pitwall project and for Node before anything else.
 - The GitHub CLI, `gh`, signed in as an admin of the repository, for merge protection (the commands it hands over were tested with gh 2.98). Without it, kickoff hands you the commands to run.
 
 ## Stages

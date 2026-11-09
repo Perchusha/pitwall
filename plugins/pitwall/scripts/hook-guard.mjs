@@ -51,7 +51,13 @@ function globRegex(path) {
       }
     } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
   }
-  return new RegExp(`^${re}$`, WIN ? 'i' : '');
+  // A "[" that is no glob, such as a reversed range in a regex ("[z-a]", "[\w-.]"): the word as it is.
+  try {
+    return new RegExp(`^${re}$`, WIN ? 'i' : '');
+  } catch {
+    const literal = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${literal}$`, WIN ? 'i' : '');
+  }
 }
 
 // Does a word name this file: the same path, or a glob that matches it?
@@ -302,12 +308,23 @@ function inlineCode(argv) {
 }
 
 // The words of a command that may be paths, and the parts of "--flag=value".
+// A message, a search or a file pattern is text, not a path: the value of these flags, and a word with a space in it.
+const TEXT_FLAGS = new Set(['-m', '--message', '--grep', '--title', '--body', '--subject', '--description', '--notes', '-e', '--regexp', '--exclude', '--exclude-dir', '--include', '--glob']);
 function pathWords(argv) {
   const words = [];
-  for (const a of argv.slice(1)) {
+  const args = argv.slice(1);
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (TEXT_FLAGS.has(a)) {
+      i += 1;
+      continue;
+    }
+    const eq = /^(-[^=]*)=(.*)$/s.exec(a);
+    if (eq && TEXT_FLAGS.has(eq[1])) continue;
+    // A word with a space is a path only when it starts like one ("C:/Users/A B/x", "./a b"), not like a sentence.
+    if (/\s/.test(a) && !/^([A-Za-z]:|\/|~|\.{1,2}[\\/])/.test(a)) continue;
     words.push(a);
-    const eq = /^-[^=]*=(.+)$/.exec(a);
-    if (eq) words.push(eq[1]);
+    if (eq && eq[2]) words.push(eq[2]);
   }
   return words;
 }
@@ -355,7 +372,9 @@ export function guard(call, ctx) {
   if (h.handback.includes(tool)) return null;
   const home = native(ctx.home);
   const root = norm(ctx.root);
-  const plugin = norm(ctx.pluginRoot);
+  // The plugin's folder as this script finds it (links resolved) and as Claude Code spells it (CLAUDE_PLUGIN_ROOT).
+  const plugins = [...new Set([ctx.pluginRoot, ...(ctx.pluginRoots ?? [])].filter(Boolean).map((d) => norm(d)))];
+  const inPlugin = (p) => plugins.some((d) => inside(p, d));
   const cwd = ctx.cwd ?? ctx.root;
   const protectedFiles = [
     `${root}/.claude/pitwall.json`,
@@ -384,7 +403,7 @@ export function guard(call, ctx) {
       const text = String(input.command ?? '');
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break.`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
-      const scripts = policy.run.map((s) => `${plugin}/scripts/${s}`);
+      const scripts = plugins.flatMap((d) => policy.run.map((s) => `${d}/scripts/${s}`));
       const ok = cmds.length === 1 && program(cmds[0].argv[0]) === 'node' && scripts.includes(norm(cmds[0].argv[1] ?? '', cmds[0].cwd, home));
       if (!ok) return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments.`);
     }
@@ -402,13 +421,14 @@ export function guard(call, ctx) {
     }
     if (target !== null) {
       if (written.some(keyIn)) return refuse('secrets', `what this writes to ${target} looks like a key or a token. Keep secrets out of files the agents write; tests make their keys at run time.`);
-      if (protectedFiles.includes(p) || inside(p, plugin)) return refuse('switch', `${target} is one of the switches of pitwall's guards: only the owner, or a pitwall script, changes it.`);
+      if (protectedFiles.includes(p) || inPlugin(p)) return refuse('switch', `${target} is one of the switches of pitwall's guards: only the owner, or a pitwall script, changes it.`);
       if (inside(p, root) && !inside(p, `${root}/.git`)) {
         // git gets the path in its own case: an ignore pattern can be case-sensitive.
         const rel = native(String(target), cwd, home).slice(root.length + 1);
         const r = ctx.git(['check-ignore', '-q', '--', rel], ctx.root);
         if (r.status === 0) return refuse('ignored', `git ignores ${target}: it is generated or stays on this machine. Change the source it comes from; a file the owner wants changed by hand, the owner changes.`);
-        if (r.status !== 1 && !/not a git repository/i.test(r.err)) return refuse('broken', `git check-ignore could not read ${target}: ${r.err || `exit ${r.status}`}.`);
+        // A path in a submodule or outside any repository: git ignores nothing there for this project.
+        if (r.status !== 1 && !/not a git repository|submodule/i.test(r.err)) return refuse('broken', `git check-ignore could not read ${target}: ${r.err || `exit ${r.status}`}.`);
       }
     }
     return null;
@@ -454,11 +474,16 @@ export function guard(call, ctx) {
     if (code !== null && code.split(/[\s'"`(),;=:+]+/).some((piece) => isSecretName(basename(piece.split('\\').join('/'))))) {
       return refuse('secrets', 'this inline script names a secret file: pitwall keeps agents out of it.');
     }
+    // A recursive grep reads every file under its paths, ignored ones too, and prints what matches.
+    if (['grep', 'egrep', 'fgrep'].includes(p) && argv.some((a) => /^(--recursive|--dereference-recursive|-[a-zA-Z]*[rR][a-zA-Z]*)$/.test(a))) {
+      const leak = secretFilesSearched(argv, dir, home, ctx, isSecretName);
+      if (leak) return refuse('secrets', `grep -r reads ${leak}, a secret file: search with the Grep tool or git grep, which skip it, or add --exclude for it.`);
+    }
 
     // (d) The guards' switch: the settings, the plugin's folder, the plugin's enablement.
     const switchReason = 'is one of the switches of pitwall\'s guards: only the owner, or a pitwall script, changes it.';
     for (const t of redirects) {
-      if (protectedFiles.some((f) => names(t, dir, home, f)) || inside(norm(t, dir, home), plugin)) return refuse('switch', `${t} ${switchReason}`);
+      if (protectedFiles.some((f) => names(t, dir, home, f)) || inPlugin(norm(t, dir, home))) return refuse('switch', `${t} ${switchReason}`);
     }
     const operands = words.filter((w) => !w.startsWith('-'));
     // What a command writes: a copier its destination, any other writer every path it names.
@@ -467,14 +492,14 @@ export function guard(call, ctx) {
       const named = protectedFiles.some((f) => names(w, dir, home, f));
       if (named && !readOnly && (!COPIERS.has(p) || writes(w))) return refuse('switch', `${w} ${switchReason}`);
       const wp = norm(w, dir, home);
-      if (writes(w) && inside(wp, plugin)) return refuse('switch', `${w} is inside the pitwall plugin, one of the switches of its guards.`);
-      if (DELETERS.has(p) && [...protectedFiles, plugin].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
+      if (writes(w) && inPlugin(wp)) return refuse('switch', `${w} is inside the pitwall plugin, one of the switches of its guards.`);
+      if (DELETERS.has(p) && [...protectedFiles, ...plugins].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
     }
     const codePaths = code === null ? '' : code.split('\\').join('/');
-    if (code !== null && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(codePaths) || (WIN ? codePaths.toLowerCase() : codePaths).includes(plugin)) && WRITES_CODE.test(code)) {
+    if (code !== null && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(codePaths) || plugins.some((d) => (WIN ? codePaths.toLowerCase() : codePaths).includes(d))) && WRITES_CODE.test(code)) {
       return refuse('switch', 'this inline script writes one of the switches of pitwall\'s guards.');
     }
-    if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
+    if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a)) && !git.args.some((a) => a === '--dry-run' || /^-[a-zA-Z]*n/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
     if (p === 'claude' && /^plugins?$/.test(argv[1] ?? '') && (/^(disable|uninstall|remove|rm)$/.test(argv[2] ?? '') || (argv[2] === 'marketplace' && /^(remove|rm)$/.test(argv[3] ?? '')))) {
       return refuse('switch', `claude ${argv.slice(1, 4).join(' ')} turns pitwall's guards off: only the owner does that.`);
     }
@@ -485,7 +510,7 @@ export function guard(call, ctx) {
       if (reason) return refuse('push', reason);
     }
     if (git && (git.sub === 'checkout' || git.sub === 'switch')) {
-      const flag = git.args.findIndex((a) => /^-[bBcC]$/.test(a));
+      const flag = git.args.findIndex((a) => /^(-[bBcC]|--create|--force-create|--orphan)$/.test(a));
       if (flag >= 0 && git.args[flag + 1]) switchedTo = git.args[flag + 1];
       else {
         const name = git.args.find((a) => !a.startsWith('-'));
@@ -525,6 +550,40 @@ export function guard(call, ctx) {
         return refuse('merge', `merge protection is ${mode ?? 'not recorded'}: nothing merges until protect.mjs has set it up (pitwall ADR-0002).`);
       }
     }
+  }
+  return null;
+}
+
+// The first secret file a recursive grep reads, as the project names it, or null: the project's
+// secret files (ignored or tracked) under the paths it searches that no --exclude leaves out.
+function secretFilesSearched(argv, dir, home, ctx, isSecretName) {
+  const excludes = [];
+  const excludeDirs = [];
+  const operands = [];
+  let patternGiven = false;
+  for (let i = 1; i < argv.length; i += 1) {
+    const a = argv[i];
+    const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a, undefined];
+    if (flag === '--exclude' || flag === '--exclude-dir') {
+      (flag === '--exclude' ? excludes : excludeDirs).push(inline ?? argv[(i += 1)] ?? '');
+    } else if (['-e', '--regexp', '-f', '--file'].includes(flag)) {
+      patternGiven = true;
+      if (inline === undefined) i += 1;
+    } else if (/^-[a-zA-Z]*[efABCm]$/.test(a)) i += 1;
+    else if (!a.startsWith('-')) operands.push(a);
+  }
+  const paths = (patternGiven ? operands : operands.slice(1)).map((x) => norm(x, dir, home));
+  if (paths.length === 0) paths.push(norm(dir));
+  const files = ctx.cfg.hooks.secrets.files;
+  const ignored = ctx.git(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory'], ctx.root);
+  const tracked = ctx.git(['ls-files', '--', ...files.map((g) => `:(glob)**/${g}`)], ctx.root);
+  const found = [...ignored.out.split('\n'), ...tracked.out.split('\n')].map((f) => f.trim()).filter((f) => f && isSecretName(basename(f)));
+  for (const f of found) {
+    const p = norm(f, ctx.root);
+    if (!paths.some((d) => inside(p, d))) continue;
+    if (excludes.some((g) => globRegex(g).test(basename(f)))) continue;
+    if (excludeDirs.some((g) => f.split('/').slice(0, -1).some((seg) => globRegex(g).test(seg)))) continue;
+    return f;
   }
   return null;
 }
