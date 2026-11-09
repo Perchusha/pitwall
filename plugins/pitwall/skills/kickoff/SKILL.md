@@ -49,7 +49,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 10. **Merge protection.** Always run `node "${CLAUDE_PLUGIN_ROOT}/scripts/protect.mjs"`, even when there is no repository yet: it checks first that it may, then protects `main`, records why it cannot, or says what to do. Its last line is `RESULT: <mode>`. Relay what it printed in a few lines, without restating the rules it applies:
     - `branch-protection`: done;
     - `local-hook`: tell the owner, as it says, that nothing blocks a merge there yet except the review flow;
-    - `pending` (exit 3): show the HANDOFF block verbatim; its `run:` lines are for the owner, and its `then:` line records the result once they are done.
+    - `pending` (exit 3): show the HANDOFF block verbatim; the commands under "Run this yourself" are for the owner, and the one under "Then run this to record the result" records it once they are done.
 11. **The planning branch.** Create the branch named in `planning.branch` with `git switch -c <branch>`. If `.claude/pitwall.json` changed in step 10, commit it there: `git commit -am "chore: record merge protection"`. With a remote, `git push -u origin <branch>`.
 12. **Hand over.** Tell the owner, in a few lines: the level, the protection mode (and the pending command, if any), the branch, and that the next stage is `/pitwall:discovery`.
 

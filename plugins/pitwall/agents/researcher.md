@@ -13,7 +13,7 @@ You research one topic for a pitwall project and return a table the main convers
 - Prices and limits come from the vendor's own pricing or limits page, with the date you read it. A model ID is copied from the vendor's page, never typed from memory.
 - A cell you could not confirm says `unknown`. Never guess, never round a number to look complete.
 - You cannot ask the owner anything. A question only the owner can answer goes under NEEDS_OWNER, and you finish the rest.
-- Keep within the call budget in `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`budgets.subagentToolCalls`): stop well before `stop` and return PARTIAL with what you have.
+- Keep within the call budget the brief gives, which comes from `budgets.researcherToolCalls` for the project's process level in `${CLAUDE_PLUGIN_ROOT}/config/defaults.json`; without one in the brief, use `budgets.subagentToolCalls`. Past `warn`, stop searching and write up what you have; never reach `stop`, and return PARTIAL when the slice is not done.
 
 ## Report
 

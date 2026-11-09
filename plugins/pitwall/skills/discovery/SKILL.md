@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 Turns the confirmed idea into `docs/DISCOVERY.md`: who it is for and what they do with it, what already exists, what the owner will and will not accept, and which technical assumptions could sink the project. Research runs in parallel `researcher` agents; constraints come from the owner, one at a time.
 
-Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `planning.branch`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
+Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `planning.branch`, `budgets.researcherToolCalls`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
 
 ## Rules
 
@@ -18,6 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `p
 - One question per message, then wait. Never answer for the owner, and never fill a constraint from a guess.
 - A fact in the document comes from a page that was opened or from the owner. A search snippet is not a source.
 - Keep the template's headings and table columns exactly as they are: the docs check reads them.
+- Write plain Markdown the docs check reads as GitHub shows it: headings and table rows at the first column, a blank line after every table, one table in each section that has one; no HTML or comments, no block quotes, no setext headings, no invisible characters. The ID, risk and date cells hold plain text: no links, HTML tags, strikethrough, character references or backslash escapes (a "<" before a number, one "~" in a path and a "\" in a Windows path are fine).
 
 ## Steps
 
@@ -34,7 +35,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `p
 
 ## Researcher brief
 
-Each brief holds, in this order: the slice; the idea and the user in two sentences; the scenarios; the header row of the Analogues table, copied from `docs/DISCOVERY.md`; how many rows; and the reminder that every row links a page the agent opened, and that unknown cells say `unknown`.
+Each brief holds, in this order: the slice; the idea and the user in two sentences; the scenarios; the header row of the Analogues table, copied from `docs/DISCOVERY.md`; how many rows; the call budget for the process level from `budgets.researcherToolCalls` (warn and stop); and the reminder that every row links a page the agent opened, and that unknown cells say `unknown`.
 
 ## Output
 

@@ -7,16 +7,19 @@
 // repository, the branch is on GitHub, and the account is admin. The branch's
 // protection summary, which any reader can see, shows when the job is already
 // done. For an admin, a read-only probe of the protection API picks the mode:
-//   available (public, or private on a paid plan) -> branch protection that
-//     requires gate (GitHub Actions) and ai-review, admins included;
-//   "Upgrade to GitHub Pro" (private on GitHub Free) -> local-hook: recorded,
+//   available (public, or private on a paid plan: the probe reads protection or
+//     answers 404) -> branch protection that requires gate (GitHub Actions) and
+//     ai-review, admins included, linear history not required (ADR-0008);
+//   403 "Upgrade to GitHub Pro" (private on GitHub Free) -> local-hook: recorded,
 //     the hook itself ships with the epic loop.
-// A failed precondition or a refused write prints a HANDOFF block: "run:"
-// lines are ready commands for the owner, the same in bash and PowerShell
-// (L-6). It records "pending", but keeps a recorded mode this run could not check:
-// a recorded branch-protection goes once the branch's protection is read and falls
-// short, a recorded local-hook once the repository reads public or the branch summary
-// or the probe shows branch protection is available.
+// Only the probe and a public visibility tell that branch protection is available;
+// a branch summary that shows protection does not (T2-AC6).
+// A failed precondition or a refused write prints a HANDOFF block: each command
+// for the owner stands on its own line under a plain label, the same in bash and
+// PowerShell (L-6). It records "pending", but keeps a recorded mode this run could
+// not check: a recorded branch-protection goes once the branch's protection is read
+// and falls short, a recorded local-hook once the repository reads public or the
+// probe shows branch protection is available.
 // --dry-run makes the same reads, prints the writes and writes nothing, not
 // even .claude/pitwall.json.
 //
@@ -24,11 +27,10 @@
 // to the owner, 2 usage. Set PITWALL_GH to a JSON array to run another gh
 // binary (the checks use a fake one).
 
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, parseArgs, requireNode, writeJson } from './lib.mjs';
+import { config, ghRunner, parseArgs, parseJson as parse, printHandoff, requireNode, writeJson } from './lib.mjs';
 
 requireNode();
 const args = parseArgs(process.argv.slice(2), { project: 'value', repo: 'value', 'dry-run': 'switch' }, 'node protect.mjs [--project <dir>] [--repo <owner/name>] [--dry-run]');
@@ -39,21 +41,10 @@ const mp = cfg.mergeProtection;
 const branch = mp.branch;
 const gateContext = cfg.review.gateContext;
 const reviewContext = cfg.review.statusContext;
-const ghCmd = process.env.PITWALL_GH ? JSON.parse(process.env.PITWALL_GH) : ['gh'];
 const settingsFile = join(project, '.claude', 'pitwall.json');
 const rerun = `node "${fileURLToPath(import.meta.url)}" --project "${project}"${args.repo ? ` --repo ${args.repo}` : ''}`;
 
-function gh(ghArgs, input) {
-  const r = spawnSync(ghCmd[0], [...ghCmd.slice(1), ...ghArgs], { cwd: project, input, encoding: 'utf8' });
-  return { ok: !r.error && r.status === 0, out: r.stdout ?? '', err: `${r.stderr ?? ''}${r.error?.message ?? ''}` };
-}
-const parse = (text) => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-};
+const gh = ghRunner(project, 'protect');
 const log = (msg) => console.log(`protect: ${msg}`);
 
 function body() {
@@ -68,6 +59,8 @@ function body() {
     enforce_admins: mp.enforceAdmins,
     required_pull_request_reviews: null,
     restrictions: null,
+    // The plan PR merges with a merge commit (ADR-0008), which linear history would refuse.
+    required_linear_history: false,
   };
 }
 
@@ -81,13 +74,16 @@ function putCommand(repo) {
     `enforce_admins=${b.enforce_admins}`,
     'required_pull_request_reviews=null',
     'restrictions=null',
+    `required_linear_history=${b.required_linear_history}`,
   ];
   return `gh api -X PUT repos/${repo}/branches/${branch}/protection ${fields.map((f) => `-F "${f}"`).join(' ')}`;
 }
 
 // What this run has learned, for record(): the branch's protection was read and falls short
 // (a recorded branch-protection no longer holds), or branch protection is available (a
-// recorded local-hook no longer holds).
+// recorded local-hook no longer holds). Available means public, or a probe that reads
+// protection or answers 404: a protected branch summary alone proves nothing, since a
+// repository can keep its protection after a downgrade to GitHub Free.
 const known = { branchRead: false, available: false };
 
 function record(mode) {
@@ -114,9 +110,7 @@ function done(mode) {
 // steps: { run } is a ready command, { note } is plain text for the owner.
 function handoff(reason, steps) {
   record('pending');
-  console.log(`HANDOFF: ${reason}`);
-  for (const s of steps) console.log(s.run ? `  run: ${s.run}` : `  note: ${s.note}`);
-  console.log(`  then: ${rerun}`);
+  printHandoff(reason, steps, rerun);
   console.log(`RESULT: pending${dry ? ' (dry run, nothing written)' : ''}`);
   process.exit(3);
 }
@@ -127,7 +121,9 @@ function satisfies(p) {
   const gate = checks.find((c) => c.context === gateContext);
   const review = checks.find((c) => c.context === reviewContext);
   const admins = p?.enforce_admins ? p.enforce_admins.enabled === true : p?.required_status_checks?.enforcement_level === 'everyone';
-  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && admins);
+  // Only the full form shows linear history; required, it would refuse the plan's merge commit (ADR-0008).
+  const linear = p?.required_linear_history?.enabled === true;
+  return Boolean(gate && gate.app_id === mp.githubActionsAppId && review && (review.app_id == null || review.app_id === -1) && admins && !linear);
 }
 
 // 1. May we? gh, a signed-in account, a repository, the branch on GitHub, admin rights.
@@ -154,17 +150,17 @@ log(`repository ${name} (${String(repo.visibility).toLowerCase()}), your permiss
 const onGitHub = gh(['api', `repos/${name}/branches/${branch}`]);
 if (!onGitHub.ok) handoff(`${branch} is not on GitHub yet.`, [{ run: `git push -u origin ${branch}` }]);
 const summary = parse(onGitHub.out);
-if (summary?.protected && satisfies(summary.protection)) {
+// The summary cannot show linear history, so an admin, who can read the full form, reads it below.
+if (summary?.protected && satisfies(summary.protection) && repo.viewerPermission !== 'ADMIN') {
   log(`${branch} is already protected with ${gateContext} and ${reviewContext}, admins included`);
   done('branch-protection');
 }
-// From here on the job is not done. The branch's protection counts as read if the summary
-// parsed, and a summary that shows any protection proves branch protection is available.
-known.branchRead = summary !== null;
-if (summary?.protected) known.available = true;
+// From here on the job is not done, or an admin reads the full form. The branch's protection
+// counts as read, and falling short, if the summary parsed and does not satisfy.
+known.branchRead = summary !== null && !(summary?.protected && satisfies(summary.protection));
 if (repo.viewerPermission !== 'ADMIN') {
   const steps = [{ note: 'an admin runs' }, { run: putCommand(name) }];
-  if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the then: line below, run by the admin, records it' });
+  if (String(repo.visibility).toUpperCase() !== 'PUBLIC') steps.push({ note: 'on GitHub Free that write fails with "Upgrade to GitHub Pro": the mode is then local-hook, and the last command below, run by the admin, records it' });
   handoff(`branch protection needs an admin of ${name}, and this account is ${repo.viewerPermission}.`, steps);
 }
 

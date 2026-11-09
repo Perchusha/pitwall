@@ -10,11 +10,14 @@
 // Cyrillic, and no skill or agent hardcodes a model ID. Characters these
 // checks look for are built from code points (L-3).
 //
-// The plugin's own scripts (T1) run here as a project gets them: layout.mjs
+// The plugin's own scripts run here as a project gets them: layout.mjs
 // lays out scratch projects, docs-check.mjs must pass on them and fail on
-// broken copies (T1-AC5), and protect.mjs runs every branch against a fake
-// gh (T1-AC2). The headless skill runs (scripts/e2e.mjs) are not here: they
-// need a signed-in CLI and spend the subscription (T1-AC7).
+// broken copies (T1-AC5), its spike, plan and plan-review stages too, the spike
+// one on real git history (T2-AC1, T2-AC3, T2-AC4), and protect.mjs,
+// review-status.mjs and merge.mjs run every branch against the fake gh in
+// scripts/fake-gh.mjs (T1-AC2, T2-AC5, T2-AC6). The headless skill runs
+// (scripts/e2e.mjs) are not here: they need a signed-in CLI and spend the
+// subscription (T1-AC7, T2-AC7).
 //
 // Needs Node 22, git, bash and the Claude Code CLI (`claude`) on the PATH, at least
 // the version in .claude-code-version (the one CI installs).
@@ -23,7 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'plugins', 'pitwall');
@@ -196,6 +199,7 @@ step('template', (report) => {
     'docs/epics/E0-skeleton.md',
     'docs/adr/0000-template.md',
     'docs/spikes/README.md',
+    'docs/spikes/template.md',
     'docs/PLAN-REVIEW.md',
     'docs/RISKS.md',
     'docs/BUGS.md',
@@ -579,57 +583,698 @@ step('docs check', (report) => {
   if (noRoot.status !== 2 || /at .+\.mjs/.test(noRoot.stderr)) report(`a missing --root: exit ${noRoot.status}, expected 2 without a stack trace\n${noRoot.stderr}`);
 });
 
-// 6f. T1-AC2: protect.mjs against a fake gh. It checks before it writes (L-5), writes the
-// protection ADR-0005 asks for, hands over instead of failing, and a dry run writes nothing.
+// The fake gh (scripts/fake-gh.mjs) the protection, review status and merge steps run against.
+const fakeGh = join(root, 'scripts', 'fake-gh.mjs');
+// Runs a plugin script against the fake gh in a project folder, and returns what it did.
+function withFakeGh(script, project, scenario, args = [], extraEnv = {}) {
+  const logFile = join(project, '..', `${project.split(/[\\/]/).pop()}-gh.log`);
+  writeFileSync(logFile, '');
+  const env = { ...process.env, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), FAKE_GH: JSON.stringify(scenario), FAKE_GH_LOG: logFile, FAKE_GH_STATE: join(project, '..', `${project.split(/[\\/]/).pop()}-gh.json`), PITWALL_POLL_MS: '1', ...extraEnv };
+  const r = runScript(script, args, { env, cwd: project });
+  const calls = readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return { r, calls, state: existsSync(env.FAKE_GH_STATE) ? JSON.parse(readFileSync(env.FAKE_GH_STATE, 'utf8')) : {} };
+}
+// The commands a HANDOFF block hands the owner: the lines under a label, indented by four spaces.
+// Only lines under one of the two labels count, so a report indented the same way is not read as a command.
+const handedCommands = (stdout) => {
+  const out = [];
+  let under = false;
+  for (const line of stdout.split('\n')) {
+    if (/^ {2}(Run this yourself, in bash or PowerShell|Then run this to record the result):$/.test(line)) under = true;
+    else if (under && /^ {4}\S/.test(line)) out.push(line.slice(4));
+    else under = false;
+  }
+  return out;
+};
+// Every command the owner is told to run works unchanged in bash and PowerShell: no pipes, redirects or placeholders (L-6).
+function checkHandoff(stdout, fail) {
+  const commands = handedCommands(stdout);
+  for (const c of commands) if (/[<>|]|--input -/.test(c)) fail(`a handed-over command would not run as written in both shells (L-6): ${c}`);
+  if (stdout.includes('HANDOFF') && commands.length === 0) fail('a handoff without a ready command');
+  if (/^ {2}(run|then|note): /m.test(stdout)) fail('a handoff still uses the old "run:" lines (T2-AC6)');
+  return commands;
+}
+
+// Filled-in documents for stages 4 and 5, as plan and the plan reviewer would leave them at the lite level.
+function fillPlan(project) {
+  const put = (relPath, text) => writeFileSync(join(project, relPath), text);
+  const edit = (relPath, fn) => put(relPath, fn(readFileSync(join(project, relPath), 'utf8')));
+  edit('docs/SPEC.md', (t) =>
+    t
+      .replace('## Overview\n', '## Overview\n\nA tray app that reminds one person to stand up.\n')
+      .replace('## Scenarios\n', '## Scenarios\n\n- A reminder after 45 minutes of active use.\n')
+      .replace('## Architecture\n', '## Architecture\n\nOne Tauri process (ADR-0001).\n')
+      .replace('## Data model\n', '## Data model\n\nA local settings file.\n')
+      .replace(/(## Non-functional requirements\n\n.*\n)/, '$1\n- Security and secrets: none kept.\n')
+      .replace(/(## Launch\n\n.*\n)/, '$1\n- App stores: none, GitHub releases (confirmed 2026-11-08).\n'),
+  );
+  put(
+    'docs/EPICS.md',
+    [
+      '# Epics', '', 'The plan.', '', '| Epic | Goal | Risk | Depends on | Status |', '| --- | --- | --- | --- | --- |',
+      '| [E0](epics/E0-skeleton.md) | Walking skeleton | normal | decisions in `adr/` | planned |',
+      '| [E1](epics/E1-reminder.md) | The reminder | normal | E0 | planned |',
+      '| [E2](epics/E2-release.md) | A release on GitHub | low | E1 | planned |', '',
+    ].join('\n'),
+  );
+  edit('docs/epics/E0-skeleton.md', (t) => t.replace('ADR: (the stack ADRs)', 'ADR: ADR-0001, ADR-0002, ADR-0003'));
+  const epic = (id, title, goal, deps, risk, adr, acs) =>
+    [`# ${id} - ${title}`, '', `Goal: ${goal}`, `Depends on: ${deps}`, `Risk class: ${risk}`, `ADR: ${adr}`, '', '## Acceptance criteria', '', ...acs.map((a, i) => `- [ ] ${id}-AC${i + 1}: ${a}`), '', '## Out of scope', '', 'Statistics.', '', '## Open questions', '', 'None.', ''].join('\n');
+  put('docs/epics/E1-reminder.md', epic('E1', 'The reminder', 'a reminder every 45 minutes of active use.', 'E0', 'normal', 'ADR-0001', ['A reminder shows after 45 minutes of active use, also over a full-screen app (A-1).', 'Snooze delays it by 10 minutes.']));
+  put('docs/epics/E2-release.md', epic('E2', 'A release on GitHub', 'an installer on GitHub releases.', 'E1', 'low', 'none', ['An installer for each system is attached to a GitHub release.']));
+  edit('docs/RISKS.md', (t) => t.replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n| R-1 | A game in exclusive full screen hides the reminder | A tray badge | 2026-11-08 |\n'));
+  edit('docs/PLAN-REVIEW.md', (t) =>
+    t
+      .replace(/(## Pre-mortem\n\n.*\n)/, '$1\nNot at the lite level.\n')
+      .replace('| Requirement | Answer | Where it lives |\n| --- | --- | --- |\n', '| Requirement | Answer | Where it lives |\n| --- | --- | --- |\n| Security and secrets | None kept | SPEC.md |\n| Dependency licences | MIT and Apache | E2-AC1 |\n| Backups and restore | Settings reset to defaults | SPEC.md |\n| Performance targets | Under 50 MB | E1-AC1 |\n')
+      .replace('| Question | Answer | Confirmed on |\n| --- | --- | --- |\n', '| Question | Answer | Confirmed on |\n| --- | --- | --- |\n| App stores | None: GitHub releases | 2026-11-08 |\n| Support channel | GitHub issues | 2026-11-08 |\n')
+      .replace('| --- | --- | --- | --- |\n\nAn epic whose', '| --- | --- | --- | --- |\n| E0 | S | known | - |\n| E1 | M | partly | - |\n| E2 | S | known | - |\n\nAn epic whose')
+      .replace(/(\| # \| Finding \| Severity \| Closed by \(epic, ADR\) or accepted risk \|\n\| --- \| --- \| --- \| --- \|\n)/, '$1| 1 | Snooze had no criterion | should fix | E1-AC2 |\n| 2 | Full-screen games hide it | should fix | R-1 |\n'),
+  );
+}
+
+// A git repository with the stages done through the plan, a spike on its planning branch and
+// the prototype on spike/notify, the way the skills leave it. Returns the prototype commit.
+const gitIn = (cwd, ...a) => spawnSync('git', ['-c', 'user.email=check@pitwall', '-c', 'user.name=check', '-c', 'core.autocrlf=false', ...a], { cwd, encoding: 'utf8' });
+const SPIKE_CRITERION = '| Reminder shown over a full-screen app | Ten tries with a full-screen video | 10 of 10 shown |';
+function spikeFile(outcome, prototype, result, followUp = '-') {
+  return [
+    '# Spike: Notifications over full-screen apps', '',
+    '- Assumption: A-1', '- Branch: spike/notify', '- Date: 2026-11-08', `- Outcome: ${outcome}`, `- Prototype: ${prototype}`, `- Follow-up: ${followUp}`, '',
+    '## Hypothesis', '', 'A Tauri notification shows over a full-screen app on Windows.', '',
+    '## Criterion', '', '| Metric | How it is measured | Success when |', '| --- | --- | --- |', SPIKE_CRITERION, '',
+    '## Result', '', '| Metric | Measured | Measured by | Date |', '| --- | --- | --- | --- |', ...(result ? [result] : []), '',
+    '## Conclusion', '', outcome === 'pending' ? 'Pending.' : `The reminder was ${outcome} against the criterion.`, '',
+  ].join('\n');
+}
+function makePlanRepo(dir, { spike = true } = {}) {
+  const project = join(dir, 'repo');
+  if (layOut(project).status !== 0) throw new Error('layout failed');
+  gitIn(project, 'init', '-q', '-b', 'main');
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'chore: kickoff');
+  gitIn(project, 'switch', '-qc', 'plan/initial');
+  fillStages(project);
+  fillPlan(project);
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'docs: discovery, decisions, plan');
+  if (!spike) return { project };
+  writeFileSync(join(project, 'docs/spikes/notify.md'), spikeFile('pending', '-', ''));
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'docs: spike notify criterion');
+  gitIn(project, 'switch', '-qc', 'spike/notify');
+  mkdirSync(join(project, 'proto'));
+  writeFileSync(join(project, 'proto', 'notify.mjs'), 'console.log("shown");\n');
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'spike: notify prototype');
+  const proto = gitIn(project, 'rev-parse', 'HEAD').stdout.trim();
+  gitIn(project, 'switch', '-q', 'plan/initial');
+  writeFileSync(join(project, 'docs/spikes/notify.md'), spikeFile('confirmed', proto.slice(0, 12), '| Reminder shown over a full-screen app | 10 of 10 | owner, by hand | 2026-11-08 |'));
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'docs: spike notify result');
+  return { project, proto };
+}
+
+// 6g. T2-AC1, T2-AC3, T2-AC4: the spike, plan and plan-review checks pass on a project the way
+// the skills leave it, and report each kind of gap. The spike check reads git (ADR-0009).
+step('plan and spike checks', (report) => {
+  scratch('pitwall-plan-', (dir) => {
+    const ceiling = { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } };
+    const check = (project, stages) => runScript('docs-check.mjs', ['--root', project, '--stage', stages], ceiling);
+    const expect = (label, r, patterns) => {
+      const missing = patterns.filter((p) => !p.test(r.stdout));
+      if (patterns.length === 0 ? r.status !== 0 : r.status !== 1 || missing.length > 0) {
+        report(`${label}: exit ${r.status}, expected ${patterns.length ? 1 : 0}${missing.length ? `, no line matching ${missing.join(', ')}` : ''}\n${r.stdout}${r.stderr}`);
+      }
+    };
+    const { project: base, proto } = makePlanRepo(dir);
+    expect('a finished spike', check(base, 'spike'), []);
+    expect('a finished plan and review', check(base, 'plan,plan-review,spike'), []);
+    expect('the gate stub on the planning branch', spawnSync('bash', ['scripts/gate', '--full'], { cwd: base, encoding: 'utf8', ...ceiling }), []);
+
+    let n = 0;
+    const copy = () => {
+      const c = join(dir, `c${(n += 1)}`);
+      cpSync(base, c, { recursive: true });
+      return c;
+    };
+    const edit = (c, relPath, fn) => writeFileSync(join(c, relPath), fn(readFileSync(join(c, relPath), 'utf8')));
+    const commit = (c, msg = 'edit') => {
+      gitIn(c, 'add', '-A');
+      gitIn(c, 'commit', '-qm', msg);
+    };
+    // Spike: each way the criterion, the prototype or the history can go wrong.
+    let c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('10 of 10 shown |', '8 of 10 shown |'));
+    commit(c);
+    expect('criterion changed after its commit', check(c, 'spike'), [/the criterion changed after [0-9a-f]{7}, the commit that added it/]);
+    c = copy();
+    gitIn(c, 'merge', '-q', '--no-edit', 'spike/notify');
+    expect('prototype merged into the planning branch', check(c, 'spike'), [/the prototype commit [0-9a-f]+ is reachable from HEAD/, /reachable from plan\/initial/]);
+    c = copy();
+    gitIn(c, 'switch', '-qc', 'spike/early', 'main');
+    writeFileSync(join(c, 'early.mjs'), 'x\n');
+    commit(c);
+    const early = gitIn(c, 'rev-parse', 'HEAD').stdout.trim();
+    gitIn(c, 'switch', '-q', 'plan/initial');
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace(proto.slice(0, 12), early.slice(0, 12)));
+    commit(c);
+    expect('prototype not after the criterion', check(c, 'spike'), [/does not come after [0-9a-f]{7}, the criterion commit/, /spike\/notify does not hold the prototype commit/]);
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/later.md'), spikeFile('confirmed', proto.slice(0, 12), '| Reminder shown over a full-screen app | 10 of 10 | owner | 2026-11-08 |').replace('spike/notify', 'spike/later'));
+    expect('a spike that is not committed', check(c, 'spike'), [/later\.md: is not committed/]);
+    commit(c);
+    expect('a spike committed with its result', check(c, 'spike'), [/later\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/early.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/early').replace('Pending.', 'Confirmed: 10 of 10 shown.'));
+    commit(c);
+    edit(c, 'docs/spikes/early.md', (t) => t.replace('- Outcome: pending', '- Outcome: confirmed').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n| Reminder shown over a full-screen app | 10 of 10 | owner | 2026-11-08 |\n'));
+    commit(c);
+    expect('a criterion commit that already held a conclusion', check(c, 'spike'), [/early\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
+    c = copy();
+    gitIn(c, 'switch', '-qc', 'side');
+    writeFileSync(join(c, 'side.txt'), 'x\n');
+    commit(c);
+    gitIn(c, 'switch', '-q', 'plan/initial');
+    gitIn(c, 'merge', '-q', '--no-ff', '--no-commit', 'side');
+    writeFileSync(join(c, 'docs/spikes/merged.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/merged'));
+    gitIn(c, 'add', '-A');
+    gitIn(c, 'commit', '-qm', 'merge side with a spike in it');
+    expect('a spike only a merge adds', check(c, 'spike'), [/merged\.md: no commit but a merge adds it/]);
+    // T2 review, round 3.
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/staged.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/staged'));
+    gitIn(c, 'add', '-A');
+    expect('a spike staged but not committed', check(c, 'spike'), [/staged\.md: is not committed/]);
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/proto.md'), spikeFile('pending', proto.slice(0, 12), '').replace('spike/notify', 'spike/proto'));
+    commit(c);
+    expect('a criterion commit that already named a prototype', check(c, 'spike'), [/proto\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/wording.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/wording').replace('Pending.', 'Pending, until the prototype has run.'));
+    commit(c);
+    expect('a criterion commit that says pending in its own words', check(c, 'spike'), [/wording\.md: "- Outcome:" is "pending"/]);
+    if (/wording\.md: [0-9a-f]{7}, the commit that added it, already held a result/.test(check(c, 'spike').stdout)) report('a criterion commit that says pending in its own words: read as a result');
+    // T2 review, round 4: a result written as prose in the criterion commit is a result too.
+    c = copy();
+    writeFileSync(join(c, 'docs/spikes/prose.md'), spikeFile('pending', '-', '').replace('spike/notify', 'spike/prose').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n\nAlready measured: 10 of 10 shown, by the owner on 2026-11-08.\n'));
+    commit(c);
+    expect('a criterion commit with the result in prose', check(c, 'spike'), [/prose\.md: [0-9a-f]{7}, the commit that added it, already held a result/]);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('## Conclusion\n', 'The log:\n\n```\n| run | shown |\n| 1 | yes |\n```\n\n## Conclusion\n'));
+    expect('a fenced block of output in the result', check(c, 'spike'), []);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Pending.'));
+    expect('the plan alone with a confirmed spike whose conclusion is pending', check(c, 'plan'), [/notify\.md: the conclusion is not written/]);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: pending').replace('10 of 10 shown |', 'all shown |').replace('| 10 of 10 | owner', '| all | owner'));
+    expect('a spike without numbers or an outcome', check(c, 'spike'), [/"- Outcome:" is "pending"/, /"Success when" holds no number/, /"Measured" holds no number/]);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed'));
+    expect('not confirmed without a follow-up', check(c, 'spike'), [/not confirmed, and "- Follow-up:" names no ADR/]);
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Follow-up: -', '- Follow-up: pending, /pitwall:decide Platform and runtime'));
+    expect('not confirmed, follow-up pending: the spike passes', check(c, 'spike'), []);
+    expect('not confirmed, follow-up pending: the plan does not', check(c, 'plan'), [/notify\.md: not confirmed, and its follow-up is not done/]);
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Follow-up: pending, /pitwall:decide Platform and runtime', '- Follow-up: R-1'));
+    expect('not confirmed, risk accepted', check(c, 'plan'), []);
+    // T2 review: placeholders the spike skill writes, and a "Measured by" that names no one.
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Pending.').replace('| owner, by hand |', '| x |'));
+    expect('a spike left with its placeholders', check(c, 'spike'), [/the conclusion still reads "Pending\."/, /"Measured by" is "x"/]);
+    c = copy();
+    edit(c, 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: pending'));
+    expect('the plan with a spike not concluded', check(c, 'plan'), [/notify\.md: the spike is not concluded/]);
+    // T2 review: a rename does not hide a changed criterion; a rename alone changes nothing.
+    c = copy();
+    gitIn(c, 'mv', 'docs/spikes/notify.md', 'docs/spikes/alert.md');
+    commit(c, 'rename');
+    gitIn(c, 'branch', '-m', 'spike/notify', 'spike/alert');
+    edit(c, 'docs/spikes/alert.md', (t) => t.replace('- Branch: spike/notify', '- Branch: spike/alert'));
+    commit(c);
+    expect('a renamed spike', check(c, 'spike'), []);
+    edit(c, 'docs/spikes/alert.md', (t) => t.replace('10 of 10 shown |', '1 of 10 shown |'));
+    gitIn(c, 'mv', 'docs/spikes/alert.md', 'docs/spikes/warn.md');
+    gitIn(c, 'branch', '-m', 'spike/alert', 'spike/warn');
+    edit(c, 'docs/spikes/warn.md', (t) => t.replace('- Branch: spike/alert', '- Branch: spike/warn'));
+    commit(c, 'rename and change');
+    expect('a spike renamed with its criterion changed', check(c, 'spike'), [/warn\.md: the criterion changed after [0-9a-f]{7}, the commit that added it/]);
+    // No history, or only part of it: the check fails, never passes (ADR-0009).
+    const shallow = join(dir, 'shallow');
+    gitIn(dir, 'clone', '-q', '--depth', '1', '--branch', 'plan/initial', pathToFileURL(base).href, shallow);
+    expect('a shallow clone', check(shallow, 'spike'), [/the clone is shallow/]);
+    const nogit = join(dir, 'nogit');
+    cpSync(base, nogit, { recursive: true, filter: (src) => !/[\\/]\.git([\\/]|$)/.test(src) });
+    expect('outside git', check(nogit, 'spike'), [/not inside a git repository/]);
+    c = copy();
+    const remote = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', remote);
+    gitIn(c, 'remote', 'add', 'origin', remote);
+    gitIn(c, 'push', '-q', 'origin', 'plan/initial');
+    gitIn(c, 'fetch', '-q', 'origin');
+    expect('spike branch not pushed', check(c, 'spike'), [/push spike\/notify before this check/]);
+    gitIn(c, 'push', '-q', 'origin', 'spike/notify');
+    gitIn(c, 'fetch', '-q', 'origin');
+    expect('spike branch pushed', check(c, 'spike'), []);
+
+    // Plan: T2-AC3, each refusal on its own copy of the files.
+    const planCase = (label, breakIt, patterns, stages = 'plan') => {
+      const p = copy();
+      breakIt(p, (rel, fn) => edit(p, rel, fn));
+      expect(label, check(p, stages), patterns);
+    };
+    planCase('an epic without acceptance criteria', (p, e) => e('docs/epics/E2-release.md', (t) => t.replace(/- \[ \] E2-AC1: .*\n/, '')), [/E2-release\.md: no acceptance criteria/]);
+    planCase('an epic without a risk class', (p, e) => e('docs/epics/E2-release.md', (t) => t.replace('Risk class: low\n', '')), [/E2-release\.md: no risk class/]);
+    planCase('a risk class outside riskClasses', (p, e) => e('docs/epics/E1-reminder.md', (t) => t.replace('Risk class: normal', 'Risk class: medium')), [/risk class "medium" is not one of low, normal, high/]);
+    planCase('row and file disagree', (p, e) => e('docs/EPICS.md', (t) => t.replace('| The reminder | normal |', '| The reminder | high |')), [/E1-reminder\.md: risk class normal, but docs\/EPICS\.md says high/]);
+    planCase('a broken ADR link', (p, e) => e('docs/epics/E1-reminder.md', (t) => t.replace('ADR: ADR-0001', 'ADR: ADR-0042').replace('## Out of scope', 'See [the decision](../adr/0042-gone.md).\n\n## Out of scope')), [/E1-reminder\.md: cites ADR-0042, which has no file in docs\/adr\//, /E1-reminder\.md: broken link \.\.\/adr\/0042-gone\.md/]);
+    planCase('a dependency cycle', (p, e) => {
+      e('docs/EPICS.md', (t) => t.replace('| The reminder | normal | E0 |', '| The reminder | normal | E0, E2 |'));
+      e('docs/epics/E1-reminder.md', (t) => t.replace('Depends on: E0', 'Depends on: E0, E2'));
+    }, [/dependency cycle: E[12] -> E[12] -> E[12]/, /E1 depends on E2, which does not come before it/]);
+    planCase('an unknown dependency', (p, e) => {
+      e('docs/EPICS.md', (t) => t.replace('| low | E1 |', '| low | E9 |'));
+      e('docs/epics/E2-release.md', (t) => t.replace('Depends on: E1', 'Depends on: E9'));
+    }, [/E2 depends on E9, which is not in the plan/]);
+    planCase('E0 not first', (p, e) => e('docs/EPICS.md', (t) => {
+      const rows = t.split('\n');
+      const i = rows.findIndex((l) => l.startsWith('| [E0]'));
+      [rows[i], rows[i + 1]] = [rows[i + 1], rows[i]];
+      return rows.join('\n');
+    }), [/the first epic is E1: the plan starts with E0/]);
+    planCase('criteria out of order', (p, e) => e('docs/epics/E1-reminder.md', (t) => t.replace('E1-AC2:', 'E1-AC3:')), [/E1-AC3 is criterion 2: number them E1-AC1, E1-AC2/]);
+    planCase('an epic file not in the table', (p, e) => writeFileSync(join(p, 'docs/epics/E3-extra.md'), readFileSync(join(p, 'docs/epics/E2-release.md'), 'utf8')), [/E3-extra\.md: is not in the table/]);
+    planCase('a status other than planned', (p, e) => e('docs/EPICS.md', (t) => t.replace('| low | E1 | planned |', '| low | E1 | merged |')), [/E2: status "merged", every epic of a new plan is planned/]);
+    planCase('an unfilled SPEC section', (p, e) => e('docs/SPEC.md', (t) => t.replace('A local settings file.\n', '')), [/SPEC\.md: section "## Data model" is not filled in/]);
+    planCase('a lite plan with too many epics', (p, e) => {
+      e('docs/EPICS.md', (t) => t.replace('| low | E1 | planned |\n', '| low | E1 | planned |\n| [E3](epics/E3-a.md) | A | low | E2 | planned |\n| [E4](epics/E4-b.md) | B | low | E3 | planned |\n'));
+      for (const [id, dep] of [['E3', 'E2'], ['E4', 'E3']]) writeFileSync(join(p, `docs/epics/${id}-${id === 'E3' ? 'a' : 'b'}.md`), `# ${id} - X\n\nGoal: x.\nDepends on: ${dep}\nRisk class: low\nADR: none\n\n## Acceptance criteria\n\n- [ ] ${id}-AC1: x.\n\n## Out of scope\n\nx\n\n## Open questions\n\nNone.\n`);
+    }, [/4 epics after E0: the lite level holds at most 3/]);
+    planCase('E0 without the stack ADRs', (p, e) => e('docs/epics/E0-skeleton.md', (t) => t.replace('ADR: ADR-0001, ADR-0002, ADR-0003', 'ADR: none')), [/E0 lays down the stack/]);
+    planCase('links with a title or in angle brackets', (p, e) => e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', 'See [a](../adr/0042-gone.md "title") and [b](<../no such dir/x.md>).\n\n## Out of scope')), [/broken link \.\.\/adr\/0042-gone\.md/, /broken link \.\.\/no such dir\/x\.md/]);
+    // T2 review: a level that is not known fails the checks, never relaxes them.
+    for (const [label, settings] of [['a level with another case', (t) => t.replace('"lite"', '"Standard"')], ['no level', (t) => t.replace(/\s*"processLevel": "lite",/, '')]]) {
+      planCase(`plan: ${label}`, (p, e) => e('.claude/pitwall.json', settings), [/processLevel ".*" is not one of lite, standard, full/]);
+      planCase(`plan review: ${label}`, (p, e) => e('.claude/pitwall.json', settings), [/processLevel ".*" is not one of lite, standard, full/], 'plan-review');
+    }
+    // T2 review: an open cell is open however it is worded, and a closed one starts with its ID.
+    for (const cell of ['open - E1 needs a snooze criterion', 'Open (E1-AC2 missing)', 'not closed yet, E1 should get one', '`E1-AC2`']) {
+      planCase(`a finding closed by "${cell}"`, (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', `| should fix | ${cell} |`)), [/finding 1 is not closed/], 'plan-review');
+    }
+    planCase('a requirement answered "open, nothing yet"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults |', '| Backups and restore | open, nothing yet |')), [/"Backups and restore" has no answer/], 'plan-review');
+    planCase('a finding closed by an ID and a few words', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | E1-AC2 (snooze) |')), [], 'plan-review');
+    // T2 review, round 2.
+    planCase('an open finding in a second table', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n\n### Round 2\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 3 | E2 names no systems | blocking | open: name them |\n')), [/"## Findings" holds 2 tables/], 'plan-review');
+    planCase('a dash as an answer and as a place', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Security and secrets | None kept | SPEC.md |', '| Security and secrets | - | - |').replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | Under 50 MB | somewhere |')), [/"Security and secrets" has no answer/, /"Performance targets" has no place where it lives/], 'plan-review');
+    planCase('a finding closed by the template ADR', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ADR-0000 |')), [/finding 1 is not closed/], 'plan-review');
+    planCase('a broken link in SPEC.md', (p, e) => e('docs/SPEC.md', (t) => t.replace('A local settings file.', 'A local settings file, see [the idea](../nowhere/IDEA.md).')), [/SPEC\.md: broken link \.\.\/nowhere\/IDEA\.md/]);
+    planCase('a broken link in PLAN-REVIEW.md', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Snooze had no criterion |', '| Snooze had no [criterion](epics/E9-x.md) |')), [/PLAN-REVIEW\.md: broken link epics\/E9-x\.md/], 'plan-review');
+    planCase('a high-risk assumption only a superseded ADR covers', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+      e('docs/adr/0001-stack.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003').replace('A desktop app.', 'A desktop app; it settles A-1.'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    planCase('not confirmed, follow-up an ADR that supersedes nothing', (p, e) => e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0001')), [/notify\.md: not confirmed, and its follow-up is not done/]);
+    planCase('not confirmed, follow-up the new ADR that links the spike', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0003'));
+      e('docs/adr/0003-hosting.md', (t) => t.replace('A desktop app.', 'A desktop app; the spike ../spikes/notify.md was not confirmed.'));
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+    }, []);
+    // T2 review, round 4: the ADR the spike disproved, dated the same day, is no follow-up.
+    planCase('not confirmed, follow-up the old ADR of the same day', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0001'));
+      e('docs/adr/0001-stack.md', (t) => t.replace('- Date: 2026-11-05', '- Date: 2026-11-08'));
+    }, [/notify\.md: not confirmed, and its follow-up is not done/]);
+    // T2 review, round 3.
+    planCase('Findings twice, the open row under the first', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | blocking | open: name them |\n\n## Findings\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Snooze had no criterion | should fix | E1-AC2 |\n')), [/"## Findings" appears 2 times/], 'plan-review');
+    planCase('a later round under a heading of its own', (p, e) => e('docs/PLAN-REVIEW.md', (t) => `${t}\n## Findings, round 2\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 3 | E2 names no systems | blocking | open: name them |\n`), [/"## Findings, round 2" is not a section of the template/, /a table in "## Findings, round 2"/], 'plan-review');
+    planCase('a risk nobody accepted, in a second table, closing a finding', (p, e) => {
+      e('docs/RISKS.md', (t) => `${t}\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | Snooze is misused | none | not yet |\n`);
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | R-2 |'));
+    }, [/RISKS\.md: holds 2 tables/, /finding 1 is not closed/, /R-2 is not an accepted risk/], 'plan-review');
+    for (const action of ['open: split it with the owner', 'TBD', 'n/a']) {
+      planCase(`an L epic with the action "${action}"`, (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |', `| E1 | L | unknown | ${action} |`)), [/E1 is L, unknown: it needs an action/], 'plan-review');
+    }
+    planCase('not confirmed, follow-up a new ADR for an area that had none', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0004'));
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Date: 2026-11-05', '- Date: 2026-11-08').replace('A desktop app.', 'After ../spikes/notify.md, models move to a local file.'));
+    }, []);
+    // T2 review, round 4: Markdown that GitHub shows one way and a line reader reads another.
+    const hide = (label, rel, fn, patterns) => planCase(`hidden from the check: ${label}`, (p, e) => e(rel, fn), patterns, 'plan-review');
+    const afterRow2 = (extra) => (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', `| 2 | Full-screen games hide it | should fix | R-1 |\n${extra}`);
+    hide('a row without its leading pipe', 'docs/PLAN-REVIEW.md', afterRow2('3 | E2 names no systems | blocking | open: name them\n'), [/a line right after a table/]);
+    hide('a table in a block quote', 'docs/PLAN-REVIEW.md', afterRow2('\n> | # | Finding | Severity | Closed by |\n> | --- | --- | --- | --- |\n> | 3 | E2 | blocking | open: name them |\n'), [/a block quote/]);
+    hide('a table between comment fences', 'docs/PLAN-REVIEW.md', afterRow2('\n<!--\n~~~\n-->\n| 3 | E2 names no systems | blocking | open: name them |\n<!--\n~~~\n-->\n'), [/an HTML comment/]);
+    hide('a table between indented fences', 'docs/PLAN-REVIEW.md', afterRow2('\n    ```\n| 3 | E2 names no systems | blocking | open: name them |\n    ```\n'), [/"## Findings" holds 2 tables/]);
+    hide('a setext heading after the last section', 'docs/PLAN-REVIEW.md', (t) => `${t}\nFindings, round 2\n-----\n\n| 3 | E2 names no systems | blocking | still to do |\n`, [/a setext heading/, /a table in "## Approval"/]);
+    hide('an HTML table', 'docs/PLAN-REVIEW.md', (t) => `${t}\n<table><tr><td>3</td><td>open: name them</td></tr></table>\n`, [/an HTML block/]);
+    hide('a fenced example table before the real one', 'docs/PLAN-REVIEW.md', (t) => t.replace('| # | Finding | Severity |', '```\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | Example | should fix | E1-AC2 |\n```\n\n| # | Finding | Severity |').replace('| should fix | E1-AC2 |\n| 2 |', '| should fix | not yet, ask the owner |\n| 2 |'), [/finding 1 is not closed/]);
+    hide('a requirement twice, answered then open', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Security and secrets | None kept | SPEC.md |\n', '| Security and secrets | None kept | SPEC.md |\n| Security and secrets | open: the release tokens | - |\n'), [/the row "Security and secrets" repeats a row above it/, /an open item in "## Non-functional requirements"/]);
+    hide('an epic sized twice', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |\n', '| E1 | M | partly | - |\n| E1 | L | unknown | - |\n'), [/the row "E1" repeats a row above it/]);
+    hide('an open cell in emphasis', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | **open**: name it |'), [/finding 1 is not closed/, /an open item in "## Findings"/]);
+    hide('a launch answer not confirmed', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | not confirmed, asked 2026-11-08 |'), [/"Support channel" has no date the owner confirmed it/]);
+    hide('an L epic with the action "none"', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |', '| E1 | L | unknown | none |'), [/E1 is L, unknown: it needs an action/]);
+    hide('an accepted risk in a fenced example', 'docs/RISKS.md', (t) => t.replace('| ID | Risk |', '```\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | x | y | 2026-11-08 |\n```\n\n| ID | Risk |').replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | Snooze is misused | none | not yet |\n'), []);
+    planCase('hidden from the check: a risk accepted only in a fenced example closes a finding', (p, e) => {
+      e('docs/RISKS.md', (t) => t.replace('| ID | Risk |', '```\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-2 | x | y | 2026-11-08 |\n```\n\n| ID | Risk |').replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | Snooze is misused | none | not yet |\n'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | R-2 |'));
+    }, [/finding 1 is not closed/, /R-2 is not an accepted risk/], 'plan-review');
+    hide('a risk in an HTML comment', 'docs/RISKS.md', (t) => `${t}\n<!--\n| R-3 | x | y | 2026-11-08 |\n-->\n`, [/an HTML comment/]);
+    hide('a second table of epics', 'docs/EPICS.md', (t) => `${t}\nLater:\n\n| Epic | Goal | Risk | Depends on | Status |\n| --- | --- | --- | --- | --- |\n| E3 | X | low | E5 | planned |\n`, [/EPICS\.md: holds 2 tables/]);
+    hide('a second table of assumptions', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n\n| ID | Assumption | Risk | How to check it |\n| --- | --- | --- | --- |\n| A-9 | Users accept a tray icon | high | Ask five people |\n'), [/"## Assumptions by risk" holds 2 tables/]);
+    hide('an outcome in an HTML comment', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '<!--\n- Outcome: confirmed\n-->\n- Outcome: pending'), [/an HTML comment/, /"- Outcome:" appears 2 times/]);
+    hide('an outcome twice', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: confirmed\n- Outcome: pending'), [/"- Outcome:" appears 2 times/]);
+    planCase('a closing cell that starts with "closed by"', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | closed by E1-AC2: snooze is a criterion now |').replace('| should fix | R-1 |', '| should fix | **R-1** |')), [], 'plan-review');
+    planCase('a file with a byte order mark', (p, e) => e('.claude/pitwall.json', (t) => String.fromCodePoint(0xfeff) + t), [], 'plan-review');
+    // T2 review, round 5: a cell is judged by what GitHub shows of it, and lines follow a small grammar.
+    hide('a struck-out closer', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ~~E1-AC2~~ open: E1-AC2 was cut |'), [/finding 1 is not closed/]);
+    planCase('hidden from the check: a risk whose date is open', (p, e) => {
+      e('docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | open: the owner has not answered, asked 2026-11-08 |'));
+    }, [/finding 2 is not closed/, /R-1 is not an accepted risk/], 'plan-review');
+    hide('a risk whose date is struck out', 'docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | ~~2026-11-08~~ withdrawn |'), [/finding 2 is not closed/]);
+    hide('a launch date struck out', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | ~~2026-11-08~~ open: withdrawn |'), [/"Support channel" has no date the owner confirmed it/]);
+    hide('an open answer as a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | &#111;pen: nothing yet | &#111;pen, see SPEC.md |'), [/"Performance targets" has no answer/]);
+    hide('an open answer in inline HTML', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | <b>open</b>: nothing yet | E1-AC1 |'), [/"Performance targets" has no answer/]);
+    hide('an open answer as a link', 'docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | [open](SPEC.md) | [open](SPEC.md) |'), [/"Performance targets" has no answer/]);
+    hide('a lazy row in a code span', 'docs/PLAN-REVIEW.md', afterRow2('`15 | Nothing checks the reboot case | blocking | open: add a criterion`\n'), [/a line right after a table/]);
+    hide('a lazy row of epics', 'docs/EPICS.md', (t) => t.replace('| low | E1 | planned |\n', '| low | E1 | planned |\n`[E4](epics/E4-hidden.md) | Hidden epic | high | E0 | planned`\n'), [/a line right after a table/]);
+    hide('a table between fences in a list item', 'docs/PLAN-REVIEW.md', afterRow2('\n- Round 8 notes:\n  ```\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 15 | Reboot | blocking | open: add a criterion |\n\n- End of the notes.\n  ```\n'), [/an indented fence/]);
+    hide('an outcome hidden by a fence in a list item', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed\n  ```\n- Outcome: confirmed').replace('## Hypothesis', '```\n\n## Hypothesis'), [/an indented fence/]);
+    hide('a link reference definition', 'docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '[//]: # (A-1 is settled by E2-AC1)\n\n## Out of scope'), [/a link reference definition/]);
+    hide('an epic sized in two rows', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E2, second half | L | unknown | - |\n'), [/E2 is sized in 2 rows/]);
+    hide('a closer that is still open', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | closed by E1-AC2; still open: the snooze limit |'), [/finding 1 is not closed/]);
+    planCase('the discovery stage reads its structure too', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('One person at a desk.', 'One person at a desk.\n> quoted')), [/a block quote/], 'discovery');
+    // Ordinary Markdown a model writes stays allowed.
+    planCase('ordinary Markdown in the plan files', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '> Note: the timer is wall-clock time.\n\n---\n\nSee <https://example.com/timers> and S | M | L sizes.\n\n## Out of scope'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | Closed by: **E1-AC2** |').replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | confirmed 2026-11-08 |'));
+      e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Shown |\n| --- | --- |\n| 1 | yes |'));
+    }, [], 'plan-review');
+    hide('an indented heading', 'docs/PLAN-REVIEW.md', (t) => t.replace('## Findings', '  ## Findings, again\n\n## Findings'), [/an indented heading/]);
+    hide('a conclusion in the template words', 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Confirmed or not confirmed, against the criterion, in a few sentences. A spike that is not confirmed names its follow-up: a new ADR from `/pitwall:decide <area>`, or a risk the owner accepted in `RISKS.md`.'), [/the conclusion is not written/]);
+    // T2 review, round 6: line endings and white space as GitHub reads them, and judged cells in plain text only.
+    const NBSP = String.fromCodePoint(0xa0);
+    const ZWSP = String.fromCodePoint(0x200b);
+    hide('a second table after lone carriage returns', 'docs/PLAN-REVIEW.md', afterRow2('\nRound 8.\r\r| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\r| --- | --- | --- | --- |\r| 15 | Reboot | blocking | open: add a criterion |\n'), [/"## Findings" holds 2 tables/]);
+    hide('a second table of epics after lone carriage returns', 'docs/EPICS.md', (t) => `${t}\nLater.\r\r| Epic | Goal | Risk | Depends on | Status |\r| --- | --- | --- | --- | --- |\r| E4 | Sync | high | E0 | planned |\n`, [/EPICS\.md: holds 2 tables/]);
+    hide('an outcome under another list marker, a copy in a details block', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '* Outcome: not confirmed') + '\nRaw notes.\r\r<details>\r\r~~~\r- Outcome: confirmed\r~~~\r\r</details>\n', [/"Outcome:" is written with "\*" or "\+"/, /an HTML block/]);
+    hide('a row after a line of non-breaking spaces', 'docs/PLAN-REVIEW.md', afterRow2(`${NBSP}\n15 | Reboot | blocking | open: add a criterion\n`), [/an invisible character or a space other than a plain one/]);
+    hide('an epic after a line of non-breaking spaces', 'docs/EPICS.md', (t) => t.replace('| low | E1 | planned |\n', `| low | E1 | planned |\n${NBSP}\nE&#52; | Sync | high | E0 | planned\n`), [/an invisible character/]);
+    hide('an assumption after a line of non-breaking spaces', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', `| A-2 | A tray icon is enough | low | Ask two users |\n${NBSP}\nA-&#55; | Cloud sync works | high | nothing |\n`), [/an invisible character/]);
+    hide('a closer struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | <s>E1-AC2</s> nothing covers it |'), [/"Closed by" cell of "1" holds HTML/]);
+    hide('a risk date struck out with an HTML tag', 'docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | <del>2026-11-08</del> withdrawn |'), [/"Accepted on" cell of "R-1" holds HTML/, /finding 2 is not closed/]);
+    hide('a launch date struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | <strike>2026-11-08</strike> withdrawn |'), [/"Confirmed on" cell of "Support channel" holds HTML/]);
+    hide('an action struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |', '| E1 | L | unknown | <s>split it in two</s> |'), [/action cell of "E1" holds HTML/]);
+    hide('a closer that is an image', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ![E1-AC2](https://example.com/x.gif) nothing covers it |'), [/"Closed by" cell of "1" holds a link, an image or a bracket/, /finding 1 is not closed/]);
+    hide('a status hidden in an ADR comment', 'docs/adr/0001-stack.md', (t) => t.replace('- Status: accepted', '<!--\n- Status: accepted\n-->\n- Status: superseded by ADR-0003'), [/0001-stack\.md:\d+: an HTML comment/, /"- Status:" appears 2 times/]);
+    hide('an epic ID with a zero-width space', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', `| E2 | S | known | - |\n| E${ZWSP}2, second half | L | unknown | - |\n`), [/an invisible character/]);
+    hide('an epic ID with a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E&#8203;2 second half | L | unknown | - |\n'), [/epic cell of "E&#8203;2 second half" holds a character reference/]);
+    hide('a high risk in emphasis that nothing covers', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n| A-3 | Cloud sync works | **high** | nothing yet |\n'), [/high-risk assumption A-3 is covered by no spike/]);
+    for (const [label, cell, pattern] of [
+      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /finding 1 is not closed/],
+      ['an open written with a character reference', 'E1-AC2 was cut, open&colon; nothing covers it', /holds a character reference/],
+      ['an open in angle brackets', 'E1-AC2 <open: nothing covers it>', /holds HTML or an angle bracket/],
+      ['an open as a broken link', '[E1-AC2](open: nothing covers it)', /holds a link, an image or a bracket/],
+      ['backticks that open no code span', 'E1-AC2 ``` open: nothing covers it ``', /holds a backtick that opens no code span/],
+      ['an open behind a backslash', 'E1-AC2 is cut, open\\: nothing covers it', /holds a backslash escape/],
+      ['an ID written with a character reference', 'ADR-&#48;099', /holds a character reference/],
+    ]) hide(label, 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', `| should fix | ${cell} |`), [pattern]);
+    hide('a heading after a non-breaking space', 'docs/spikes/notify.md', (t) => t.replace('## Result', `##${NBSP}Notes\n\n## Result`), [/an invisible character/]);
+    planCase('a constraint date struck out, at the discovery stage', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('| Licence | Settled | 2026-11-05 |', '| Licence | Settled | ~~2026-11-05~~ open: withdrawn |')), [/constraint "Licence" has no confirmation date/, /"Confirmed on" cell of "Licence" holds tildes/], 'discovery');
+    // T2 review, round 7: a criterion is checked before its commit freezes it, ordinary signs stay
+    // allowed, only a decision the owner made closes an item, and a mention is no coverage.
+    const pendingSpike = (criterionRows) => spikeFile('pending', '-', '').replace('spike/notify', 'spike/idle-time').replace(SPIKE_CRITERION, criterionRows);
+    planCase('a criterion with "<" and a metric per system, before its commit', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Windows, 10 readings | Error < 1 s in 10 of 10 |\n| Idle time error | macOS, 10 readings | Error < 1 s in 10 of 10 |')), [], 'spike-criterion');
+    planCase('a criterion that would freeze a refused cell, before its commit', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Ten readings | <b>10 of 10</b> |')), [/idle-time\.md:\d+: the "Success when" cell of "Idle time error" holds HTML/], 'spike-criterion');
+    planCase('a criterion committed with its result already written', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Ten readings | 10 of 10 |').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n| Idle time error | 10 of 10 | owner | 2026-11-09 |\n')), [/idle-time\.md: the result is written already/], 'spike-criterion');
+    planCase('no spike waiting for its criterion', () => {}, [/no spike with "- Outcome: pending"/], 'spike-criterion');
+    planCase('ordinary signs in judged cells', (p, e) => {
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | Average CPU < 1% over 1 hour | E1-AC1 |').replace('| GitHub issues | 2026-11-08 |', '| GitHub issues, answered in < 1 day | 2026-11-08 |'));
+      e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge, cached in ~/Library/Caches/move-reminder or %LOCALAPPDATA%\\move-reminder |'));
+    }, [], 'plan-review');
+    planCase('a finding closed by a proposed ADR', (p, e) => {
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Status: accepted', '- Status: proposed'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ADR-0004 |'));
+    }, [/finding 1 is not closed/], 'plan-review');
+    planCase('a high-risk assumption only mentioned in open questions', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', '').replace('## Open questions\n\nNone.', '## Open questions\n\nNothing in this epic checks A-1 yet; it needs a spike or an accepted risk.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    planCase('a high-risk assumption only in the address of a link', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ' (see [the notes](https://example.com/A-1))'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike/], 'plan-review');
+    hide('a non-breaking space after a closing fence', 'docs/PLAN-REVIEW.md', afterRow2(`\n\`\`\`\nnotes\n\`\`\`${NBSP}\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 15 | Reboot | blocking | open: add a criterion |\n\n\`\`\`\n`), [/an invisible character on a fence line/]);
+    hide('rows indented with a tab', 'docs/RISKS.md', (t) => t.replace('| ID | Risk |', '\t| R-3 | Hidden | none | 2026-11-08 |\n\n| ID | Risk |'), [/an indented table row/]);
+    // T2 verification round: what an honest reviewer writes passes, and the rule says where to write it.
+    planCase('a place that also names the decision a newer one superseded', (p, e) => {
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0003, which supersedes ADR-0002 |'));
+    }, [], 'plan-review');
+    planCase('two tildes that strike nothing', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge, in ~/Library/Caches/x on macOS and ~/.cache/x on Linux, about ~0.4 s |')), [], 'plan-review');
+    hide('tildes that strike text through', 'docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge within ~1 s~ |'), [/the fallback cell of "R-1" holds tildes/]);
+    planCase('an assumption on a criterion continuation line', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', '\n  This settles A-1 on both systems.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [], 'plan-review');
+    planCase('an assumption named only in an ADR context', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      e('docs/adr/0001-stack.md', (t) => t.replace('A desktop app.', 'A desktop app; this decision settles A-1.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk: name it in a spike's "- Assumption:", the "## Decision" of an accepted ADR/], 'plan-review');
+    // T2 final check: tildes strike only where GitHub strikes, and a place names settled IDs.
+    const noSpikeNoAc = (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    };
+    planCase('tildes for "about" around a covering criterion', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('- [ ] E1-AC2: Snooze delays it by 10 minutes.', '- [ ] E1-AC2: Snooze pauses in ~2 s.\n- [ ] E1-AC3: Settles A-1.\n- [ ] E1-AC4: It resumes (~1 s).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" in one covering criterion', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('Snooze delays it by 10 minutes.', 'It starts in ~1 s, which settles A-1 (~3 s on the first start).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" around a covering ADR decision', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/adr/0001-stack.md', (t) => t.replace('## Decision\n\nTauri.', '## Decision\n\nTauri, ~5 ms to start.\n\nThis settles A-1.\n\nA reminder draws in (~2 ms).'));
+    }, [], 'plan-review');
+    planCase('tildes for "about" in a fallback', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| Retry after ~2 s (~5 s on a cold start) |')), [], 'plan-review');
+    planCase('a place with a proposed ADR next to a criterion', (p, e) => {
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Status: accepted', '- Status: proposed'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0004, E1-AC1 |'));
+    }, [/"Backups and restore" has no place where it lives/], 'plan-review');
+    planCase('a place with a superseded ADR whose successor it does not name', (p, e) => {
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0002, E1-AC1 |'));
+    }, [/"Backups and restore" has no place where it lives/], 'plan-review');
+    planCase('a tilde after punctuation before another tilde', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('Snooze delays it by 10 minutes.', 'Settles A-1 within ~2 s.~~'));
+    }, [], 'plan-review');
+    planCase('an assumption on a criterion line after a blank line', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('- [ ] E1-AC2: Snooze delays it by 10 minutes.', '- [ ] E1-AC2: Snooze delays it by 10 minutes.\n\n  This settles A-1.'));
+    }, [], 'plan-review');
+    // Ordinary Markdown from the round-6 review stays allowed.
+    planCase('free tables, repeated rows and plain words', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Date |\n| --- | --- |\n| 1 | 2026-11-08 |\n| 1 | 2026-11-08 |'));
+      e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '| System | Check |\n| --- | --- |\n| Windows 11 | tray |\n| Windows 11 | full screen |\n\n<owner@example.com> answers questions.\n\n## Out of scope'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | E1-AC2: the reminder is still open after 5 clicks, `scripts/gate` checks it, Settings > System |').replace('| Under 50 MB | E1-AC1 |', '| Under 50 MB, the window still open after a lock | E1-AC1 |').replace('| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |', '| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n|-|-|-|-|'));
+    }, [], 'plan-review');
+    planCase('a broken link in RISKS.md', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A [tray badge](spikes/badge.md) |')), [/RISKS\.md: broken link spikes\/badge\.md/], 'plan-review');
+    planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+      e('docs/RISKS.md', (t) => t.replace('| 2026-11-08 |\n', '| 2026-11-08 |\n| R-2 | A-1 may not hold | none yet | not yet |\n'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    // Plan review: T2-AC4.
+    planCase('an open finding', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | open: no criterion for snooze |')), [/finding 1 is not closed/], 'plan-review');
+    planCase('a requirement of the level missing', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |\n', '')), [/"Backups and restore" is missing/], 'plan-review');
+    planCase('a launch answer without a date', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | yes |')), [/"Support channel" has no date the owner confirmed it/], 'plan-review');
+    planCase('an epic not sized, an L without an action', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '').replace('| E1 | M | partly | - |', '| E1 | L | partly | - |')), [/E2 is not sized/, /E1 is L, partly: it needs an action/], 'plan-review');
+    planCase('an accepted risk without its date', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | soon |')), [/RISKS\.md: R-1 is not an accepted risk/, /finding 2 is not closed/], 'plan-review');
+    planCase('a high-risk assumption nothing covers', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    planCase('standard: too few pre-mortem reasons', (p, e) => e('.claude/pitwall.json', (t) => t.replace('"lite"', '"standard"')), [/0 pre-mortem reasons, the standard level asks for 5/, /"Personal data and GDPR" is missing/, /"Domain" is missing/], 'plan-review');
+    planCase('standard: an unclosed reason', (p, e) => {
+      e('.claude/pitwall.json', (t) => t.replace('"lite"', '"standard"'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| # | Reason | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- |\n', `| # | Reason | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- |\n${[1, 2, 3, 4].map((i) => `| ${i} | Reason ${i} | E1-AC1 |\n`).join('')}| 5 | Nobody uses it | open |\n`));
+    }, [/pre-mortem reason 5 is not closed/], 'plan-review');
+    planCase('full: no spike on the riskiest assumption', (p, e) => {
+      e('.claude/pitwall.json', (t) => t.replace('"lite"', '"full"'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/the full level asks for a concluded spike on the riskiest assumption, A-1/], 'plan-review');
+    const usage = runScript('docs-check.mjs', ['--root', base, '--stage', 'plan,nope']);
+    if (usage.status !== 2) report(`--stage plan,nope: exit ${usage.status}, expected 2`);
+  });
+});
+
+// 6h. T2-AC5, ADR-0007: review-status.mjs against the fake gh. It refuses success on a review that
+// does not pass its check, commits only the review file, pushes, and sets the status on the PR head.
+const identity = { GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@pitwall', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@pitwall' };
+step('review status (fake gh)', (report) => {
+  scratch('pitwall-review-', (dir) => {
+    const { project: base } = makePlanRepo(dir);
+    const origin = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    gitIn(base, 'remote', 'add', 'origin', origin);
+    gitIn(base, 'push', '-q', 'origin', 'main', 'plan/initial', 'spike/notify');
+    gitIn(base, 'fetch', '-q', 'origin');
+    const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN' }, pr: { head: 'local' }, status: 'ok' };
+    let n = 0;
+    const run = (label, scenario, { args = ['--review', 'plan', '--state', 'success'], prepare, gh, env = {}, code, result, posts, commits = 0, says = [] }) => {
+      const p = join(dir, `r${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      // Each case pushes to a remote of its own.
+      cpSync(origin, p + '-origin.git', { recursive: true });
+      gitIn(p, 'remote', 'set-url', 'origin', p + '-origin.git');
+      // A new finding the reviewer wrote this round: the only uncommitted change.
+      const reviewFile = join(p, 'docs', 'PLAN-REVIEW.md');
+      writeFileSync(reviewFile, readFileSync(reviewFile, 'utf8').replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', '| 2 | Full-screen games hide it | should fix | R-1 |\n| 3 | E2 names no systems | should fix | E2-AC1 |\n'));
+      prepare?.(p);
+      const before = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim());
+      const { r, calls, state } = withFakeGh('review-status.mjs', p, scenario, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}), ...env });
+      const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
+      const writes = calls.filter((c) => c.args.includes('POST'));
+      const made = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim()) - before;
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
+      if (writes.length !== posts) fail(`${writes.length} status writes, expected ${posts}`);
+      if (made !== commits) fail(`${made} commits, expected ${commits}`);
+      if (made > 0) {
+        const touched = gitIn(p, 'diff', '--name-only', 'HEAD~1', 'HEAD').stdout.trim();
+        if (touched !== 'docs/PLAN-REVIEW.md') fail(`the commit touched ${touched}, expected docs/PLAN-REVIEW.md only`);
+      }
+      for (const w of writes) {
+        const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+        if (!w.args.includes(`repos/o/r/statuses/${head}`) || !w.args.includes('context=ai-review')) fail(`wrote ${w.args.join(' ')}, expected ai-review on ${head}`);
+      }
+      for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+      checkHandoff(r.stdout, fail);
+      return { r, p, state };
+    };
+    const good = run('approved', ok, { code: 0, result: 'success', posts: 1, commits: 1 });
+    const pushed = gitIn(good.p, 'rev-parse', 'origin/plan/initial').stdout.trim();
+    if (pushed !== gitIn(good.p, 'rev-parse', 'HEAD').stdout.trim()) report('approved: the commit with the review was not pushed');
+    run('changes requested', ok, { args: ['--review', 'plan', '--state', 'failure'], prepare: (p) => writeFileSync(join(p, 'docs/PLAN-REVIEW.md'), readFileSync(join(p, 'docs/PLAN-REVIEW.md'), 'utf8').replace('| E2 names no systems | should fix | E2-AC1 |', '| E2 names no systems | should fix | open: name the systems |')), code: 0, result: 'failure', posts: 1, commits: 1 });
+    run('success on an open finding', ok, { prepare: (p) => writeFileSync(join(p, 'docs/PLAN-REVIEW.md'), readFileSync(join(p, 'docs/PLAN-REVIEW.md'), 'utf8').replace('| E2 names no systems | should fix | E2-AC1 |', '| E2 names no systems | should fix | open: name the systems |')), code: 1, result: 'not set', posts: 0, says: ['does not pass docs-check --stage plan-review,spike', 'finding 3 is not closed'] });
+    run('other changes in the tree', ok, { prepare: (p) => writeFileSync(join(p, 'docs/SPEC.md'), 'changed\n'), code: 1, posts: 0, says: ['changes besides docs/PLAN-REVIEW.md', 'docs/SPEC.md'] });
+    run('not on the planning branch', ok, { prepare: (p) => gitIn(p, 'stash', '-q').stdout + gitIn(p, 'switch', '-q', 'main').stdout, code: 1, posts: 0, says: ['on branch "main"'] });
+    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh auth login\n'] });
+    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh repo create --private --source . --remote origin\n', '    git push -u origin spike/notify\n', '    gh pr create --base main --head plan/initial --fill\n'] });
+    run('a repository gh cannot read', { ...ok, repo: null, repoError: 'HTTP 404: Not Found' }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['gh could not read the repository: HTTP 404'] });
+    run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', posts: 0, commits: 1, says: ['cli.github.com'] });
+    run('outside git', ok, { prepare: (p) => rmSync(join(p, '.git'), { recursive: true, force: true }), code: 1, posts: 0, says: ['is not inside a git repository'] });
+    run('a PR into another branch', { ...ok, pr: { head: 'local', base: 'develop' } }, { code: 1, posts: 0, commits: 1, says: ['goes into develop, not main'] });
+    run('a closed PR', { ...ok, pr: { head: 'local', state: 'CLOSED' } }, { code: 1, posts: 0, commits: 1, says: ['is closed'] });
+    run('a PR from another branch only', { ...ok, pr: { head: 'local', branch: 'other' } }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['there is no PR from plan/initial'] });
+    run('no PR', { ...ok, pr: null }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['    gh pr create --base main --head plan/initial --fill\n'] });
+    run('PR merged', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 1, posts: 0, commits: 1, says: ['is merged'] });
+    run('PR head lags', { ...ok, pr: { head: '0'.repeat(40) } }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['shows head 0000000'] });
+    run('read only', { ...ok, repo: { nameWithOwner: 'o/r', viewerPermission: 'READ' } }, { code: 3, result: 'pending', posts: 0, commits: 1, says: ['needs write access'] });
+    run('status refused', { ...ok, status: 'refuse' }, { code: 3, result: 'pending', posts: 1, commits: 1, says: ['GitHub refused the status', '-f "state=success" -f "context=ai-review"'] });
+    run('status not read back', { ...ok, status: 'lost' }, { code: 3, result: 'pending', posts: 1, commits: 1, says: ['reading it back'] });
+    run('push refused', ok, { prepare: (p) => gitIn(p, 'remote', 'set-url', 'origin', join(dir, 'no-such-remote.git')), code: 3, result: 'pending', posts: 0, commits: 1, says: ['    git push -u origin plan/initial\n'] });
+    run('dry run', ok, { args: ['--review', 'plan', '--state', 'success', '--dry-run'], code: 0, result: 'success (dry run', posts: 0, commits: 0, says: ['would commit docs/PLAN-REVIEW.md', 'would run gh api -X POST'] });
+    run('nothing to commit', ok, { prepare: (p) => gitIn(p, 'checkout', '-q', '--', 'docs/PLAN-REVIEW.md'), code: 0, result: 'success', posts: 1, commits: 0 });
+    // T2 review, round 2: an ignored file the check would read, a failed read after the write, a commit git refuses.
+    run('an ignored file under docs/', ok, { prepare: (p) => { writeFileSync(join(p, '.git', 'info', 'exclude'), 'docs/adr/0004-extra.md\n'); writeFileSync(join(p, 'docs', 'adr', '0004-extra.md'), '# ADR-0004: Extra\n'); }, code: 1, posts: 0, says: ['ignored by git', 'docs/adr/0004-extra.md'] });
+    run('the status read back fails', { ...ok, reads: 'statuses' }, { code: 3, result: 'pending', posts: 1, commits: 1, says: ['reading it back'] });
+    run('an OS file under docs/ that the template ignores', ok, { prepare: (p) => writeFileSync(join(p, 'docs', '.DS_Store'), 'x'), code: 0, result: 'success', posts: 1, commits: 1 });
+    const emptyConfig = join(dir, 'empty.gitconfig');
+    writeFileSync(emptyConfig, '');
+    run('git cannot commit', ok, { env: { GIT_AUTHOR_NAME: '', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: '', GIT_COMMITTER_EMAIL: '', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' }, code: 1, posts: 0, commits: 0, says: ['git could not commit docs/PLAN-REVIEW.md'] });
+    for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'code', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
+      run(label, ok, { args: a, code: 2, posts: 0 });
+    }
+  });
+});
+
+// 6i. T2-AC5, ADR-0008: merge.mjs against the fake gh. It merges the plan PR with a merge commit that
+// records the owner's approval, and only when both checks are green and a merge commit is possible.
+step('plan merge (fake gh)', (report) => {
+  scratch('pitwall-merge-', (dir) => {
+    const { project: base } = makePlanRepo(dir, { spike: false });
+    const sha = gitIn(base, 'rev-parse', 'plan/initial').stdout.trim();
+    const ok = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
+    const run = (label, scenario, { args = ['--plan', '--owner-approved'], project = base, gh, env = {}, code, result, merges, says = [] }) => {
+      const { r, calls, state } = withFakeGh('merge.mjs', project, scenario, [...args, '--project', project, ...(args.includes('--wait') ? [] : ['--wait', '0'])], { GIT_CEILING_DIRECTORIES: dir, ...(gh ? { PITWALL_GH: JSON.stringify(gh) } : {}), ...env });
+      const fail = (msg) => report(`${label}: ${msg}\n${r.stdout}${r.stderr}`);
+      const merged = calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
+      if (merged.length !== merges) fail(`${merged.length} merges, expected ${merges}`);
+      for (const m of merged) {
+        const body = m.args[m.args.indexOf('--body') + 1];
+        if (!m.args.includes('--merge') || m.args[m.args.indexOf('--match-head-commit') + 1] !== sha) fail(`merged with ${m.args.join(' ')}, expected --merge --match-head-commit ${sha}`);
+        if (!new RegExp(`^Plan approved by the owner, \\d{4}-\\d{2}-\\d{2}, at ${sha}$`).test(body ?? '')) fail(`the merge commit message is "${body}"`);
+      }
+      for (const s of says) if (!r.stdout.includes(s) && !r.stderr.includes(s)) fail(`output lacks "${s}"`);
+      checkHandoff(r.stdout, fail);
+      if (state.merged) rmSync(join(dir, 'repo-gh.json'));
+      return r;
+    };
+    run('green and approved', ok, { code: 0, result: 'merged', merges: 1 });
+    run('without the owner', ok, { args: ['--plan'], code: 2, merges: 0, says: ['--owner-approved is required'] });
+    run('merge commits not allowed', { ...ok, repo: { ...ok.repo, mergeCommitAllowed: false } }, { code: 3, result: 'pending', merges: 0, says: ['    gh repo edit o/r --enable-merge-commit\n'] });
+    run('a ruleset requires linear history', { ...ok, rules: [{ type: 'required_linear_history' }] }, { code: 3, result: 'pending', merges: 0, says: ['requires linear history'] });
+    run('the protection requires linear history', { ...ok, protection: { required_status_checks: { checks: [] }, enforce_admins: { enabled: true }, required_linear_history: { enabled: true } } }, { code: 3, result: 'pending', merges: 0, says: ['Require linear history'] });
+    run('ai-review red', { ...ok, statuses: { 'ai-review': 'failure' } }, { code: 1, merges: 0, says: ['ai-review is failure'] });
+    run('ai-review not set', { ...ok, statuses: {} }, { code: 1, merges: 0, says: ['ai-review is not set'] });
+    run('gate red', { ...ok, gate: 'failure' }, { code: 1, merges: 0, says: ['gate is failure'] });
+    run('gate still running', { ...ok, gate: 'pending' }, { code: 3, result: 'pending', merges: 0, says: ['still in_progress'] });
+    run('the head moved', { ...ok, pr: { head: '0'.repeat(40) } }, { code: 1, merges: 0, says: ['push it and review it again'] });
+    run('GitHub refuses', { ...ok, merge: 'refuse' }, { code: 3, result: 'pending', merges: 1, says: ['GitHub refused the merge', `    gh pr merge 7 --merge --match-head-commit ${sha}`] });
+    run('no PR', { ...ok, pr: null }, { code: 3, result: 'pending', merges: 0, says: ['    gh pr create --base main --head plan/initial --fill\n'] });
+    run('already merged', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 0, result: 'merged', merges: 0, says: ['already merged'] });
+    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', merges: 0, says: ['    gh auth login\n'] });
+    run('read only', { ...ok, repo: { ...ok.repo, viewerPermission: 'READ' } }, { code: 3, result: 'pending', merges: 0, says: ['needs write access'] });
+    run('dry run', ok, { args: ['--plan', '--owner-approved', '--dry-run'], code: 0, result: 'merged (dry run', merges: 0, says: ['would run gh pr merge 7 --merge'] });
+    // T2 review: the branches the first version left untested.
+    run('no gate check at all', { ...ok, gate: null }, { code: 3, result: 'pending', merges: 0, says: ['no gate check from GitHub Actions'] });
+    run('a gate from another app refuses at once', { ...ok, gateApp: 1 }, { code: 1, merges: 0, says: ['comes from app 1, not GitHub Actions'] });
+    run('a closed PR', { ...ok, pr: { head: 'local', state: 'CLOSED' } }, { code: 1, merges: 0, says: ['is closed'] });
+    run('a PR into another branch', { ...ok, pr: { head: 'local', base: 'develop' } }, { code: 1, merges: 0, says: ['goes into develop, not main'] });
+    run('a PR from another branch only', { ...ok, pr: { head: 'local', branch: 'other' } }, { code: 3, result: 'pending', merges: 0, says: ['there is no PR from plan/initial'] });
+    run('a repository gh cannot read', { ...ok, repo: null, repoError: 'HTTP 404: Not Found' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the repository: HTTP 404'] });
+    run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', merges: 0, says: ['cli.github.com'] });
+    run('the merge is not read back', { ...ok, merge: 'lost' }, { code: 3, result: 'pending', merges: 1, says: ['reads OPEN'] });
+    run('merged by hand before', { ...ok, pr: { head: 'local', state: 'MERGED' } }, { code: 0, result: 'merged', merges: 0, says: ['does not record the approval of the owner'] });
+    run('merged with the approval before', { ...ok, pr: { head: 'local', state: 'MERGED' }, mergeMessage: 'Merge the plan\n\nPlan approved by the owner, 2026-11-08, at abc' }, { code: 0, result: 'merged', merges: 0, says: ['records the approval of the owner'] });
+    // T2 review, round 2.
+    run('without --plan', ok, { args: ['--owner-approved'], code: 2, merges: 0, says: ['--plan is required'] });
+    run('a --wait that is not a number', ok, { args: ['--plan', '--owner-approved', '--wait', 'soon'], code: 2, merges: 0, says: ['--wait takes a number of seconds'] });
+    run('the statuses cannot be read', { ...ok, reads: 'statuses' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the statuses'] });
+    run('the check runs cannot be read', { ...ok, reads: 'check-runs' }, { code: 3, result: 'pending', merges: 0, says: ['gh could not read the check runs'] });
+    run('the rules cannot be read', { ...ok, reads: 'rules' }, { code: 0, result: 'merged', merges: 1, says: ['could not read the rules on main'] });
+    run('the protection cannot be read', { ...ok, reads: 'protection' }, { code: 0, result: 'merged', merges: 1, says: ['could not read the branch protection of main'] });
+    run('a gate re-run after a failure', { ...ok, gateRerun: true }, { code: 0, result: 'merged', merges: 1 });
+    // T2 review, round 3.
+    run('merged before at another commit', { ...ok, pr: { head: '1'.repeat(40), state: 'MERGED' } }, { code: 1, result: 'not merged', merges: 0, says: ['was merged at 1111111', 'need a PR and a review of their own'] });
+    const started = Date.now();
+    run('a gate still running, with a long poll', { ...ok, gate: 'pending' }, { args: ['--plan', '--owner-approved', '--wait', '1'], env: { PITWALL_POLL_MS: '20000' }, code: 3, result: 'pending', merges: 0, says: ['still in_progress'] });
+    if (Date.now() - started > 8000) report(`a gate still running, with a long poll: took ${Date.now() - started} ms with --wait 1, so it slept past its deadline`);
+    const nobranch = join(dir, 'nobranch');
+    cpSync(base, nobranch, { recursive: true });
+    gitIn(nobranch, 'switch', '-q', 'main');
+    gitIn(nobranch, 'branch', '-q', '-D', 'plan/initial');
+    run('no local planning branch', ok, { project: nobranch, code: 1, merges: 0, says: ['there is no local branch plan/initial'] });
+  });
+});
+
+// 6f. T1-AC2, T2-AC6: protect.mjs against the fake gh. It checks before it writes (L-5), writes the
+// protection ADR-0005 and ADR-0008 ask for, hands over instead of failing, and a dry run writes nothing.
 step('merge protection (fake gh)', (report) => {
   scratch('pitwall-protect-', (dir) => {
-    const fake = join(dir, 'fake-gh.mjs');
-    writeFileSync(
-      fake,
-      `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-const s = JSON.parse(process.env.FAKE_GH);
-const args = process.argv.slice(2);
-let input = '';
-try { input = readFileSync(0, 'utf8'); } catch {}
-appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify({ args, input }) + '\\n');
-const out = (o) => { process.stdout.write(typeof o === 'string' ? o : JSON.stringify(o)); process.exit(0); };
-const err = (m) => { process.stderr.write(m + '\\n'); process.exit(1); };
-const state = process.env.FAKE_GH_STATE;
-if (args[0] === '--version') out('gh version 2.0.0 (fake)\\n');
-if (args[0] === 'auth') s.auth ? out('Logged in\\n') : err('You are not logged into any GitHub hosts.');
-if (args[0] === 'repo') s.repo ? out(s.repo) : err('no git remotes found');
-if (args[0] === 'api') {
-  const path = args.find((a) => a.startsWith('repos/'));
-  const stored = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : s.protection ?? null;
-  if (args.includes('PUT')) {
-    if (s.put === 'refuse') err('gh: Resource not accessible by integration (HTTP 403)');
-    const b = JSON.parse(input);
-    // "lost": GitHub answers OK but the protection never shows up.
-    if (s.put === 'ok') writeFileSync(state, JSON.stringify({ required_status_checks: { checks: b.required_status_checks.checks.map((c) => ({ context: c.context, app_id: c.app_id === -1 ? null : c.app_id })) }, enforce_admins: { enabled: b.enforce_admins } }));
-    out('{}');
-  }
-  if (path.endsWith('/protection')) {
-    if (s.probe === 'free') err('gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)');
-    if (stored) out(stored);
-    if (s.probe === 'denied') err('gh: Resource not accessible by integration (HTTP 403)');
-    err('gh: Branch not protected (HTTP 404)');
-  }
-  if (s.branch === false) err('gh: Branch not found (HTTP 404)');
-  if (s.branch === 'garbled') out('not json');
-  // The branch endpoint: the protection summary any reader sees.
-  out(stored
-    ? { name: 'main', protected: true, protection: { enabled: true, required_status_checks: { checks: stored.required_status_checks.checks, enforcement_level: stored.enforce_admins?.enabled ? 'everyone' : 'non_admins' } } }
-    : { name: 'main', protected: false, protection: { enabled: false } });
-}
-err('fake gh: unexpected call ' + args.join(' '));
-`,
-    );
     const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
     const expectedBody = {
       required_status_checks: { strict: cfg.mergeProtection.strict, checks: [{ context: cfg.review.gateContext, app_id: cfg.mergeProtection.githubActionsAppId }, { context: cfg.review.statusContext, app_id: -1 }] },
       enforce_admins: cfg.mergeProtection.enforceAdmins,
       required_pull_request_reviews: null,
       restrictions: null,
+      required_linear_history: false,
     };
     // ADR-0005 in plain values, so a config edit cannot quietly weaken it.
     if (expectedBody.enforce_admins !== true || cfg.review.gateContext !== 'gate' || cfg.review.statusContext !== 'ai-review' || cfg.mergeProtection.githubActionsAppId !== 15368) {
@@ -643,11 +1288,7 @@ err('fake gh: unexpected call ' + args.join(' '));
       mkdirSync(join(project, '.claude'), { recursive: true });
       if (raw !== undefined) writeFileSync(join(project, '.claude', 'pitwall.json'), raw);
       else if (before) writeFileSync(join(project, '.claude', 'pitwall.json'), JSON.stringify({ templateVersion: '0.0.0', processLevel: 'lite', mergeProtection: before }));
-      const logFile = join(project, 'gh.log');
-      writeFileSync(logFile, '');
-      const env = { ...process.env, PITWALL_GH: JSON.stringify(gh ?? [process.execPath, fake]), FAKE_GH: JSON.stringify(scenario), FAKE_GH_LOG: logFile, FAKE_GH_STATE: join(project, 'state.json') };
-      const r = runScript('protect.mjs', ['--project', project, ...args], { env, cwd: project });
-      const calls = readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      const { r, calls } = withFakeGh('protect.mjs', project, scenario, ['--project', project, ...args], gh ? { PITWALL_GH: JSON.stringify(gh) } : {});
       const putCalls = calls.filter((c) => c.args.includes('PUT'));
       const settingsFile = join(project, '.claude', 'pitwall.json');
       const stored = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8'))?.mergeProtection ?? null : null;
@@ -658,16 +1299,13 @@ err('fake gh: unexpected call ' + args.join(' '));
       for (const c of putCalls) if (JSON.stringify(JSON.parse(c.input)) !== JSON.stringify(expectedBody)) fail(`wrote ${c.input}, expected ${JSON.stringify(expectedBody)}`);
       if (stored !== setting) fail(`.claude/pitwall.json says ${stored}, expected ${setting}`);
       for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+      checkHandoff(r.stdout, fail);
       // A handed-over command must build the same body, by gh's own rules for -F fields (L-6).
       const handed = /gh api -X PUT repos\/o\/r\/branches\/main\/protection((?: -F "[^"]+")+)/.exec(r.stdout);
       if (handed) {
         const built = ghFields([...handed[1].matchAll(/-F "([^"]+)"/g)].map((m) => m[1]));
         if (JSON.stringify(built) !== JSON.stringify(expectedBody)) fail(`the handed-over command writes ${JSON.stringify(built)}`);
       }
-      // Every line the owner is told to run works unchanged in bash and PowerShell: no pipes, redirects or placeholders (L-6).
-      const commands = [...r.stdout.matchAll(/^ {2}(?:run|then): (.+)$/gm)].map((m) => m[1]);
-      for (const c of commands) if (/[<>|]|--input -/.test(c)) fail(`a handed-over command would not run as written in both shells (L-6): ${c}`);
-      if (r.stdout.includes('HANDOFF') && commands.length === 0) fail('a handoff without a ready command');
       return { r, calls, handed };
     };
     // What "gh api -F key[a][][b]=v ..." sends: typed values, and a repeated key starts a new array item.
@@ -695,14 +1333,15 @@ err('fake gh: unexpected call ' + args.join(' '));
     }
 
     const protectedOk = { required_status_checks: { checks: [{ context: 'gate', app_id: 15368 }, { context: 'ai-review', app_id: null }] }, enforce_admins: { enabled: true } };
+    const otherProtection = { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } };
     run('public', ok, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
     run('private, paid plan', { ...ok, repo: repo('PRIVATE') }, { code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
-    run('dry run', ok, { args: ['--dry-run'], code: 0, result: 'branch-protection (dry run', puts: 0, setting: 'pending', says: ['"enforce_admins": true', 'would run gh api -X PUT'] });
+    run('dry run', ok, { args: ['--dry-run'], code: 0, result: 'branch-protection (dry run', puts: 0, setting: 'pending', says: ['"enforce_admins": true', '"required_linear_history": false', 'would run gh api -X PUT'] });
     run('private, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { code: 0, result: 'local-hook', puts: 0, setting: 'local-hook' });
     run('dry run, GitHub Free', { ...ok, repo: repo('PRIVATE'), probe: 'free' }, { args: ['--dry-run'], code: 0, result: 'local-hook', puts: 0, setting: 'pending' });
     run('already protected', { ...ok, protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
     run('not admin, already protected', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
-    run('protected otherwise', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
+    run('protected otherwise', { ...ok, protection: otherProtection }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
     run('admins excluded', { ...ok, protection: { ...protectedOk, enforce_admins: { enabled: false } } }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['other settings'] });
     const notAdmin = run('not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF', 'needs an admin'] });
     if (!notAdmin.handed) report('not admin: no ready command handed over');
@@ -711,10 +1350,10 @@ err('fake gh: unexpected call ' + args.join(' '));
     if (!refused.handed) report('write refused: no ready command handed over');
     run('write not read back', { ...ok, put: 'lost' }, { code: 3, result: 'pending', puts: 1, setting: 'pending', says: ['reading it back'] });
     run('probe refused', { ...ok, probe: 'denied' }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['HANDOFF'] });
-    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: gh auth login'] });
+    run('not signed in', { ...ok, auth: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  Run this yourself, in bash or PowerShell:\n    gh auth login\n'] });
     run('recorded mode kept', { ...ok, auth: false }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
-    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: gh repo create --private --source . --remote origin', '  run: git push -u origin main'] });
-    run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['  run: git push -u origin main'] });
+    run('no repository', { ...ok, repo: null }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['    gh repo create --private --source . --remote origin\n', '    git push -u origin main\n'] });
+    run('branch not pushed', { ...ok, branch: false }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['    git push -u origin main\n'] });
     run('no gh', ok, { gh: [join(dir, 'no-such-gh')], code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['cli.github.com'] });
     run('no settings file', ok, { before: null, code: 0, result: 'branch-protection', puts: 1, setting: null, says: ['not recorded'] });
     const named = run('--repo', { ...ok }, { args: ['--repo', 'o/r'], code: 0, result: 'branch-protection', puts: 1, setting: 'branch-protection' });
@@ -734,8 +1373,16 @@ err('fake gh: unexpected call ' + args.join(' '));
     run('dry run, recorded local-hook, public, not admin', { ...ok, repo: repo('PUBLIC', 'WRITE') }, { args: ['--dry-run'], before: 'local-hook', code: 3, result: 'pending (dry run', puts: 0, setting: 'local-hook', says: ['would record pending'] });
     run('recorded protection kept when nothing could be read', { ...ok, branch: 'garbled', probe: 'denied' }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('summary not JSON, probe shows the protection', { ...ok, branch: 'garbled', protection: protectedOk }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
-    run('recorded local-hook, private, not admin, protection visible', { ...ok, repo: repo('PRIVATE', 'WRITE'), protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
-    run('recorded local-hook, protection available', { ...ok, protection: { required_status_checks: { checks: [{ context: 'build', app_id: 1 }] }, enforce_admins: { enabled: false } } }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
+    // T2-AC6 (a): a branch summary that shows protection no longer proves that branch protection is available.
+    run('recorded local-hook, private, not admin, protection visible', { ...ok, repo: repo('PRIVATE', 'WRITE'), protection: otherProtection }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'local-hook', says: ['kept the recorded mode'] });
+    run('recorded local-hook, protection available', { ...ok, protection: otherProtection }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'pending' });
+    // T2-AC6 (d): a refused probe while other protection is visible.
+    run('probe refused, other protection visible', { ...ok, probe: 'denied', protection: otherProtection }, { code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['could not read the branch protection'] });
+    run('probe refused, other protection visible, private, recorded local-hook', { ...ok, repo: repo('PRIVATE'), probe: 'denied', protection: otherProtection }, { before: 'local-hook', code: 3, result: 'pending', puts: 0, setting: 'local-hook', says: ['kept the recorded mode'] });
+    // T2 review: linear history, which the summary cannot show, counts as other settings for an admin.
+    run('admin, protected but linear history required', { ...ok, protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'pending', says: ['other settings'] });
+    run('not admin, protected with linear history the summary hides', { ...ok, repo: repo('PUBLIC', 'WRITE'), protection: { ...protectedOk, required_linear_history: { enabled: true } } }, { code: 0, result: 'branch-protection', puts: 0, setting: 'branch-protection' });
+    run('admin, summary satisfies, probe refused', { ...ok, probe: 'denied', protection: protectedOk }, { before: 'branch-protection', code: 3, result: 'pending', puts: 0, setting: 'branch-protection', says: ['kept the recorded mode'] });
     run('bad flag', ok, { args: ['--force'], code: 2, puts: 0, setting: 'pending' });
   });
 });

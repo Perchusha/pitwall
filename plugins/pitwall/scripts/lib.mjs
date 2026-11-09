@@ -1,5 +1,6 @@
 // Helpers shared by the plugin's scripts (ADR-0004). Node only, no dependencies.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,3 +72,57 @@ export function projectPath(templatePath) {
 }
 
 export const exists = (root, rel) => existsSync(join(root, rel));
+
+export function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// gh as the scripts run it. PITWALL_GH, a JSON array, runs another binary (the checks
+// use a fake one); PITWALL_CALLER tells that fake, and its log, which script called.
+export function ghRunner(cwd, caller) {
+  const cmd = process.env.PITWALL_GH ? JSON.parse(process.env.PITWALL_GH) : ['gh'];
+  return (args, input) => {
+    const r = spawnSync(cmd[0], [...cmd.slice(1), ...args], { cwd, input, encoding: 'utf8', env: { ...process.env, PITWALL_CALLER: caller } });
+    return { ok: !r.error && r.status === 0, out: r.stdout ?? '', err: `${r.stderr ?? ''}${r.error?.message ?? ''}` };
+  };
+}
+
+export function gitRunner(cwd) {
+  return (...args) => {
+    const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
+    return { ok: !r.error && r.status === 0, out: (r.stdout ?? '').trim(), raw: r.stdout ?? '', err: `${r.stderr ?? ''}${r.error?.message ?? ''}`.trim() };
+  };
+}
+
+export function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// A step handed to the owner. steps: { note } is plain text, { run } a ready command;
+// then is the command that records the result afterwards. Each command stands on a
+// line of its own under a plain label, so it can be copied as it is, and it runs
+// unchanged in bash and in PowerShell: no pipes, no redirects, no placeholders (L-6).
+export const RUN_LABEL = 'Run this yourself, in bash or PowerShell:';
+export const THEN_LABEL = 'Then run this to record the result:';
+export function printHandoff(reason, steps, then) {
+  console.log(`HANDOFF: ${reason}`);
+  let last = '';
+  for (const s of steps) {
+    if (s.note) {
+      console.log(`  Note: ${s.note}`);
+      last = 'note';
+    } else {
+      if (last !== 'run') console.log(`  ${RUN_LABEL}`);
+      console.log(`    ${s.run}`);
+      last = 'run';
+    }
+  }
+  if (then) {
+    console.log(`  ${THEN_LABEL}`);
+    console.log(`    ${then}`);
+  }
+}

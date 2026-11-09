@@ -6,7 +6,9 @@
     "lite": {
       "when": "one user, no money or personal data, 1 to 3 epics",
       "spike": "optional",
-      "planReview": "short checklist",
+      "spikeRequired": false,
+      "planReview": "short checklist, no pre-mortem",
+      "preMortemReasons": 0,
       "staging": "local build",
       "productionSmoke": false,
       "decisions": {
@@ -15,12 +17,17 @@
           "max": 5
         },
         "restMayBeTwoWay": true
+      },
+      "epics": {
+        "max": 3
       }
     },
     "standard": {
       "when": "users, a database, auth, a deployment",
       "spike": "when an assumption is unproven",
-      "planReview": "full",
+      "spikeRequired": false,
+      "planReview": "full checklist, pre-mortem with 5 reasons",
+      "preMortemReasons": 5,
       "staging": "required",
       "productionSmoke": true,
       "decisions": {
@@ -31,7 +38,9 @@
     "full": {
       "when": "several services, realtime, payments, AI pipelines, a high cost of error",
       "spike": "required",
-      "planReview": "full with pre-mortem",
+      "spikeRequired": true,
+      "planReview": "full checklist, pre-mortem with 10 reasons",
+      "preMortemReasons": 10,
       "staging": "required",
       "productionSmoke": true,
       "decisions": {
@@ -66,6 +75,20 @@
       "warn": 100,
       "stop": 120
     },
+    "researcherToolCalls": {
+      "lite": {
+        "warn": 30,
+        "stop": 40
+      },
+      "standard": {
+        "warn": 60,
+        "stop": 80
+      },
+      "full": {
+        "warn": 100,
+        "stop": 120
+      }
+    },
     "sessionToolCalls": {
       "warn": 250,
       "stop": 300
@@ -76,7 +99,13 @@
     "statusContext": "ai-review",
     "gateContext": "gate",
     "runs": "local session",
-    "ownerDecidesAtReject": 3
+    "ownerDecidesAtReject": 3,
+    "maxRounds": 5,
+    "findings": {
+      "realistic": "what an honest agent or person could write or do by accident while following the process: it may block",
+      "exotic": "what only a deliberate attempt to get past a check would write, such as invisible characters, HTML or character references in cells, or Markdown built to read one way and render another: listed once, kept as one accepted risk, never blocking"
+    },
+    "threatModel": "the checks guard against mistakes and carelessness, not against a deliberate bypass; the reviewer and the owner's approval catch that"
   },
   "kickoff": {
     "questions": {
@@ -167,6 +196,177 @@
       "Hosting and staging"
     ],
     "notNeeded": "Not needed"
+  },
+  "spike": {
+    "branch": "spike/<topic>",
+    "outcomes": [
+      "confirmed",
+      "not confirmed"
+    ],
+    "pending": "pending"
+  },
+  "plan": {
+    "firstEpic": "E0",
+    "status": "planned",
+    "statuses": [
+      "planned",
+      "in progress",
+      "in review",
+      "merged",
+      "released"
+    ],
+    "epicSplit": {
+      "modules": 3,
+      "packages": 2
+    },
+    "gateWaitSeconds": 90
+  },
+  "planReview": {
+    "nonFunctional": [
+      {
+        "item": "Security and secrets",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Personal data and GDPR",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Monthly cost at 10 and 1000 users",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Dependency licences",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Accessibility",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "i18n",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Logs, metrics and alerts",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Backups and restore",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Performance targets",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "External API limits",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      }
+    ],
+    "launch": [
+      {
+        "item": "Domain",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Hosting",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "App stores",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Legal pages",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Analytics with consent",
+        "levels": [
+          "standard",
+          "full"
+        ]
+      },
+      {
+        "item": "Support channel",
+        "levels": [
+          "lite",
+          "standard",
+          "full"
+        ]
+      }
+    ],
+    "sizes": [
+      "S",
+      "M",
+      "L"
+    ],
+    "uncertainty": [
+      "known",
+      "partly",
+      "unknown"
+    ],
+    "needsAction": {
+      "sizes": [
+        "L"
+      ],
+      "uncertainty": [
+        "unknown"
+      ]
+    },
+    "severities": [
+      "blocking",
+      "should fix"
+    ],
+    "open": "open"
   },
   "maturity": {
     "stableReleaseOnly": true,

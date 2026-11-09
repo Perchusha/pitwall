@@ -28,5 +28,5 @@ Kickoff sets branch protection with `enforce_admins` on (owner, 2026-11-05). In 
 ## Consequences
 
 - The first PR of a new project, the plan from `plan/initial`, needs an `ai-review` status: the plan reviewer sets it in T2 (T2-AC5).
-- pitwall's own repository has admins excluded today. Turning it on is the owner's step, outside this epic.
+- pitwall's own repository had admins excluded when this was decided. Turning it on was the owner's step, outside this epic; on 2026-11-06 the branch summary of `main` reads `enforcement_level: everyone`, so it is on.
 - Revisiting it is one setting per repository.
