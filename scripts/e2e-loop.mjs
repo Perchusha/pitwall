@@ -312,6 +312,15 @@ function saveResponses(file, repo) {
     try {
       body = JSON.parse(c.stdout);
     } catch {}
+    // An account in the answer (a status's creator, a repository's owner) keeps its shape, not its identity.
+    const anonymous = (v) => {
+      if (Array.isArray(v)) return v.map(anonymous);
+      if (!v || typeof v !== 'object') return v;
+      const o = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, anonymous(x)]));
+      if ('login' in o) for (const k of Object.keys(o)) if (k !== 'login' && k !== 'type') o[k] = typeof o[k] === 'number' ? 0 : typeof o[k] === 'string' ? `<${k}>` : o[k];
+      return o;
+    };
+    body = anonymous(body);
     writeFileSync(join(out, `${kind}.json`), JSON.stringify({ gh: cli, recorded: new Date().toISOString().slice(0, 10), args: JSON.parse(scrub(JSON.stringify(c.args))), status: c.status, stdout: JSON.parse(scrub(JSON.stringify(body))), stderr: scrub(c.stderr.trim().split('\n').pop() ?? '') }, null, 2) + '\n');
     written.push(kind);
   }

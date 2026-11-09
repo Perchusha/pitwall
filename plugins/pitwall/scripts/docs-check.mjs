@@ -257,7 +257,7 @@ const JUDGED = {
   'docs/EPICS.md': { null: [[2, 'risk'], [3, '"Depends on"'], [4, 'status']] },
   'docs/DISCOVERY.md': { 'Assumptions by risk': [[0, 'ID'], [2, 'risk']], 'Owner constraints': [[0, 'constraint'], [2, '"Confirmed on"']] },
   spike: { Criterion: [[2, '"Success when"']], Result: [[1, 'measured'], [2, '"Measured by"'], [3, 'date']] },
-  review: { 'Acceptance criteria': [[0, 'criterion'], [1, '"Covered by"']], Findings: [[0, 'number'], [2, 'severity'], [3, '"Closed by"']] },
+  review: { 'Acceptance criteria': [[0, 'criterion']], Findings: [[0, 'number'], [2, 'severity'], [3, '"Closed by"']] },
 };
 function plainCells(rel, section, n) {
   const map = JUDGED[rel.startsWith('docs/spikes/') ? 'spike' : rel.startsWith(`${cfg.loop.reviews}/`) ? 'review' : rel] ?? {};
@@ -1236,7 +1236,9 @@ function checkCodeReview() {
   }
 
   // Every acceptance criterion of the epic, or the bug itself, is covered by a test or a QA scenario.
-  const nothing = (cell) => !cellText(cell) || openCell(cell) || /^(?:-+|n\/a|tbd|todo|pending|none|nothing|\?+)\.?$/i.test(bareCell(cell));
+  // A test named in a code span (`src/a.test.js`) is a test named: the cell is read with its code spans kept.
+  const withCode = (cell) => visible(cell ?? '').replace(/`/g, '').replace(/^[*_\s]+|[*_\s]+$/g, '');
+  const nothing = (cell) => !withCode(cell) || openCell(cell) || /^(?:-+|n\/a|tbd|todo|pending|none|nothing|\?+)\.?$/i.test(withCode(cell));
   let want = [];
   if (epic) {
     const ef = `docs/epics/${id}.md`;
@@ -1274,7 +1276,7 @@ function checkCodeReview() {
     const cell = bareCell(by);
     const sha = /^([0-9a-f]{7,40})\b/.exec(cell)?.[1];
     const risk = /^(R-\d+)\b/.exec(cell)?.[1];
-    if (openCell(by) || (!sha && !risk)) return report(rel, `finding ${num} is not closed: start its last cell with the commit on this branch that closes it, or with a risk R-n the owner accepted`);
+    if (openCell(by) || (!sha && !risk)) return report(rel, `finding ${num} is not closed: start its last cell with the commit on this branch that closes it, or with a risk R-n the owner accepted, written plainly, outside a code span`);
     if (risk) {
       if (!accepted.get(risk)) report(rel, `finding ${num} is closed by ${risk}, which is not a risk the owner accepted: a row of docs/RISKS.md with a fallback and the date in "Accepted on"`);
       return;

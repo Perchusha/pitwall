@@ -130,7 +130,7 @@
           "docs-check.mjs",
           "review-status.mjs"
         ],
-        "git": ["diff", "log", "show", "status", "rev-parse", "ls-files", "blame"],
+        "git": ["diff", "log", "show", "status", "rev-parse", "ls-files", "blame", "merge-base", "branch"],
         "gate": true
       }
     },

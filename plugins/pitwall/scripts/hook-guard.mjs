@@ -515,6 +515,8 @@ export function guard(call, ctx) {
       // It may start from the project root, "cd <root> && <command>", the way agents often do.
       const cd = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>`'"]+))\s*&&\s*/.exec(text);
       if (cd && norm(cd[1] ?? cd[2] ?? cd[3], cwd, home) === root) text = text.slice(cd[0].length);
+      // Agents add "2>&1" to see errors in the output; it writes nothing (L-9).
+      text = text.replace(/\s+2>&1\s*$/, '');
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
       const one = cmds.length === 1 ? cmds[0] : null;
@@ -531,7 +533,9 @@ export function guard(call, ctx) {
         policy.git.includes(g.sub) &&
         gitOptions.every((a, i) => a === '--no-pager' || a === '-C' || gitOptions[i - 1] === '-C') &&
         (!g.dir || norm(g.dir, at, home) === root) &&
-        !g.args.some((a) => /^(--output|--ext-diff|--textconv|--open-files-in-pager|-O)/.test(a));
+        !g.args.some((a) => /^(--output(=|$)|--ext-diff|--textconv|--open-files-in-pager)/.test(a)) &&
+        // git branch only lists here: it names no branch to create, move or delete.
+        (g.sub !== 'branch' || g.args.every((a) => /^(--show-current|--list|-a|--all|-r|--remotes|-v|-vv|--verbose|--contains|--merged|--no-merged|--no-color)$/.test(a)));
       // The project's gate in any of its modes, as CI runs it or straight from its path.
       const gateArgs = program(argv[0]) === 'bash' ? argv.slice(1) : argv;
       const runsGate = Boolean(policy.gate) && norm(gateArgs[0] ?? '', at, home) === `${root}/scripts/gate` && gateArgs.length <= 2 && (gateArgs.length === 1 || ['--fast', '--changed', '--full'].includes(gateArgs[1]));

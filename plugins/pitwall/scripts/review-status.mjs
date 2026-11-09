@@ -119,7 +119,8 @@ if (state === 'success') {
   // The check reads this too, but the rule is this script's own (owner, ADR-0011): success belongs to the
   // reviewed code, so after the commit the review names, nothing but the review file may have changed.
   if (args.review === 'code') {
-    const reviewed = /^- Reviewed: *([0-9a-f]{40})[ \t]*$/m.exec(readFileSync(join(project, review.file), 'utf8'))?.[1];
+    // Read as the docs check reads the field: any list marker, emphasis or a code span around the sha.
+    const reviewed = /^[-*+] Reviewed: *[*_`]*([0-9a-f]{40})[*_`]*[ \t]*$/m.exec(readFileSync(join(project, review.file), 'utf8'))?.[1];
     const after = reviewed ? git('-c', 'core.quotePath=false', 'diff', '--name-only', reviewed, 'HEAD') : null;
     if (!after?.ok) refuse(`${review.file} names no reviewed commit that git can read`);
     const moved = after.out.split('\n').filter((f) => f && f !== review.file);

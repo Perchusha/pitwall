@@ -1358,6 +1358,7 @@ step('code review check', (report) => {
     run('a finding closed by words', { review: { ...good, findings: [['No snooze test', 'should fix', 'fixed in the last commit']] }, says: ['finding 1 is not closed'] });
     run('a criterion left out', { review: { ...good, criteria: [['E1-AC1', 'a test']] }, says: ['E1-AC2 is not in "## Acceptance criteria"'] });
     run('a criterion not covered', { review: { ...good, criteria: [['E1-AC1', 'a test'], ['E1-AC2', 'open: no test yet']] }, says: ['E1-AC2 is not covered'] });
+    run('criteria covered by a test in a code span, and by a link', { review: { ...good, criteria: [['E1-AC1', '`src/reminder.test.js`'], ['E1-AC2', '[the snooze test](../../src/reminder.test.js)']] }, pass: true });
     run('a criterion covered by a dash', { review: { ...good, criteria: [['E1-AC1', 'a test'], ['E1-AC2', '-']] }, says: ['E1-AC2 is not covered'] });
     run('a criterion of another epic', { review: { ...good, criteria: [...good.criteria ?? [['E1-AC1', 'a'], ['E1-AC2', 'b']], ['E2-AC1', 'a test']] }, says: ['"E2-AC1" is not a criterion of E1'] });
     run('a short reviewed sha', { review: { ...good, reviewed: fix.slice(0, 7) }, says: ['the full sha of the commit the round reviewed'] });
@@ -2251,6 +2252,14 @@ step('hooks (recorded payloads)', (report) => {
     crBash('git commit', 'git commit -am x', 'deny:agent');
     crBash('git push', 'git push origin HEAD', 'deny:agent');
     crBash('git checkout', 'git checkout main', 'deny:agent');
+    // T3b review: what a reviewer runs by habit.
+    crBash('git branch --show-current', 'git branch --show-current', 'allow');
+    crBash('git merge-base', 'git merge-base main HEAD', 'allow');
+    crBash('the gate with 2>&1', 'bash scripts/gate --full 2>&1', 'allow');
+    crBash('git diff --output-indicator-new', 'git diff --output-indicator-new=+ main...HEAD', 'allow');
+    crBash('git branch -D', 'git branch -D epic/E1-x', 'deny:agent');
+    crBash('git branch with a new name', 'git branch other', 'deny:agent');
+    crBash('2>&1 then more', 'git status 2>&1; git push', 'deny:agent');
     crBash('git with a config option', 'git -c core.pager=less log', 'deny:agent');
     crBash('git diff into a file', 'git diff --output=x.patch main', 'deny:agent');
     crBash('git log into a file', 'git log --output x.txt', 'deny:agent');
