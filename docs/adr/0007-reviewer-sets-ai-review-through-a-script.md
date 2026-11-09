@@ -28,4 +28,5 @@ ADR-0002 makes the review verdict the commit status `ai-review`, set from the ow
 - Until the T3 hook exists, the split rests on the prompts and on the status belonging to one commit: a push after the review needs a new review. The owner accepts this risk, as in ADR-0002.
 - No hook sees a status set outside Claude Code, from the owner's terminal or the GitHub web page. The handoff commands rely on that, and so could a mistake.
 - The payload fields belong to Claude Code and may change. `.claude-code-version` pins the CLI, and T3 tests the hook against a recorded payload.
+- Threat model (owner, 2026-11-09): the docs check that `success` rests on guards against mistakes and carelessness, not against a deliberate attempt to get past it; a deliberate one is for the reviewer and the owner's yes to catch. The ways past it that only such an attempt would write are accepted as R-1, and `review.findings` in the config keeps the line between the two kinds for every later review.
 - Revisiting costs one script and one hook rule.

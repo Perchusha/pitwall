@@ -99,7 +99,13 @@
     "statusContext": "ai-review",
     "gateContext": "gate",
     "runs": "local session",
-    "ownerDecidesAtReject": 3
+    "ownerDecidesAtReject": 3,
+    "maxRounds": 5,
+    "findings": {
+      "realistic": "what an honest agent or person could write or do by accident while following the process: it may block",
+      "exotic": "what only a deliberate attempt to get past a check would write, such as invisible characters, HTML or character references in cells, or Markdown built to read one way and render another: listed once, kept as one accepted risk, never blocking"
+    },
+    "threatModel": "the checks guard against mistakes and carelessness, not against a deliberate bypass; the reviewer and the owner's approval catch that"
   },
   "kickoff": {
     "questions": {

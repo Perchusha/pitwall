@@ -990,7 +990,7 @@ step('plan and spike checks', (report) => {
     hide('an epic ID with a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E&#8203;2 second half | L | unknown | - |\n'), [/epic cell of "E&#8203;2 second half" holds a character reference/]);
     hide('a high risk in emphasis that nothing covers', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n| A-3 | Cloud sync works | **high** | nothing yet |\n'), [/high-risk assumption A-3 is covered by no spike/]);
     for (const [label, cell, pattern] of [
-      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /holds a tilde/],
+      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /holds tildes/],
       ['an open written with a character reference', 'E1-AC2 was cut, open&colon; nothing covers it', /holds a character reference/],
       ['an open in angle brackets', 'E1-AC2 <open: nothing covers it>', /holds HTML or an angle bracket/],
       ['an open as a broken link', '[E1-AC2](open: nothing covers it)', /holds a link, an image or a bracket/],
@@ -999,7 +999,32 @@ step('plan and spike checks', (report) => {
       ['an ID written with a character reference', 'ADR-&#48;099', /holds a character reference/],
     ]) hide(label, 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', `| should fix | ${cell} |`), [pattern]);
     hide('a heading after a non-breaking space', 'docs/spikes/notify.md', (t) => t.replace('## Result', `##${NBSP}Notes\n\n## Result`), [/an invisible character/]);
-    planCase('a constraint date struck out, at the discovery stage', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('| Licence | Settled | 2026-11-05 |', '| Licence | Settled | ~~2026-11-05~~ open: withdrawn |')), [/constraint "Licence" has no confirmation date/, /"Confirmed on" cell of "Licence" holds a tilde/], 'discovery');
+    planCase('a constraint date struck out, at the discovery stage', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('| Licence | Settled | 2026-11-05 |', '| Licence | Settled | ~~2026-11-05~~ open: withdrawn |')), [/constraint "Licence" has no confirmation date/, /"Confirmed on" cell of "Licence" holds tildes/], 'discovery');
+    // T2 review, round 7: a criterion is checked before its commit freezes it, ordinary signs stay
+    // allowed, only a decision the owner made closes an item, and a mention is no coverage.
+    const pendingSpike = (criterionRows) => spikeFile('pending', '-', '').replace('spike/notify', 'spike/idle-time').replace(SPIKE_CRITERION, criterionRows);
+    planCase('a criterion with "<" and a metric per system, before its commit', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Windows, 10 readings | Error < 1 s in 10 of 10 |\n| Idle time error | macOS, 10 readings | Error < 1 s in 10 of 10 |')), [], 'spike-criterion');
+    planCase('a criterion that would freeze a refused cell, before its commit', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Ten readings | <b>10 of 10</b> |')), [/idle-time\.md:\d+: the "Success when" cell of "Idle time error" holds HTML/], 'spike-criterion');
+    planCase('a criterion committed with its result already written', (p) => writeFileSync(join(p, 'docs/spikes/idle-time.md'), pendingSpike('| Idle time error | Ten readings | 10 of 10 |').replace('| --- | --- | --- | --- |\n', '| --- | --- | --- | --- |\n| Idle time error | 10 of 10 | owner | 2026-11-09 |\n')), [/idle-time\.md: the result is written already/], 'spike-criterion');
+    planCase('no spike waiting for its criterion', () => {}, [/no spike with "- Outcome: pending"/], 'spike-criterion');
+    planCase('ordinary signs in judged cells', (p, e) => {
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Performance targets | Under 50 MB | E1-AC1 |', '| Performance targets | Average CPU < 1% over 1 hour | E1-AC1 |').replace('| GitHub issues | 2026-11-08 |', '| GitHub issues, answered in < 1 day | 2026-11-08 |'));
+      e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A tray badge, cached in ~/Library/Caches/move-reminder or %LOCALAPPDATA%\\move-reminder |'));
+    }, [], 'plan-review');
+    planCase('a finding closed by a proposed ADR', (p, e) => {
+      writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Status: accepted', '- Status: proposed'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ADR-0004 |'));
+    }, [/finding 1 is not closed/], 'plan-review');
+    planCase('a high-risk assumption only mentioned in open questions', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', '').replace('## Open questions\n\nNone.', '## Open questions\n\nNothing in this epic checks A-1 yet; it needs a spike or an accepted risk.'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike, ADR, epic or accepted risk/], 'plan-review');
+    planCase('a high-risk assumption only in the address of a link', (p, e) => {
+      e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ' (see [the notes](https://example.com/A-1))'));
+      rmSync(join(p, 'docs/spikes/notify.md'));
+    }, [/high-risk assumption A-1 is covered by no spike/], 'plan-review');
+    hide('a non-breaking space after a closing fence', 'docs/PLAN-REVIEW.md', afterRow2(`\n\`\`\`\nnotes\n\`\`\`${NBSP}\n\n| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |\n| 15 | Reboot | blocking | open: add a criterion |\n\n\`\`\`\n`), [/an invisible character on a fence line/]);
+    hide('rows indented with a tab', 'docs/RISKS.md', (t) => t.replace('| ID | Risk |', '\t| R-3 | Hidden | none | 2026-11-08 |\n\n| ID | Risk |'), [/an indented table row/]);
     // Ordinary Markdown from the round-6 review stays allowed.
     planCase('free tables, repeated rows and plain words', (p, e) => {
       e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Date |\n| --- | --- |\n| 1 | 2026-11-08 |\n| 1 | 2026-11-08 |'));

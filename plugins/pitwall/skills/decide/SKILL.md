@@ -22,6 +22,7 @@ With an area as the argument (`$ARGUMENTS` names one of `decide.areas`), follow 
 - Versions, prices, limits and model IDs come from a page opened at decision time, never from memory. A version is read from the registry's API or package page.
 - "New but proven": a stable release (`maturity.stableReleaseOnly`), a release within `maturity.maxMonthsSinceLastRelease` months, a migration path and compatibility with the rest of the stack. An option that fails it is named in the comparison with the reason, not recommended.
 - An area always ends in an ADR or a two-way line. A two-way decision the agent doubts, or the owner questions, becomes one-way.
+- Write the ADRs in plain Markdown the docs check reads as GitHub shows it: fields written "- Name:" once each, headings and table rows at the first column, a blank line after every table, fences at the first column and never inside a list item; no HTML or comments, no setext headings, no invisible characters.
 
 ## Steps
 

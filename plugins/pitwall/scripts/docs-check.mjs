@@ -3,7 +3,7 @@
 //
 //   node docs-check.mjs [--root <dir>] [--stage <stage>[,<stage>...]] [--only sections,ids,size]
 //
-// Stages: kickoff, discovery, decide, spike, plan, plan-review.
+// Stages: kickoff, discovery, decide, spike-criterion (before the criterion is committed), spike, plan, plan-review.
 //
 // Always, unless --only narrows it:
 //   sections  every "## " heading of a template document is in the project's copy,
@@ -23,10 +23,10 @@ import { join, resolve } from 'node:path';
 import { config, gitRunner, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
 
 requireNode();
-const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike|plan|plan-review[,...]] [--only sections,ids,size]';
+const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review[,...]] [--only sections,ids,size]';
 const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', only: 'value' }, usage);
 const KINDS = ['sections', 'ids', 'size'];
-const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan', 'plan-review'];
+const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review'];
 const kinds = args.only ? args.only.split(',').map((k) => k.trim()) : KINDS;
 const stages = args.stage ? args.stage.split(',').map((s) => s.trim()) : [];
 if (kinds.some((k) => !KINDS.includes(k)) || stages.some((s) => !STAGES.includes(s))) {
@@ -159,7 +159,7 @@ function tableRows(lines) {
   let seen = 0;
   const fenced = fencedLines(lines);
   for (const [i, line] of lines.entries()) {
-    if (fenced[i] || !line.trim().startsWith('|')) {
+    if (fenced[i] || !line.startsWith('|')) {
       if (seen > 0) break;
       continue;
     }
@@ -185,7 +185,7 @@ function filled(lines, templateLines = []) {
 // The header cells of the first table in some lines, outside fenced blocks, or null.
 const tableHeader = (lines) => {
   const fenced = fencedLines(lines);
-  const line = lines.find((l, i) => !fenced[i] && l.trim().startsWith('|'));
+  const line = lines.find((l, i) => !fenced[i] && l.startsWith('|'));
   return line ? splitRow(line) : null;
 };
 
@@ -195,7 +195,7 @@ function tableCount(lines) {
   let count = 0;
   let inTable = false;
   lines.forEach((line, i) => {
-    const row = !fenced[i] && line.trim().startsWith('|');
+    const row = !fenced[i] && line.startsWith('|');
     if (row && !inTable) count += 1;
     inTable = row;
   });
@@ -257,13 +257,16 @@ function plainCells(rel, section, n) {
 }
 // What keeps a cell from being plain text, outside its code spans, or '' when nothing does.
 function notPlain(cell) {
+  // Only what GitHub would show differently: "<" that opens a tag, a comment or an autolink, two
+  // tildes (a strikethrough needs a pair), a backslash before punctuation (an escape). A "<" in
+  // "< 1 s", one "~" in a path, a "\" in a Windows path show as written.
   const t = blankCodeSpans(cell);
   if (t.includes('`')) return 'a backtick that opens no code span';
-  if (t.includes('<')) return 'HTML or an angle bracket';
+  if (/<[A-Za-z/!?]/.test(t)) return 'HTML or an angle bracket';
   if (/&[#A-Za-z0-9]+;/.test(t)) return 'a character reference';
-  if (t.includes('~')) return 'a tilde, which can strike text through';
+  if ((t.match(/~/g) ?? []).length > 1) return 'tildes, which can strike text through';
   if (/[[\]]/.test(t)) return 'a link, an image or a bracket';
-  if (t.includes('\\')) return 'a backslash escape';
+  if (/\\[!-/:-@[-`{-~]/.test(t)) return 'a backslash escape';
   return '';
 }
 
@@ -282,7 +285,7 @@ function notPlain(cell) {
 //   once: sections that may hold one table at most (for "any");
 //   quotes: whether block quotes may stand (where the checks read no table or field from them);
 //   fields: field names ("- Name:" with dash, "Name:" without) that must appear at most once.
-function checkStructure(rel, { tables = null, once = [], quotes = false, fields = [], dash = true } = {}) {
+function checkStructure(rel, { tables = null, once = [], quotes = false, unique = true, fields = [], dash = true } = {}) {
   if (!has(rel)) return;
   const lines = read(rel).split('\n');
   const fenced = fencedLines(lines);
@@ -297,6 +300,8 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
     const where = `${rel}:${i + 1}`;
     if (fenced[i]) {
       if (/^ {1,3}(`{3,}|~{3,})/.test(line) && !fenced[i - 1]) report(where, 'an indented fence: start fences at the first column, outside lists');
+      // A fence line with an invisible character after it does not close the block on GitHub.
+      if (/^ {0,3}(`{3,}|~{3,})/.test(line) && INVISIBLE.test(line)) report(where, 'an invisible character on a fence line: GitHub would not close the block there');
       prev = line;
       prevRow = false;
       return;
@@ -316,7 +321,7 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
     if (/^ {0,3}\[[^\]]+\]:/.test(line)) report(where, 'a link reference definition, which GitHub does not show: write the link inline');
     if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prev.trim() !== '') report(where, 'a setext heading (text underlined with = or -): use a "## " heading');
     if (/^ {1,3}#{1,6}(?:\s|$)/.test(line)) report(where, 'an indented heading: start a heading at the first column');
-    if (/^ +\|/.test(line)) report(where, 'an indented table row: start table rows at the first column');
+    if (/^[ \t]+\|/.test(line)) report(where, 'an indented table row: start table rows at the first column');
     if (!row && /^\s*:?-+:?\s*\|/.test(text)) report(where, 'a table without leading pipes: start every row with "|"');
     if (row) {
       if (!prevRow) {
@@ -330,7 +335,7 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
       const judged = tables === null || (Array.isArray(tables) && tables.includes(section)) || once.includes(section);
       if (judged && rowIndex > 1 && !isSeparator(cells)) {
         const first = visible(stripCode(cells[0] ?? '')).replace(/[*_]/g, '').trim().toLowerCase();
-        if (first && firsts.has(first)) report(where, `the row "${cells[0]}" repeats a row above it in the same table: keep one row for it`);
+        if (unique && first && firsts.has(first)) report(where, `the row "${cells[0]}" repeats a row above it in the same table: keep one row for it`);
         firsts.add(first);
         // The cells the checks judge are plain text (cellRule names them per section).
         for (const [col, what] of plainCells(rel, section, cells.length)) {
@@ -671,7 +676,7 @@ function checkDecide() {
 // ---------- spike (T2-AC1, ADR-0009) ----------
 
 const SPIKE_TEMPLATE = 'docs/spikes/template.md';
-const SPIKE_STRUCTURE = { tables: 'any', once: ['Criterion', 'Result'], fields: ['Assumption', 'Branch', 'Date', 'Outcome', 'Prototype', 'Follow-up'] };
+const SPIKE_STRUCTURE = { tables: 'any', once: ['Criterion', 'Result'], unique: false, fields: ['Assumption', 'Branch', 'Date', 'Outcome', 'Prototype', 'Follow-up'] };
 
 // The non-empty lines of a section, trimmed, so whitespace alone is no change.
 const sectionText = (text, name) => (sections(text).get(name) ?? []).map((l) => l.trim()).filter(Boolean).join('\n');
@@ -692,6 +697,31 @@ function spikeOrigin(git, rel) {
     from = `${sha}^`;
   }
   return null;
+}
+
+// Before its commit: the spike file the criterion is about to be committed in passes every rule
+// that could later refuse a criterion the commit freezes (T2 review, round 7).
+function checkSpikeCriterion() {
+  const d = cfg.spike;
+  const pending = spikeFiles.filter((f) => field(read(`docs/spikes/${f}`), 'Outcome') === d.pending);
+  if (pending.length === 0) return report('docs/spikes', `no spike with "- Outcome: ${d.pending}": write docs/spikes/<topic>.md from docs/spikes/template.md first`);
+  for (const f of pending) {
+    const rel = `docs/spikes/${f}`;
+    const topic = f.slice(0, -3);
+    checkStructure(rel, SPIKE_STRUCTURE);
+    const s = requireFilled(rel, SPIKE_TEMPLATE, ['Hypothesis', 'Criterion']);
+    if (!s) continue;
+    const text = read(rel);
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(topic)) report(rel, `the topic "${topic}" is not lower-case words joined by hyphens`);
+    if (plainIds(field(text, 'Assumption'), /\bA-\d+\b/g).length === 0) report(rel, 'names no assumption A-n in "- Assumption:"');
+    if (field(text, 'Branch') !== d.branch.replace('<topic>', topic)) report(rel, `"- Branch:" is "${field(text, 'Branch')}", expected ${d.branch.replace('<topic>', topic)}`);
+    if (!DATE.test(field(text, 'Date'))) report(rel, 'no "- Date:" line');
+    const criterion = tableRows(s.get('Criterion') ?? []);
+    if (criterion.length === 0) report(rel, 'the criterion has no row');
+    for (const row of criterion) if (!/\d/.test(row[row.length - 1] ?? '')) report(rel, `criterion "${row[0]}": "Success when" holds no number`);
+    if (tableRows(s.get('Result') ?? []).length > 0 || filled(s.get('Result') ?? [], sections(readTemplate(SPIKE_TEMPLATE)).get('Result'))) report(rel, 'the result is written already: the criterion is committed before the prototype');
+    if (/\b[0-9a-f]{7,40}\b/.test(field(text, 'Prototype'))) report(rel, '"- Prototype:" names a commit already: the criterion is committed before the prototype');
+  }
 }
 
 function checkSpike() {
@@ -999,9 +1029,11 @@ function checkPlanReview() {
   // reviewer wrote that), outside a code span, and a risk that closes it is one the owner
   // accepted. A cell that starts with "open", or with other words, is open whatever IDs follow.
   const CLOSER = /^\[?(E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/;
+  // A risk or a decision closes an item only once the owner made it: an accepted risk, an accepted ADR.
+  const settled = (id) => (id.startsWith('R-') ? accepted.get(id) === true : id.startsWith('ADR-') ? adrAccepted(id) : true);
   const closed = (cell) => {
     const id = CLOSER.exec(bare(cell))?.[1];
-    return Boolean(id) && !isOpen(cell) && (!id.startsWith('R-') || accepted.get(id) === true);
+    return Boolean(id) && !isOpen(cell) && settled(id);
   };
   // Only the template's sections are read, so a heading of its own, such as a later round's
   // findings, would hide rows: it is refused. In those sections every cell but the item and its
@@ -1020,7 +1052,8 @@ function checkPlanReview() {
   const noAction = (cell) => blank(cell) || /^(?:none|no|nothing|no action)\.?$/i.test(bare(cell));
   const place = (cell) => {
     if (blank(cell)) return false;
-    if (/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/.test(cellText(cell))) return true;
+    const ids = cellText(cell).match(/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/g) ?? [];
+    if (ids.length > 0) return ids.every(settled);
     const doc = /([\w./-]+\.md)\b/.exec(visible((cell ?? '').replace(/`/g, '')))?.[1];
     return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
   };
@@ -1075,15 +1108,18 @@ function checkPlanReview() {
   if (!has('docs/DISCOVERY.md')) return report('docs/DISCOVERY.md', 'missing');
   const assumptions = tableRows(sections(read('docs/DISCOVERY.md')).get('Assumptions by risk') ?? []);
   const top = cfg.discovery.riskOrder[0];
-  // Only accepted ADRs count: a superseded or proposed one decides nothing any more.
+  // What covers an assumption is where it is settled, not where it is mentioned: a spike's
+  // "- Assumption:" field, the Decision of an accepted ADR (a superseded or proposed one decides
+  // nothing), an epic's acceptance criterion, a risk the owner accepted. Read as shown, so an ID
+  // in a link's address does not count.
+  const shownText = (text) => visible(stripCode(text ?? ''));
   const covering = [
-    ...spikeFiles.map((f) => `docs/spikes/${f}`),
-    ...adrFiles.filter((f) => field(read(`docs/adr/${f}`), 'Status').startsWith('accepted')).map((f) => `docs/adr/${f}`),
-    ...epicFiles.map((f) => `docs/epics/${f}`),
-  ].map((f) => stripCode(read(f)));
-  // From docs/RISKS.md only the risks the owner accepted count.
+    ...spikeFiles.map((f) => field(read(`docs/spikes/${f}`), 'Assumption')),
+    ...adrFiles.filter((f) => adrAccepted(`ADR-${f.slice(0, 4)}`)).map((f) => (sections(read(`docs/adr/${f}`)).get('Decision') ?? []).join('\n')),
+    ...epicFiles.map((f) => listItems(sections(read(`docs/epics/${f}`)).get('Acceptance criteria') ?? []).join('\n')),
+  ].map(shownText);
   const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
-  for (const row of risks) if (accepted.get(row[0])) covering.push(stripCode(row.join(' | ')));
+  for (const row of risks) if (accepted.get(row[0])) covering.push(shownText(row.join(' | ')));
   // The table is read again here, the way the discovery stage reads it, since the plan review
   // relies on it: every row an A-n with a risk of the list, judged by its visible text.
   for (const [id, , risk] of assumptions) {
@@ -1104,7 +1140,7 @@ function checkPlanReview() {
   }
 }
 
-const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview };
+const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview };
 for (const s of stages) checks[s]();
 
 const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;
