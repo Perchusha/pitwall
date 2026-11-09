@@ -19,7 +19,7 @@
     "tool_name": "Bash",
     "tool_input": {
       "command": "echo from-helper",
-      "description": "Print a test string"
+      "description": "Print a test message"
     },
     "tool_use_id": "recorded-tool_use_id"
   }

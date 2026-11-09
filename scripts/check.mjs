@@ -1437,6 +1437,8 @@ const PAYLOADS = [
   'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop',
   'project-agent-pre-tool-use-read', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop',
   'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
+  'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
+  'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
 ];
 step('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -1846,6 +1848,71 @@ step('hooks (recorded payloads)', (report) => {
     expect('project-agent-pre-tool-use-read', 'a project agent named plan-reviewer writes docs/SPEC.md', { tool: 'Write', input: { tool_input: { file_path: join(project, 'docs', 'SPEC.md'), content: 'x' } } }, 'allow');
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs review-status.mjs', { input: { tool_input: { command: reviewStatus } } }, 'deny:review');
 
+    // T3b-AC4: the code reviewer's limits (hooks.agents), on its own recorded calls.
+    if (payloads['code-reviewer-pre-tool-use-bash'].input.agent_type !== 'pitwall:code-reviewer') report('the code reviewer\'s calls do not carry agent_type pitwall:code-reviewer');
+    const codeStatus = `node "${P}/scripts/review-status.mjs" --review code --state success --project "${fwd(project)}"`;
+    const crBash = (what, command, want) => expect('code-reviewer-pre-tool-use-bash', `code reviewer: ${what}`, { input: { tool_input: { command } } }, want);
+    const crWrite = (what, file, want, tool = 'Write') => expect('code-reviewer-pre-tool-use-write', `code reviewer: ${what}`, { tool, input: { tool_input: tool === 'Edit' ? { file_path: file, old_string: 'a', new_string: 'b' } : { file_path: file, content: '# Review\n' } } }, want);
+    crBash('review-status.mjs', codeStatus, 'allow');
+    crBash('review-status.mjs with failure', `node "${P}/scripts/review-status.mjs" --review code --state failure --description "code review: 2 open"`, 'allow');
+    crBash('the docs check', `node "${P}/scripts/docs-check.mjs" --root "${fwd(project)}" --stage code-review`, 'allow');
+    crBash('git diff against main', 'git diff main...HEAD', 'allow');
+    crBash('git diff --stat', 'git diff main...HEAD --stat', 'allow');
+    crBash('git log', 'git log --oneline -5', 'allow');
+    crBash('git show a file at the head', 'git show HEAD:src/app.js', 'allow');
+    crBash('git rev-parse HEAD', 'git rev-parse HEAD', 'allow');
+    crBash('git blame', 'git blame -L 1,20 src/app.js', 'allow');
+    crBash('git --no-pager log', 'git --no-pager log -3', 'allow');
+    crBash('git -C the project', `git -C "${fwd(project)}" status`, 'allow');
+    crBash('cd to the project root, then git diff', `cd "${fwd(project)}" && git diff main...HEAD --stat`, 'allow');
+    crBash('the gate, as CI runs it', 'bash scripts/gate --full', 'allow');
+    crBash('the gate from its path', 'scripts/gate --fast', 'allow');
+    crBash('the gate by its full path', `bash "${fwd(project)}/scripts/gate" --changed`, 'allow');
+    crBash('the gate with a mode it lacks', 'bash scripts/gate --all', 'deny:agent');
+    crBash('git commit', 'git commit -am x', 'deny:agent');
+    crBash('git push', 'git push origin HEAD', 'deny:agent');
+    crBash('git checkout', 'git checkout main', 'deny:agent');
+    crBash('git with a config option', 'git -c core.pager=less log', 'deny:agent');
+    crBash('git diff into a file', 'git diff --output=x.patch main', 'deny:agent');
+    crBash('git log into a file', 'git log --output x.txt', 'deny:agent');
+    crBash('git diff with an external tool', 'git diff --ext-diff main', 'deny:agent');
+    crBash('git in another folder', `git -C "${fwd(dir)}" log`, 'deny:agent');
+    crBash('two commands', 'git status; git push', 'deny:agent');
+    crBash('a pipe', 'git log | head', 'deny:agent');
+    crBash('npm test', 'npm test', 'deny:agent');
+    crBash('merge.mjs', `node "${P}/scripts/merge.mjs" --change`, 'deny:agent');
+    crBash('rm', 'rm docs/reviews/E1-x.md', 'deny:agent');
+    crWrite('its review file', join(project, 'docs', 'reviews', 'E1-x.md'), 'allow');
+    crWrite('a bug fix\'s review file', join(project, 'docs', 'reviews', 'BUG-3.md'), 'allow');
+    crWrite('Edit its review file', join(project, 'docs', 'reviews', 'E1-x.md'), 'allow', 'Edit');
+    crWrite('a review file in a subfolder', join(project, 'docs', 'reviews', 'old', 'E1-x.md'), 'deny:agent');
+    crWrite('the code', join(project, 'src', 'app.js'), 'deny:agent');
+    crWrite('Edit the code', join(project, 'src', 'app.js'), 'deny:agent', 'Edit');
+    crWrite('the plan review', join(project, 'docs', 'PLAN-REVIEW.md'), 'deny:agent');
+    crWrite('a review file outside docs', join(project, 'reviews', 'E1-x.md'), 'deny:agent');
+    reviewer('Write a code review file', 'Write', { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' }, 'deny:agent');
+    // The implementers write the code and run the gate, never the review status.
+    expect('implementer-pre-tool-use-bash', 'implementer runs review-status.mjs', { input: { tool_input: { command: codeStatus } } }, 'deny:review');
+    expect('implementer-pre-tool-use-bash', 'implementer runs the gate', { input: { tool_input: { command: 'bash scripts/gate --fast' } } }, 'allow');
+    expect('implementer-pre-tool-use-bash', 'implementer commits', { input: { tool_input: { command: 'git commit -m "feat: the reminder"' } } }, 'allow');
+    expect('implementer-pre-tool-use-write', 'implementer writes code', { input: { tool_input: { file_path: join(project, 'src', 'b.js'), content: 'x' } } }, 'allow');
+    expect('implementer-pre-tool-use-write', 'implementer writes a review file', { input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' } } }, 'allow');
+
+    // T3b-AC6: merge-choice.mjs records the owner's choice, so no agent runs it, the main conversation included.
+    const choice = `node "${P}/scripts/merge-choice.mjs" --allow`;
+    bash(choice, 'deny:owner');
+    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'deny:owner');
+    bash(`cd "${fwd(project)}" && ${choice}`, 'deny:owner');
+    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'deny:owner');
+    bash(`node -e "import('${P}/scripts/merge-choice.mjs')"`, 'deny:switch');
+    bash(`cat "${P}/scripts/merge-choice.mjs"`, 'allow');
+    bash(`grep -n allow "${P}/scripts/merge-choice.mjs"`, 'allow');
+    bash(`node "${P}/scripts/merge.mjs" --change`, 'allow');
+    bash(`node "${P}/scripts/merge.mjs" --change --owner-approved`, 'allow');
+    expect('implementer-pre-tool-use-bash', 'implementer runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
+    expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
+    crBash('merge-choice.mjs', choice, 'deny:agent');
+
     // AC7: the merge guard by mode.
     bash('gh pr merge 7 --merge', 'deny:merge');
     const pr = { number: 7, head, branch: 'epic/E1-x' };
@@ -1935,10 +2002,16 @@ step('hooks (recorded payloads)', (report) => {
     hook('other-plugin-post-tool-use-write', { session: 'gate-other', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
     for (const label of ['other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop']) if (verdict(hook(label, { session: 'gate-other' })) !== 'allow') report(`${label}: another plugin's agent must not wait for the gate`);
     if (verdict(hook('main-stop', { session: 'gate-other' })) !== 'block') report(`an edit by another plugin's agent (${helper.agent_type}) must be checked when the main conversation stops`);
+    // T3b: a bug fix's branch is checked like an epic's (loop.branches); the code reviewer's file under docs/ is not.
+    gitIn(project, 'checkout', '-qb', 'fix/BUG-1');
+    if (verdict(post('gate-fix')) !== 'context') report('an edit on a fix branch with a red gate must run the gate');
+    if (verdict(hook('code-reviewer-post-tool-use-write', { session: 'gate-fix-review', input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'BUG-1.md'), content: 'x' } } })) !== 'allow') report('the code reviewer\'s file under docs/ must not run the gate');
+    const implPost = hook('implementer-post-tool-use-write', { session: 'gate-fix-impl', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
+    if (verdict(implPost) !== 'context') report('an implementer\'s edit on a fix branch with a red gate must run the gate');
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
-    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write']) {
       const r = hook(label);
       if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
     }
@@ -2020,6 +2093,49 @@ step('hooks (recorded payloads)', (report) => {
     });
     const st = hook('main-session-start', { script: blind });
     if (!/self-test/.test(st.out?.systemMessage ?? '')) report(`a guard that refuses nothing must fail the self-test and warn the owner, got ${JSON.stringify(st.out)}`);
+
+    // T3b-AC6: the owner's choice in the brief, and its allow rules kept in step with it and with the plugin's path.
+    const local = join(project, '.claude', 'settings.local.json');
+    const setChoice = (v) => {
+      const s = JSON.parse(readFileSync(settingsFile, 'utf8'));
+      if (v === undefined) delete s.autoMerge;
+      else s.autoMerge = v;
+      writeFileSync(settingsFile, JSON.stringify(s, null, 2));
+    };
+    const rulesNow = () => (existsSync(local) ? JSON.parse(readFileSync(local, 'utf8')).permissions?.allow ?? [] : []);
+    const briefWith = (opts = {}) => hook('main-session-start', opts).out?.hookSpecificOutput?.additionalContext ?? '';
+    const rulesFor = (d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`];
+    rmSync(local, { force: true });
+    setChoice(undefined);
+    if (!/has not chosen yet/.test(briefWith())) report('the brief of a project without autoMerge does not say the owner has not chosen yet');
+    if (existsSync(local)) report('without a yes, the session start wrote .claude/settings.local.json');
+    setChoice(true);
+    const yes = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(rulesFor(plugin))) report(`on yes, the session start must write the two rules for the plugin's path, got ${JSON.stringify(rulesNow())}`);
+    if (!/merge without the owner/.test(yes) || !/were written/.test(yes)) report(`the brief on yes does not say so, or that the rules were written:\n${yes}`);
+    // The owner's own rules and settings stay, and a second start rewrites nothing.
+    writeFileSync(local, JSON.stringify({ model: 'kept', permissions: { allow: ['Bash(npm test)', ...rulesFor(plugin)], deny: ['Bash(rm -rf *)'] } }, null, 2));
+    const kept = readFileSync(local, 'utf8');
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (readFileSync(local, 'utf8') !== kept) report('a second session start rewrote .claude/settings.local.json that already held the rules');
+    // The plugin moved (an update): the rules follow the path as the session spells it.
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: link } });
+    const moved = JSON.parse(readFileSync(local, 'utf8'));
+    if (JSON.stringify(moved.permissions.allow) !== JSON.stringify(['Bash(npm test)', ...rulesFor(link)]) || moved.model !== 'kept' || moved.permissions.deny?.[0] !== 'Bash(rm -rf *)') report(`after the plugin moved, expected the owner's rule and the rules for the new path, got ${JSON.stringify(moved)}`);
+    // A guard that does not work: no rules, and the brief says why.
+    const blindBrief = briefWith({ script: blind });
+    if (rulesNow().some((r) => /merge\.mjs|review-status\.mjs/.test(r)) || !/review guard does not work/.test(blindBrief)) report(`with a guard that refuses nothing, the rules must go and the brief say why, got ${JSON.stringify(rulesNow())}\n${blindBrief}`);
+    // No: the rules go, everything else stays.
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    setChoice(false);
+    const no = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(['Bash(npm test)']) || !/every merge waits for the owner/.test(no) || !/were removed/.test(no)) report(`on no, the rules must go and the owner's stay, got ${JSON.stringify(rulesNow())}\n${no}`);
+    // A settings.local.json that does not read as settings is left alone, and the brief says so.
+    setChoice(true);
+    writeFileSync(local, '{ not json');
+    if (!/does not parse/.test(briefWith()) || readFileSync(local, 'utf8') !== '{ not json') report('a .claude/settings.local.json that does not parse must be left alone and named in the brief');
+    rmSync(local, { force: true });
+    writeFileSync(settingsFile, good);
 
     // The commands in hooks.json, through bash as Claude Code runs them: nothing outside a pitwall
     // project, even without node; in one, the hook runs, and without node the guard refuses and the brief warns.
