@@ -1402,7 +1402,14 @@ step('merge protection (fake gh)', (report) => {
 // tool input of each case put in. The payloads must come from the pinned CLI: their fields
 // belong to Claude Code (ADR-0007).
 const payloadDir = join(root, 'scripts', 'hook-payloads');
-const PAYLOADS = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop'];
+const PAYLOADS = [
+  'main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-pre-tool-use-agent', 'main-post-tool-use-write', 'main-stop',
+  'plan-reviewer-pre-tool-use-read', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop',
+  'researcher-pre-tool-use-glob', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop',
+  'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop',
+  'project-agent-pre-tool-use-read', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop',
+  'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop',
+];
 step('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
   const payloads = {};
@@ -1419,12 +1426,21 @@ step('hooks (recorded payloads)', (report) => {
   if (payloads['project-agent-pre-tool-use-read'].input.agent_type !== 'plan-reviewer') report('a project agent named plan-reviewer does not carry agent_type plan-reviewer');
   if (payloads['main-pre-tool-use-bash'].attended !== '0') report('the headless recording does not carry CLAUDE_CODE_SESSION_ATTENDED=0');
 
-  // hooks.json: exec form through node, the guard fails closed, the brief checks for node first.
+  // hooks.json: every hook through bash, which checks for a pitwall project and for node first;
+  // the guard matches every tool, fails closed and outlasts the gate it may run at a handback.
+  const hooksCfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8')).hooks;
   const hooks = JSON.parse(readFileSync(join(plugin, 'hooks', 'hooks.json'), 'utf8')).hooks;
+  const EVENTS = { SessionStart: 'session-start', PreToolUse: 'pre-tool-use', PostToolUse: 'post-tool-use', Stop: 'stop', SubagentStop: 'subagent-stop' };
+  const commands = {};
+  for (const [ev, arg] of Object.entries(EVENTS)) {
+    const hk = hooks[ev]?.[0]?.hooks?.[0];
+    commands[arg] = hk?.command ?? '';
+    if (hk?.shell !== 'bash' || !commands[arg].startsWith('[ -f "$CLAUDE_PROJECT_DIR/.claude/pitwall.json" ] || exit 0;') || !commands[arg].endsWith(`scripts/hook.mjs" ${arg}`)) report(`hooks.json: ${ev} must run through bash, check for .claude/pitwall.json first and end by running hook.mjs ${arg}`);
+  }
   const pre = hooks.PreToolUse?.[0];
-  if (pre?.matcher !== '*' || pre.hooks?.[0]?.onFailure !== 'block' || pre.hooks[0].command !== 'node') report('hooks.json: PreToolUse must match every tool and run node with onFailure "block"');
-  for (const ev of ['PostToolUse', 'Stop', 'SubagentStop']) if (hooks[ev]?.[0]?.hooks?.[0]?.command !== 'node') report(`hooks.json: ${ev} must run node in exec form`);
-  const sessionCmd = hooks.SessionStart?.[0]?.hooks?.[0]?.command ?? '';
+  if (pre?.matcher !== '*' || pre.hooks?.[0]?.onFailure !== 'block') report('hooks.json: PreToolUse must match every tool with onFailure "block"');
+  if (!(pre?.hooks?.[0]?.timeout > hooksCfg.gateTimeoutSeconds.changed)) report('hooks.json: the PreToolUse timeout must outlast hooks.gateTimeoutSeconds.changed, which an implementer\'s handback may run');
+  const sessionCmd = commands['session-start'];
 
   scratch('pitwall-hooks-', (dir) => {
     const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
@@ -1513,6 +1529,12 @@ step('hooks (recorded payloads)', (report) => {
     expect('main-pre-tool-use-write', 'Write a private key block', { input: { tool_input: { file_path: join(project, 'test', 'k.txt'), content: `-----BEGIN RSA ${'PRIVATE'} KEY-----\nx` } } }, 'deny:secrets');
     expect('main-pre-tool-use-edit', 'Edit a token into a file', { input: { tool_input: { file_path: join(project, 'src', 'a.js'), old_string: 'x', new_string: `ghp_${'a1'.repeat(18)}` } } }, 'deny:secrets');
     expect('main-pre-tool-use-write', 'Write .env.example', { input: { tool_input: { file_path: join(project, '.env.example'), content: 'API_KEY=\n' } } }, 'allow');
+    expect('main-pre-tool-use-read', 'Grep through .env.example files', { tool: 'Grep', input: { tool_input: { pattern: 'KEY', glob: '**/.env.example' } } }, 'allow');
+    expect('main-pre-tool-use-read', 'Grep through keymap files', { tool: 'Grep', input: { tool_input: { pattern: 'ctrl', glob: '**/*.keymap.json' } } }, 'allow');
+    bash('echo ".env" >> .gitignore', 'allow');
+    bash('test -f .env && echo there', 'allow');
+    bash('find . -name "*.pem"', 'allow');
+    bash('echo SECRET=1 > .env', 'deny:secrets');
 
     // (b) Files git ignores.
     expect('main-pre-tool-use-write', 'Write dist/a.js', { input: { tool_input: { file_path: join(project, 'dist', 'a.js'), content: 'x' } } }, 'deny:ignored');
@@ -1537,9 +1559,27 @@ step('hooks (recorded payloads)', (report) => {
     bash('git push --force-with-lease origin epic/E1-x', 'allow');
     bash('echo $(git push -f origin main)', 'deny:push');
     bash('bash -c "git push origin main"', 'deny:push');
+    bash('bash -lc "git push origin main"', 'deny:push');
+    bash('git push origin "$(git branch --show-current)"', 'deny:push');
+    bash('git checkout -b epic/E9-x && git push -u origin HEAD', 'allow');
+    bash('git switch -c epic/E9-y && git push -u origin HEAD', 'allow');
+    // Git Bash spells the project folder /c/...; on Linux that folder does not exist, and a branch git cannot read is refused too.
+    const bashPath = fwd(project).replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`);
+    bash(`cd ${bashPath} && git push`, 'deny:push');
+    bash(`git -C ${bashPath} push`, 'deny:push');
+    if (process.platform === 'win32') expect('main-pre-tool-use-write', 'Write .claude/settings.json by its Git Bash path', { input: { tool_input: { file_path: `${bashPath}/.claude/settings.json`, content: '{}' } } }, 'deny:switch');
+    // The skeleton's first push passes from main itself, while main holds one commit and was never pushed.
     const fresh = makeProject('fresh', 1);
-    expect('main-pre-tool-use-bash', 'the skeleton\'s first push', { projectDir: fresh, input: { tool_input: { command: 'git push -u origin main' } } }, 'allow');
-    expect('main-pre-tool-use-bash', 'a forced first push', { projectDir: fresh, input: { tool_input: { command: 'git push -f -u origin main' } } }, 'deny:push');
+    const onFresh = (command, want, what) => expect('main-pre-tool-use-bash', what, { projectDir: fresh, input: { tool_input: { command } } }, want);
+    onFresh('git push -u origin main', 'allow', 'the skeleton\'s first push');
+    onFresh('git push -f -u origin main', 'deny:push', 'a forced first push');
+    gitIn(fresh, 'checkout', '-qb', 'plan/initial');
+    onFresh('git push origin HEAD:main', 'deny:push', 'a planning branch pushed onto main while main holds the skeleton');
+    onFresh('git push origin plan/initial:main', 'deny:push', 'the planning branch pushed onto main by name');
+    onFresh('git push -u origin plan/initial', 'allow', 'the planning branch pushed');
+    gitIn(fresh, 'checkout', '-q', 'main');
+    gitIn(fresh, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    onFresh('git push origin main', 'deny:push', 'main pushed again after its first push');
 
     // (d) The guards' switch.
     bash('rm .claude/pitwall.json', 'deny:switch');
@@ -1566,6 +1606,16 @@ step('hooks (recorded payloads)', (report) => {
     bash(`cp evil.mjs "${P}/scripts/hook.mjs"`, 'deny:switch');
     bash(`node "${P}/scripts/docs-check.mjs" --root .`, 'allow');
     bash(`cat "${P}/config/defaults.json"`, 'allow');
+    bash(`cp "${P}/template/docs/spikes/template.md" docs/spikes/x.md`, 'allow');
+    bash('sed -n 1,20p .claude/settings.json', 'allow');
+    bash("awk '{print}' .claude/settings.json", 'allow');
+    bash('cp .claude/settings.json /tmp/settings-copy.json', 'allow');
+    bash('cp backup.json .claude/settings.json', 'deny:switch');
+    bash('git restore --staged .claude/pitwall.json', 'allow');
+    bash('git restore .claude/pitwall.json', 'deny:switch');
+    bash('node -p "require(\'./.claude/pitwall.json\').processLevel"', 'allow');
+    bash('python -c "print(open(\'config/settings.json\').read())"', 'allow');
+    bash('git commit -m "fix the review-status.mjs call"', 'allow');
     bash('npm test', 'allow');
     expect('main-pre-tool-use-edit', 'Edit .claude/settings.json', { input: { tool_input: { file_path: join(project, '.claude', 'settings.json'), old_string: 'true', new_string: 'false' } } }, 'deny:switch');
     expect('main-pre-tool-use-write', 'Write .claude/settings.local.json', { input: { tool_input: { file_path: join(project, '.claude', 'settings.local.json'), content: '{}' } } }, 'deny:switch');
@@ -1593,6 +1643,10 @@ step('hooks (recorded payloads)', (report) => {
     expect('main-pre-tool-use-bash', 'an MCP tool that changes protection', { tool: 'mcp__github__update_branch_protection', input: { tool_input: { branch: 'main' } } }, 'deny:protection');
     expect('main-pre-tool-use-bash', 'an MCP tool that sets ai-review', { tool: 'mcp__github__create_commit_status', input: { tool_input: { context: 'ai-review', state: 'success' } } }, 'deny:review');
     expect('main-pre-tool-use-bash', 'an MCP tool that reads', { tool: 'mcp__github__get_pull_request', input: { tool_input: { number: 7 } } }, 'allow');
+    expect('main-pre-tool-use-bash', 'an MCP tool that writes any commit status', { tool: 'mcp__github__create_commit_status', input: { tool_input: { context: 'ci', state: 'success' } } }, 'deny:review');
+    expect('main-pre-tool-use-bash', 'an MCP tool that sets an issue status', { tool: 'mcp__linear__update_issue_status', input: { tool_input: { status: 'done' } } }, 'allow');
+    expect('main-pre-tool-use-bash', 'an MCP tool that merges a pull request', { tool: 'mcp__github__merge_pull_request', input: { tool_input: { number: 7 } } }, 'deny:merge');
+    expect('main-pre-tool-use-bash', 'an MCP tool that merges a database branch', { tool: 'mcp__supabase__merge_branch', input: { tool_input: { branch_id: 'x' } } }, 'allow');
 
     // AC4: who runs review-status.mjs, and the plan reviewer's limits.
     const reviewStatus = `node "${P}/scripts/review-status.mjs" --review plan --state success`;
@@ -1635,6 +1689,10 @@ step('hooks (recorded payloads)', (report) => {
     setMode('branch-protection');
     merge('branch protection', { ...green, statuses: {} }, 'allow');
     merge('branch protection, --admin', green, 'deny:protection', 'gh pr merge 7 --admin');
+    setMode('something else');
+    merge('an unknown mode', green, 'deny:merge');
+    setMode(undefined);
+    merge('no mode recorded', green, 'deny:merge');
     setMode('pending');
 
     // AC5: the call budget. A researcher at lite: warned once at warn, refused past stop; its handback always passes.
@@ -1676,21 +1734,37 @@ step('hooks (recorded payloads)', (report) => {
     if (verdict(hook('main-post-tool-use-write', { session: 'gate-docs', input: { tool_input: { file_path: join(project, 'docs', 'NOTES.md') } } })) !== 'allow') report('an edit under docs/ must not run the gate');
     const stops = [1, 2, 3, 4].map((i) => verdict(hook('main-stop', { session: 'gate-main', input: { stop_hook_active: i > 1 } })));
     if (stops.join(' ') !== 'block block message allow') report(`stops after an edit with a red gate: expected block block message allow, got ${stops.join(' ')}`);
+    // The tries are used up until the gate is green: edits in between do not bring them back.
     post('gate-main');
-    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'block') report('a new edit must give the stop check its tries again');
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'message') report('an edit after the tries are used up must not block the stop again while the gate is red');
     rmSync(join(project, 'src.js'));
+    // An edit outside docs/ that leaves the gate green (the stub passes on CLAUDE.md): the next stop runs it, and the tries come back.
+    hook('main-post-tool-use-write', { session: 'gate-main', input: { tool_input: { file_path: join(project, 'CLAUDE.md') } } });
     if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'allow') report('a green gate must let the session stop');
     if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'allow' || existsSync(join(state, 'gate-main', 'main.dirty'))) report('after a green run, a stop must run nothing');
-    if (verdict(hook('main-stop', { session: 'gate-none' })) !== 'allow') report('a stop with no edit must run nothing');
     writeFileSync(join(project, 'src.js'), 'console.log(1)\n');
-    const impl = payloads['implementer-subagent-stop'].input;
+    post('gate-main');
+    if (verdict(hook('main-stop', { session: 'gate-main' })) !== 'block') report('after a green run, a red gate must block the stop again');
+    if (verdict(hook('main-stop', { session: 'gate-none' })) !== 'allow') report('a stop with no edit must run nothing');
+    // An implementer: Claude Code ends it at its handback, so the handback waits for the gate.
+    const impl = payloads['implementer-pre-tool-use-subagenthandback'].input;
     post('gate-sub', { agent_id: impl.agent_id, agent_type: impl.agent_type });
-    if (verdict(hook('implementer-subagent-stop', { session: 'gate-sub' })) !== 'block') report('an implementer stopping after an edit with a red gate must be blocked');
-    const helper = payloads['other-plugin-subagent-stop'].input;
-    post('gate-other', { agent_id: helper.agent_id, agent_type: helper.agent_type });
-    if (verdict(hook('other-plugin-subagent-stop', { session: 'gate-other' })) !== 'allow') report('another agent stopping must not run the gate');
+    const handbacks = [1, 2, 3].map(() => verdict(hook('implementer-pre-tool-use-subagenthandback', { session: 'gate-sub' })));
+    if (handbacks.join(' ') !== 'deny:gate deny:gate message') report(`an implementer handing back after an edit with a red gate: expected deny:gate deny:gate message, got ${handbacks.join(' ')}`);
+    if (verdict(hook('implementer-subagent-stop', { session: 'gate-sub' })) !== 'allow') report('an implementer\'s stop after its handback check must run nothing');
+    post('gate-sub2', { agent_id: impl.agent_id, agent_type: impl.agent_type });
+    if (verdict(hook('implementer-subagent-stop', { session: 'gate-sub2' })) !== 'block') report('an implementer that ends without a handback after an edit with a red gate must be blocked');
+    const helper = payloads['other-plugin-post-tool-use-write'].input;
+    hook('other-plugin-post-tool-use-write', { session: 'gate-other', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
+    for (const label of ['other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop']) if (verdict(hook(label, { session: 'gate-other' })) !== 'allow') report(`${label}: another plugin's agent must not wait for the gate`);
+    if (!existsSync(join(state, 'gate-other', `agent-${helper.agent_id}.dirty`))) report('an edit by another plugin\'s agent must still be marked for the gate');
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
+    // Every recorded payload not used above passes in a project with nothing to refuse.
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
+      const r = hook(label);
+      if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
+    }
 
     // AC2 and AC1: the brief and the self-test.
     const brief = hook('main-session-start', { env: { CLAUDE_CODE_SESSION_ATTENDED: '1' } });
@@ -1699,6 +1773,9 @@ step('hooks (recorded payloads)', (report) => {
     if (brief.out?.systemMessage) report(`a passing self-test must not warn the owner: ${brief.out.systemMessage}`);
     if (text.length > cfg.hooks.briefMaxChars) report(`the brief is ${text.length} characters, over hooks.briefMaxChars`);
     if (!(hook('main-session-start').out?.hookSpecificOutput?.additionalContext ?? '').includes('unattended')) report('the brief of an unattended session does not say so');
+    // While the plan is made, the brief gives the stage, not E0.
+    const planning = hook('main-session-start', { projectDir: fresh }).out?.hookSpecificOutput?.additionalContext ?? '';
+    if (!/Stage: planning on plan\/initial; the next stage is kickoff/.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage:\n${planning}`);
 
     // AC1: failing closed. A copy of the plugin breaks one part at a time.
     const copy = (name, breakIt) => {
@@ -1733,12 +1810,37 @@ step('hooks (recorded payloads)', (report) => {
     const st = hook('main-session-start', { script: blind });
     if (!/self-test/.test(st.out?.systemMessage ?? '')) report(`a guard that refuses nothing must fail the self-test and warn the owner, got ${JSON.stringify(st.out)}`);
 
-    // The SessionStart command in hooks.json, through bash: nothing outside a pitwall project, a warning without node.
-    const sh = (projectDir, prefix = '') => spawnSync('bash', ['-c', `${prefix}${sessionCmd.split('${CLAUDE_PLUGIN_ROOT}').join(fwd(plugin))}`], { input: JSON.stringify({ ...payloads['main-session-start'].input, session_id: 'sh', cwd: projectDir }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: fwd(projectDir), PITWALL_HOOK_STATE: state } });
-    if (sh(dir).stdout !== '') report(`the SessionStart command prints outside a pitwall project: ${sh(dir).stdout}`);
-    if (!/pitwall brief/.test(sh(project).stdout)) report(`the SessionStart command gives no brief in a pitwall project: ${sh(project).stdout}${sh(project).stderr}`);
-    const noNode = sh(project, 'PATH=/nonexistent; ');
-    if (!/Node\.js is not on PATH/.test(JSON.parse(noNode.stdout || '{}').systemMessage ?? '')) report(`the SessionStart command without node must warn: ${noNode.stdout}${noNode.stderr}`);
+    // The commands in hooks.json, through bash as Claude Code runs them: nothing outside a pitwall
+    // project, even without node; in one, the hook runs, and without node the guard refuses and the brief warns.
+    const sh = (event, label, projectDir, { prefix = '', toolInput } = {}) => {
+      const input = { ...JSON.parse(JSON.stringify(payloads[label].input).split('<project>').join(fwd(projectDir))), session_id: `sh-${event}`, cwd: projectDir, ...(toolInput ? { tool_input: toolInput } : {}) };
+      const r = spawnSync('bash', ['-c', `${prefix}${commands[event].split('${CLAUDE_PLUGIN_ROOT}').join(fwd(plugin))}`], { input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: fwd(projectDir), PITWALL_HOOK_STATE: state } });
+      return { code: r.status, stdout: r.stdout, stderr: r.stderr, out: r.stdout.trim() ? parseOut(r.stdout) : null };
+    };
+    const parseOut = (text) => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { unparsed: text };
+      }
+    };
+    const noNode = 'PATH=/nonexistent; ';
+    const labels = { 'session-start': 'main-session-start', 'pre-tool-use': 'main-pre-tool-use-bash', 'post-tool-use': 'main-post-tool-use-write', stop: 'main-stop', 'subagent-stop': 'implementer-subagent-stop' };
+    for (const [event, label] of Object.entries(labels)) {
+      for (const prefix of ['', noNode]) {
+        const r = sh(event, label, dir, { prefix, toolInput: { command: 'rm .claude/pitwall.json' } });
+        if (r.code !== 0 || r.stdout !== '') report(`the ${event} command outside a pitwall project${prefix ? ', without node,' : ''}: exit ${r.code}, printed ${r.stdout}${r.stderr}`);
+      }
+    }
+    if (!/pitwall brief/.test(sh('session-start', 'main-session-start', project).stdout)) report('the SessionStart command gives no brief in a pitwall project');
+    if (!/Node\.js is not on PATH/.test(sh('session-start', 'main-session-start', project, { prefix: noNode }).out?.systemMessage ?? '')) report('the SessionStart command without node must warn the owner');
+    if (verdict(sh('pre-tool-use', 'main-pre-tool-use-bash', project, { toolInput: { command: 'rm .claude/pitwall.json' } })) !== 'deny:switch') report('the PreToolUse command must run the guard in a pitwall project');
+    const blocked = sh('pre-tool-use', 'main-pre-tool-use-bash', project, { prefix: noNode, toolInput: { command: 'ls' } });
+    if (verdict(blocked) !== 'deny:broken' || !/claude plugin disable pitwall@pitwall --scope local/.test(blocked.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`the PreToolUse command without node must refuse and say how to turn pitwall off: ${blocked.stdout}${blocked.stderr}`);
+    for (const event of ['post-tool-use', 'stop', 'subagent-stop']) {
+      const r = sh(event, labels[event], project, { prefix: noNode });
+      if (r.code !== 0 || r.stdout !== '') report(`the ${event} command without node must let the session go on: exit ${r.code}, printed ${r.stdout}${r.stderr}`);
+    }
   });
 });
 

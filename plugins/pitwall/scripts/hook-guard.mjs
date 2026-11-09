@@ -1,35 +1,34 @@
 // The decisions of pitwall's PreToolUse guard (T3a-AC3, T3a-AC4, T3a-AC7), apart from the
-// call budget: a tool call and the project in, a refusal or nothing out. hook.mjs runs it, and
-// scripts/check.mjs tests it through hook.mjs on recorded payloads.
+// call budget and the check before a handback: a tool call and the project in, a refusal or
+// nothing out. hook.mjs runs it, and scripts/check.mjs tests it through hook.mjs on recorded
+// payloads.
 //
 // It reads shell commands well enough to find what an honest agent runs by mistake: a push to
 // main, a secret file, the guards' own settings. A command built to hide what it does gets past
-// it, and that is the reviewer's and the owner's to catch (review.threatModel, R-1).
+// it, and that is the reviewer's and the owner's to catch (review.threatModel, R-2).
 
-import { basename, isAbsolute, resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 
 const WIN = process.platform === 'win32';
 
 // ---- Paths ----
 
-// A path as the guard compares it: absolute, forward slashes, and lower case on Windows.
-export function norm(p) {
-  let s = String(p).split('\\').join('/');
-  // Git Bash spells C:\ as /c/.
-  if (WIN && /^\/[a-zA-Z](\/|$)/.test(s)) s = `${s[1]}:${s.slice(2) || '/'}`;
-  s = resolve(s).split('\\').join('/');
+// A path as a tool or a shell names it, made absolute from cwd, with forward slashes, in its
+// own case: ~ and $HOME are the home folder, and Git Bash's /c/ is C:/ on Windows.
+export function native(p, cwd = '.', home = '') {
+  let w = String(p);
+  const homeRef = /^(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%)(?=[\\/]|$)/i.exec(w);
+  if (homeRef && home) w = home + w.slice(homeRef[0].length);
+  w = w.split('\\').join('/');
+  if (WIN && /^\/[a-zA-Z](\/|$)/.test(w)) w = `${w[1]}:${w.slice(2) || '/'}`;
+  return resolve(String(cwd), w).split('\\').join('/');
+}
+// The same path as the guard compares it: lower case on Windows.
+export function norm(p, cwd = '.', home = '') {
+  const s = native(p, cwd, home);
   return WIN ? s.toLowerCase() : s;
 }
 const inside = (p, dir) => p === dir || p.startsWith(dir.endsWith('/') ? dir : `${dir}/`);
-
-// A word of a command as a path, from the folder the command runs in.
-function wordPath(word, cwd, home) {
-  let w = word;
-  const homeRef = /^(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%)(?=[\\/]|$)/i.exec(w);
-  if (homeRef) w = home + w.slice(homeRef[0].length);
-  if (WIN && /^\/[a-zA-Z](\/|$)/.test(w)) return norm(w);
-  return norm(isAbsolute(w) ? w : resolve(cwd, w));
-}
 
 // A word with a glob in it, as a pattern over normalised paths.
 const GLOB = /[*?[]/;
@@ -57,7 +56,7 @@ function globRegex(path) {
 
 // Does a word name this file: the same path, or a glob that matches it?
 function names(word, cwd, home, file) {
-  const p = wordPath(word, cwd, home);
+  const p = norm(word, cwd, home);
   return GLOB.test(word) ? globRegex(p).test(file) : p === file;
 }
 
@@ -74,10 +73,10 @@ export const program = (word) =>
     .toLowerCase()
     .replace(/\.(exe|cmd|bat|com)$/, '');
 
-// Splits a command line into simple commands: { argv, redirects, cwd }. Command
+// Splits a command line into simple commands: { argv, redirects, inputs, cwd }. Command
 // substitutions, "bash -c", "eval" and the like are read as commands of their own.
 // kind is "bash" or "powershell".
-export function parseCommand(text, kind = 'bash', cwd = '.', depth = 0) {
+export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 0) {
   const out = [];
   if (depth > 4) return out;
   const ps = kind === 'powershell';
@@ -213,6 +212,7 @@ export function parseCommand(text, kind = 'bash', cwd = '.', depth = 0) {
           const end = text.indexOf('`', j + 1);
           const stop = end < 0 ? text.length : end;
           inner.push(text.slice(j + 1, stop));
+          s += '`';
           j = stop;
         } else s += d;
       }
@@ -231,6 +231,7 @@ export function parseCommand(text, kind = 'bash', cwd = '.', depth = 0) {
       const end = text.indexOf('`', i + 1);
       const stop = end < 0 ? text.length : end;
       inner.push(text.slice(i + 1, stop));
+      word = `${word ?? ''}\``;
       i = stop;
       continue;
     }
@@ -269,27 +270,32 @@ export function parseCommand(text, kind = 'bash', cwd = '.', depth = 0) {
     }
     out.push({ argv, redirects: cmd.redirects, inputs: cmd.inputs, cwd: dir });
     const p = program(argv[0]);
-    if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(p) && argv[1] && argv[1] !== '-') dir = resolve(dir, argv.filter((a) => !a.startsWith('-'))[1] ?? argv[1]);
-    // A shell started with a command: its command is read too.
+    if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(p)) {
+      const target = argv.slice(1).find((a) => !a.startsWith('-'));
+      if (target) dir = native(target, dir, home);
+    }
+    // A shell started with a command ("bash -c", "bash -lc", "pwsh -Command"): its command is read too.
     const sh = SHELLS[p];
     if (sh) {
-      const flag = argv.findIndex((a, i) => i > 0 && /^(-c|-command|-commandwithargs|\/c)$/i.test(a));
-      if (flag > 0 && argv[flag + 1] !== undefined) out.push(...parseCommand(argv.slice(flag + 1).join(' '), sh, dir, depth + 1));
+      const flag = argv.findIndex((a, i) => i > 0 && /^(-[a-z]*c[a-z]*|-command|-commandwithargs|\/c)$/i.test(a));
+      if (flag > 0 && argv[flag + 1] !== undefined) out.push(...parseCommand(argv.slice(flag + 1).join(' '), sh, dir, home, depth + 1));
     }
-    if (p === 'eval' || p === 'invoke-expression' || p === 'iex') out.push(...parseCommand(argv.slice(1).join(' '), kind, dir, depth + 1));
+    if (p === 'eval' || p === 'invoke-expression' || p === 'iex') out.push(...parseCommand(argv.slice(1).join(' '), kind, dir, home, depth + 1));
     if (p === 'cmd') {
       const flag = argv.findIndex((a) => /^\/[ck]$/i.test(a));
-      if (flag > 0) out.push(...parseCommand(argv.slice(flag + 1).join(' '), 'bash', dir, depth + 1));
+      if (flag > 0) out.push(...parseCommand(argv.slice(flag + 1).join(' '), 'bash', dir, home, depth + 1));
     }
   }
-  for (const body of inner) out.push(...parseCommand(body, kind, cwd, depth + 1));
+  for (const body of inner) out.push(...parseCommand(body, kind, cwd, home, depth + 1));
   return out;
 }
 
 // The code of "node -e", "python -c" and the like, or null.
 function inlineCode(argv) {
-  if (!INTERPRETERS.has(program(argv[0]))) return null;
-  const i = argv.findIndex((a, k) => k > 0 && /^(-e|--eval|-p|--print|-c|-r|--command)$/.test(a));
+  const p = program(argv[0]);
+  if (!INTERPRETERS.has(p)) return null;
+  const flags = p === 'php' ? /^(-r)$/ : /^(-e|--eval|-p|--print|-c|--command)$/;
+  const i = argv.findIndex((a, k) => k > 0 && flags.test(a));
   if (i > 0) return argv[i + 1] ?? '';
   const joined = argv.find((a) => /^--(eval|print)=/.test(a));
   return joined ? joined.split(/=(.*)/s)[1] : null;
@@ -327,9 +333,17 @@ const WRITERS = new Set([
   'rm', 'rmdir', 'del', 'erase', 'rd', 'mv', 'move', 'cp', 'copy', 'install', 'rsync', 'ln', 'touch', 'truncate', 'tee', 'dd', 'chmod', 'chown', 'chgrp', 'unlink', 'shred',
   'remove-item', 'ri', 'move-item', 'mi', 'copy-item', 'cpi', 'set-content', 'sc', 'add-content', 'ac', 'out-file', 'new-item', 'ni', 'rename-item', 'rni', 'ren', 'clear-content', 'clc',
 ]);
+// Copiers write only their last path, the destination; the paths before it are read.
+const COPIERS = new Set(['cp', 'copy', 'install', 'rsync', 'copy-item', 'cpi']);
 const DELETERS = new Set(['rm', 'rmdir', 'del', 'erase', 'rd', 'mv', 'move', 'unlink', 'shred', 'remove-item', 'ri', 'move-item', 'mi']);
 const GIT_WRITERS = new Set(['rm', 'mv', 'checkout', 'restore', 'clean', 'apply', 'stash', 'reset', 'switch']);
 const HTTP = new Set(['curl', 'wget', 'http', 'https', 'xh', 'invoke-restmethod', 'irm', 'invoke-webrequest', 'iwr']);
+// Programs whose operands are names or text, not files they open: "echo .env >> .gitignore", "test -f .env".
+const NAMES_ONLY = new Set(['echo', 'printf', 'test', '[', '[[', 'ls', 'stat', 'find', 'test-path', 'write-output', 'write-host']);
+// What a secret file is called, to test a search pattern against.
+const SECRET_SAMPLES = ['.env', '.env.local', '.env.production', 'server.pem', 'server.key', 'cert.p12', 'cert.pfx', 'id_rsa', 'id_ed25519'];
+// Inline code that writes, renames or removes files.
+const WRITES_CODE = /write|unlink|\brm|rename|append|truncate|copy|move|delete|remove|chmod|open\([^)]*['"][wax+]/i;
 
 const refuse = (rule, reason) => ({ rule, reason });
 
@@ -338,22 +352,23 @@ const refuse = (rule, reason) => ({ rule, reason });
 export function guard(call, ctx) {
   const { tool, input = {}, agentId, agentType } = call;
   const h = ctx.cfg.hooks;
-  if (h.neverRefused.includes(tool)) return null;
+  if (h.handback.includes(tool)) return null;
+  const home = native(ctx.home);
   const root = norm(ctx.root);
-  const home = norm(ctx.home);
   const plugin = norm(ctx.pluginRoot);
   const cwd = ctx.cwd ?? ctx.root;
   const protectedFiles = [
     `${root}/.claude/pitwall.json`,
     `${root}/.claude/settings.json`,
     `${root}/.claude/settings.local.json`,
-    `${home}/.claude/settings.json`,
-    `${home}/.claude/settings.local.json`,
+    `${norm(home)}/.claude/settings.json`,
+    `${norm(home)}/.claude/settings.local.json`,
   ];
   const contentPatterns = h.secrets.content.map((s) => new RegExp(s));
   const isSecretName = (name) => nameMatches(name, h.secrets.files) && !nameMatches(name, h.secrets.notSecret);
   const keyIn = (text) => typeof text === 'string' && contentPatterns.some((re) => re.test(text));
   const policy = agentId ? h.agents[agentType] : undefined;
+  const mode = ctx.settings.mergeProtection;
 
   // The file a file tool writes, and what it writes.
   const target = FILE_WRITES.has(tool) ? (tool === 'NotebookEdit' ? input.notebook_path : input.file_path) : null;
@@ -362,15 +377,15 @@ export function guard(call, ctx) {
   // 1. An agent with limits of its own (T3a-AC4): the plan reviewer.
   if (policy) {
     if (target !== null) {
-      const allowed = policy.write.map((f) => norm(resolve(ctx.root, f)));
-      if (!allowed.includes(norm(resolve(cwd, String(target))))) return refuse('agent', `${agentType} writes only ${policy.write.join(', ')}, not ${target}.`);
+      const allowed = policy.write.map((f) => norm(f, ctx.root));
+      if (!allowed.includes(norm(String(target), cwd, home))) return refuse('agent', `${agentType} writes only ${policy.write.join(', ')}, not ${target}.`);
     }
     if (COMMANDS.has(tool)) {
       const text = String(input.command ?? '');
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break.`);
-      const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd);
+      const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
       const scripts = policy.run.map((s) => `${plugin}/scripts/${s}`);
-      const ok = cmds.length === 1 && program(cmds[0].argv[0]) === 'node' && scripts.includes(wordPath(cmds[0].argv[1] ?? '', cmds[0].cwd, home));
+      const ok = cmds.length === 1 && program(cmds[0].argv[0]) === 'node' && scripts.includes(norm(cmds[0].argv[1] ?? '', cmds[0].cwd, home));
       if (!ok) return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments.`);
     }
   }
@@ -378,16 +393,19 @@ export function guard(call, ctx) {
   // 2. File tools.
   if (target !== null || tool === 'Read' || tool === 'Grep') {
     const file = tool === 'Read' ? input.file_path : tool === 'Grep' ? input.path : target;
-    const p = file ? norm(resolve(cwd, String(file))) : null;
+    const p = file ? norm(String(file), cwd, home) : null;
     if (p && isSecretName(basename(p))) return refuse('secrets', `${file} is a secret file: pitwall keeps agents out of it. Use .env.example or test values; a run that needs the real secrets is the owner's.`);
-    if (tool === 'Grep' && input.glob && /\.env|\.pem|\.key|id_rsa/.test(String(input.glob)) && !nameMatches(String(input.glob), h.secrets.notSecret)) {
-      return refuse('secrets', `a search through ${input.glob} reads secret files: pitwall keeps agents out of them.`);
+    if (tool === 'Grep' && input.glob) {
+      // The file name the search pattern matches, against what secret files are called.
+      const last = String(input.glob).split(/[\\/]/).pop();
+      if (!/^[*?]*$/.test(last) && SECRET_SAMPLES.some((s) => globRegex(last).test(s) && isSecretName(s))) return refuse('secrets', `a search through ${input.glob} reads secret files: pitwall keeps agents out of them.`);
     }
     if (target !== null) {
       if (written.some(keyIn)) return refuse('secrets', `what this writes to ${target} looks like a key or a token. Keep secrets out of files the agents write; tests make their keys at run time.`);
       if (protectedFiles.includes(p) || inside(p, plugin)) return refuse('switch', `${target} is one of the switches of pitwall's guards: only the owner, or a pitwall script, changes it.`);
       if (inside(p, root) && !inside(p, `${root}/.git`)) {
-        const rel = p.slice(root.length + 1);
+        // git gets the path in its own case: an ignore pattern can be case-sensitive.
+        const rel = native(String(target), cwd, home).slice(root.length + 1);
         const r = ctx.git(['check-ignore', '-q', '--', rel], ctx.root);
         if (r.status === 0) return refuse('ignored', `git ignores ${target}: it is generated or stays on this machine. Change the source it comes from; a file the owner wants changed by hand, the owner changes.`);
         if (r.status !== 1 && !/not a git repository/i.test(r.err)) return refuse('broken', `git check-ignore could not read ${target}: ${r.err || `exit ${r.status}`}.`);
@@ -396,34 +414,42 @@ export function guard(call, ctx) {
     return null;
   }
 
-  // 3. MCP tools: merge protection and commit statuses.
+  // 3. MCP tools: merge protection, commit statuses and merges.
   if (tool.startsWith('mcp__')) {
     const name = tool.toLowerCase();
-    const text = JSON.stringify(input);
-    if (/protection|ruleset/.test(name) && !/(^|_)(get|list|read|search)/.test(name.split('__').pop())) return refuse('protection', `${tool} changes merge protection, which only the owner changes (pitwall ADR-0005).`);
-    if (/status/.test(name) && text.includes(ctx.cfg.review.statusContext)) return refuse('review', `${ctx.cfg.review.statusContext} is set only by a pitwall reviewer, through review-status.mjs (pitwall ADR-0007).`);
-    if (/merge/.test(name) && ctx.settings.mergeProtection !== 'branch-protection') return refuse('merge', `merge protection is ${ctx.settings.mergeProtection}: merge with gh pr merge, which pitwall checks.`);
+    const action = name.split('__').pop();
+    if (/protection|ruleset/.test(name) && !/^(get|list|read|search)/.test(action)) return refuse('protection', `${tool} changes merge protection, which only the owner changes (pitwall ADR-0005).`);
+    if ((/commit.?status|statuses/.test(name) && !/^(get|list|read|search)/.test(action)) || (/status/.test(name) && JSON.stringify(input).includes(ctx.cfg.review.statusContext))) {
+      return refuse('review', `${tool} writes a commit status: ${ctx.cfg.review.statusContext} is set only by a pitwall reviewer, through review-status.mjs (pitwall ADR-0007), and no other status is written by hand.`);
+    }
+    if (/merge/.test(name) && /pull|(^|_)pr(_|$)/.test(action) && mode !== 'branch-protection') return refuse('merge', `merge protection is ${mode ?? 'not recorded'}: merge with gh pr merge, which pitwall checks.`);
     return null;
   }
 
   if (!COMMANDS.has(tool)) return null;
   const text = String(input.command ?? '');
-  const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd);
+  const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
   if (keyIn(text)) return refuse('secrets', 'this command holds what looks like a key or a token. Keep secrets out of commands; tests make their keys at run time.');
   const reviewer = Boolean(agentId) && h.reviewers.includes(agentType);
   const base = ctx.cfg.mergeProtection.branch;
+  // The branch a command switched to earlier in the same line ("git switch -c x && git push -u origin HEAD").
+  let switchedTo = null;
 
   for (const { argv, redirects, inputs, cwd: dir } of cmds) {
     const p = program(argv[0]);
     const words = pathWords(argv);
     const code = inlineCode(argv);
     const git = p === 'git' ? gitCommand(argv) : null;
-    const readOnly = ctx.cfg.hooks.readOnlyCommands.includes(p) || (git && ctx.cfg.hooks.readOnlyGit.includes(git.sub));
+    const inPlace = argv.some((a) => /^(-i|--in-place|-[a-hj-zA-Z]*i)/.test(a));
+    const readOnly =
+      h.readOnlyCommands.includes(p) ||
+      (git && h.readOnlyGit.includes(git.sub)) ||
+      (git?.sub === 'restore' && git.args.includes('--staged') && !git.args.some((a) => a === '--worktree' || a === '-W')) ||
+      (['sed', 'awk', 'gawk'].includes(p) && !inPlace);
 
-    // (a) Secret files, named by any command.
-    for (const w of [...words, ...redirects, ...inputs]) {
-      const name = basename(w.split('\\').join('/'));
-      if (isSecretName(name)) return refuse('secrets', `${w} is a secret file: pitwall keeps agents out of it. Use .env.example or test values; a run that needs the real secrets is the owner's.`);
+    // (a) Secret files, named by any command but one that only names them.
+    for (const w of [...(NAMES_ONLY.has(p) ? [] : words), ...redirects, ...inputs]) {
+      if (isSecretName(basename(w.split('\\').join('/')))) return refuse('secrets', `${w} is a secret file: pitwall keeps agents out of it. Use .env.example or test values; a run that needs the real secrets is the owner's.`);
     }
     if (code !== null && code.split(/[\s'"`(),;=:+]+/).some((piece) => isSecretName(basename(piece.split('\\').join('/'))))) {
       return refuse('secrets', 'this inline script names a secret file: pitwall keeps agents out of it.');
@@ -432,18 +458,21 @@ export function guard(call, ctx) {
     // (d) The guards' switch: the settings, the plugin's folder, the plugin's enablement.
     const switchReason = 'is one of the switches of pitwall\'s guards: only the owner, or a pitwall script, changes it.';
     for (const t of redirects) {
-      const tp = wordPath(t, dir, home);
-      if (protectedFiles.some((f) => names(t, dir, home, f)) || inside(tp, plugin)) return refuse('switch', `${t} ${switchReason}`);
+      if (protectedFiles.some((f) => names(t, dir, home, f)) || inside(norm(t, dir, home), plugin)) return refuse('switch', `${t} ${switchReason}`);
     }
+    const operands = words.filter((w) => !w.startsWith('-'));
+    // What a command writes: a copier its destination, any other writer every path it names.
+    const writes = (w) => (COPIERS.has(p) ? w === operands[operands.length - 1] : WRITERS.has(p) || (git && GIT_WRITERS.has(git.sub)) || (['sed', 'perl'].includes(p) && inPlace));
     for (const w of words) {
-      if (!readOnly && protectedFiles.some((f) => names(w, dir, home, f))) return refuse('switch', `${w} ${switchReason}`);
-      const wp = wordPath(w, dir, home);
-      const writes = WRITERS.has(p) || (git && GIT_WRITERS.has(git.sub)) || (['sed', 'perl'].includes(p) && argv.some((a) => /^(-i|--in-place)/.test(a) || /^-[a-hj-zA-Z]*i/.test(a)));
-      if (writes && inside(wp, plugin)) return refuse('switch', `${w} is inside the pitwall plugin, one of the switches of its guards.`);
+      const named = protectedFiles.some((f) => names(w, dir, home, f));
+      if (named && !readOnly && (!COPIERS.has(p) || writes(w))) return refuse('switch', `${w} ${switchReason}`);
+      const wp = norm(w, dir, home);
+      if (writes(w) && inside(wp, plugin)) return refuse('switch', `${w} is inside the pitwall plugin, one of the switches of its guards.`);
       if (DELETERS.has(p) && [...protectedFiles, plugin].some((f) => inside(f, wp))) return refuse('switch', `${w} holds the switches of pitwall's guards: only the owner removes it.`);
     }
-    if (code !== null && (/pitwall\.json|settings(\.local)?\.json/.test(code) || code.toLowerCase().includes(plugin.toLowerCase()))) {
-      return refuse('switch', 'this inline script names one of the switches of pitwall\'s guards.');
+    const codePaths = code === null ? '' : code.split('\\').join('/');
+    if (code !== null && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(codePaths) || (WIN ? codePaths.toLowerCase() : codePaths).includes(plugin)) && WRITES_CODE.test(code)) {
+      return refuse('switch', 'this inline script writes one of the switches of pitwall\'s guards.');
     }
     if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
     if (p === 'claude' && /^plugins?$/.test(argv[1] ?? '') && (/^(disable|uninstall|remove|rm)$/.test(argv[2] ?? '') || (argv[2] === 'marketplace' && /^(remove|rm)$/.test(argv[3] ?? '')))) {
@@ -452,12 +481,20 @@ export function guard(call, ctx) {
 
     // (c) Pushes that change main.
     if (git?.sub === 'push') {
-      const reason = pushChangesMain(git, base, dir, ctx);
+      const reason = pushChangesMain(git, base, dir, home, ctx, switchedTo);
       if (reason) return refuse('push', reason);
+    }
+    if (git && (git.sub === 'checkout' || git.sub === 'switch')) {
+      const flag = git.args.findIndex((a) => /^-[bBcC]$/.test(a));
+      if (flag >= 0 && git.args[flag + 1]) switchedTo = git.args[flag + 1];
+      else {
+        const name = git.args.find((a) => !a.startsWith('-'));
+        if (name && !git.args.includes('--') && ctx.git(['rev-parse', '--verify', '-q', `refs/heads/${name}`], git.dir ? native(git.dir, dir, home) : dir).ok) switchedTo = name;
+      }
     }
 
     // AC4: review-status.mjs only from the two reviewers.
-    const runsReviewStatus = (!readOnly && argv.some((w) => /review-status\.mjs$/i.test(w))) || (code !== null && code.includes('review-status'));
+    const runsReviewStatus = ((INTERPRETERS.has(p) || /review-status\.mjs$/i.test(argv[0] ?? '')) && argv.some((w) => /review-status\.mjs$/i.test(w))) || (code !== null && code.includes('review-status'));
     if (runsReviewStatus && !reviewer) return refuse('review', `only ${h.reviewers.join(' and ')} run review-status.mjs (pitwall ADR-0007), and this call comes from ${agentId ? agentType || 'a sub-agent' : 'the main conversation'}.`);
 
     // (e), AC4 and AC7 over the GitHub API: protection, statuses and merges.
@@ -468,12 +505,10 @@ export function guard(call, ctx) {
       if (api.graphql && /\b(create|update|delete)(BranchProtectionRule|RepositoryRuleset)\b/.test(api.body)) return refuse('protection', 'this GraphQL mutation changes merge protection, which only the owner changes (pitwall ADR-0005).');
       if (api.write && /\/statuses\//.test(api.path)) return refuse('review', `${api.method} ${api.path} writes a commit status: ${ctx.cfg.review.statusContext} is set only through review-status.mjs (pitwall ADR-0007), and no other status is written by hand.`);
       const merges = (api.write && /\/pulls\/\d+\/merge$/.test(api.path)) || (api.graphql && /\bmergePullRequest\b/.test(api.body));
-      if (merges && ctx.settings.mergeProtection !== 'branch-protection') return refuse('merge', `merge protection is ${ctx.settings.mergeProtection}: merge with gh pr merge, which pitwall checks.`);
+      if (merges && mode !== 'branch-protection') return refuse('merge', `merge protection is ${mode ?? 'not recorded'}: merge with gh pr merge, which pitwall checks.`);
     }
     if (p === 'gh' && argv[1] === 'pr' && argv[2] === 'merge') {
       if (argv.includes('--admin')) return refuse('protection', 'gh pr merge --admin bypasses the required checks, and admins are included in the protection (pitwall ADR-0005).');
-      const mode = ctx.settings.mergeProtection;
-      if (mode === 'pending') return refuse('merge', 'merge protection is pending: nothing merges until protect.mjs has set it up (pitwall ADR-0002).');
       if (mode === 'local-hook') {
         const flagsWithValue = new Set(['-b', '--body', '-F', '--body-file', '-t', '--subject', '--match-head-commit', '-A', '--author-email', '-R', '--repo']);
         let selector = null;
@@ -486,6 +521,8 @@ export function guard(call, ctx) {
         }
         const reason = ctx.checkPr(selector);
         if (reason) return refuse('merge', reason);
+      } else if (mode !== 'branch-protection') {
+        return refuse('merge', `merge protection is ${mode ?? 'not recorded'}: nothing merges until protect.mjs has set it up (pitwall ADR-0002).`);
       }
     }
   }
@@ -493,8 +530,8 @@ export function guard(call, ctx) {
 }
 
 // Would this git push change the base branch? A reason, or null.
-function pushChangesMain(git, base, dir, ctx) {
-  const where = git.dir ? resolve(dir, git.dir) : dir;
+function pushChangesMain(git, base, dir, home, ctx, switchedTo) {
+  const where = git.dir ? native(git.dir, dir, home) : dir;
   const valued = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
   let force = false;
   let del = false;
@@ -510,29 +547,47 @@ function pushChangesMain(git, base, dir, ctx) {
     else if (/^(--force|--force-with-lease|--force-if-includes)(=|$)/.test(a) || /^-[a-zA-Z]*f/.test(a)) force = true;
     else if (!a.startsWith('-')) pos.push(a);
   }
+  // The branch HEAD is on; null when git cannot tell.
   const current = () => {
+    if (switchedTo) return switchedTo;
     const r = ctx.git(['symbolic-ref', '--short', '-q', 'HEAD'], where);
-    return r.ok ? r.out : '';
+    return r.ok && r.out ? r.out : null;
   };
+  const remote = pos[0] ?? 'origin';
   const refspecs = pos.slice(1);
   // "git push --tags" with no refspec pushes the tags only.
   if (tagsOnly && refspecs.length === 0) return null;
-  const targets = refspecs.length === 0 ? [{ dst: current(), plus: false, gone: false }] : refspecs.map((r) => {
+  const unknown = 'git cannot tell which branch this pushes: name it, as in git push origin <branch>.';
+  const targets = [];
+  if (refspecs.length === 0) {
+    const b = current();
+    if (b === null) return unknown;
+    targets.push({ src: b, dst: b, plus: false, gone: false });
+  }
+  for (const r of refspecs) {
     const plus = r.startsWith('+');
     const s = plus ? r.slice(1) : r;
     const colon = s.indexOf(':');
-    const src = colon < 0 ? s : s.slice(0, colon);
+    let src = colon < 0 ? s : s.slice(0, colon);
     let dst = colon < 0 ? s : s.slice(colon + 1);
-    if (dst === 'HEAD' || (colon < 0 && src === 'HEAD')) dst = current();
-    return { dst: dst.replace(/^refs\/heads\//, ''), plus, gone: colon === 0 };
-  });
+    // HEAD, or a name the shell works out ("$(git branch --show-current)"), is the current branch.
+    const isCurrent = (x) => x === 'HEAD' || /[$`]/.test(x);
+    if (isCurrent(src)) src = current();
+    if (isCurrent(dst) || (colon < 0 && src !== s)) dst = colon < 0 ? src : current();
+    if (src === null || dst === null) return unknown;
+    targets.push({ src: src.replace(/^refs\/heads\//, ''), dst: dst.replace(/^refs\/heads\//, ''), plus, gone: colon === 0 });
+  }
   for (const t of targets) {
     if (t.dst !== base) continue;
     if (del || t.gone) return `this push deletes ${base}, which only changes through a PR.`;
     if (force || t.plus) return `this is a forced push to ${base}, which only changes through a PR.`;
-    // The skeleton is the only direct commit on main (SPEC 9): its first push passes.
-    const count = ctx.git(['rev-list', '--count', `refs/heads/${base}`], where);
-    if (count.ok && count.out === '1') return null;
+    // The skeleton is the only direct commit on main (SPEC 9): its first push passes, from main
+    // itself, while main holds that one commit and has never been pushed to this remote.
+    if (t.src === base) {
+      const count = ctx.git(['rev-list', '--count', `refs/heads/${base}`], where);
+      const pushed = ctx.git(['rev-parse', '--verify', '-q', `refs/remotes/${remote}/${base}`], where);
+      if (count.ok && count.out === '1' && !pushed.ok) return null;
+    }
     return `${base} changes only through a PR: push your branch and open one.`;
   }
   return null;
@@ -565,9 +620,9 @@ function apiCall(p, argv) {
     return { path: `/${path.replace(/^\//, '')}`, method, write: method !== 'GET' && method !== 'HEAD', graphql, body: body.join(' ') };
   }
   if (HTTP.has(p)) {
-    const url = argv.find((a) => /^https?:\/\/api\.github\.com\//i.test(a) || /api\.github\.com\//i.test(a));
+    const url = argv.find((a) => /api\.github\.com\//i.test(a));
     if (!url) return null;
-    const path = url.replace(/^https?:\/\/api\.github\.com/i, '').replace(/[?#].*$/, '');
+    const path = url.replace(/^.*?api\.github\.com/i, '').replace(/[?#].*$/, '');
     let method = 'GET';
     const body = [];
     for (let i = 1; i < argv.length; i += 1) {

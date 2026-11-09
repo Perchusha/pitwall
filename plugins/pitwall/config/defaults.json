@@ -122,7 +122,7 @@
         ]
       }
     },
-    "neverRefused": [
+    "handback": [
       "SubagentHandback"
     ],
     "secrets": {

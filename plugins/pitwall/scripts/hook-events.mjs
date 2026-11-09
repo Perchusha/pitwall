@@ -5,9 +5,9 @@
 // a file per agent with one byte per tool call (T3a-AC5), and markers for the checks (T3a-AC6).
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { config, ghRunner, parseJson, pluginRoot, pluginVersion, readGate, readReview } from './lib.mjs';
 import { guard, norm } from './hook-guard.mjs';
 
@@ -76,7 +76,14 @@ function preToolUse(s) {
   const { cfg, input, dir, key } = s;
   const tool = input.tool_name;
   if (typeof tool !== 'string') throw new Error('the input names no tool');
-  if (cfg.hooks.neverRefused.includes(tool)) return null;
+  // A sub-agent hands its report back through a tool call: the budget and the guards never refuse it,
+  // and Claude Code ends the sub-agent there, so an implementer's check before stopping runs here.
+  if (cfg.hooks.handback.includes(tool)) {
+    if (!input.agent_id || !cfg.hooks.implementers.includes(input.agent_type)) return null;
+    const check = checkBeforeStop(s, input.agent_type);
+    if (check?.block) return deny('gate', check.block);
+    return check?.message ? { systemMessage: check.message } : null;
+  }
 
   const file = join(dir, `${key}.calls`);
   appendFileSync(file, '.');
@@ -151,13 +158,12 @@ function postToolUse({ cfg, input, root, dir, key }) {
   if (!FILE_WRITES.includes(input.tool_name)) return null;
   const file = input.tool_name === 'NotebookEdit' ? input.tool_input?.notebook_path : input.tool_input?.file_path;
   if (!file) return null;
-  const p = norm(resolve(input.cwd || root, String(file)));
+  const p = norm(String(file), input.cwd || root, homedir());
   const r = norm(root);
   if (!p.startsWith(`${r}/`) || p.startsWith(`${r}/docs/`) || p.startsWith(`${r}/.git/`)) return null;
   const branch = git(['symbolic-ref', '--short', '-q', 'HEAD'], root).out;
   if (!branch.startsWith('epic/')) return null;
   writeFileSync(join(dir, `${key}.dirty`), branch);
-  rmSync(join(dir, `${key}.retries`), { force: true });
   const seconds = cfg.hooks.gateTimeoutSeconds.fast;
   const g = runGate(root, '--fast', seconds);
   const say = (text) => ({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } });
@@ -168,20 +174,21 @@ function postToolUse({ cfg, input, root, dir, key }) {
   return say(`pitwall: scripts/gate --fast is red after this edit (exit ${g.status}). The edit stays; fix what the gate reports:\n${tail(g.output, cfg.hooks.gateOutputChars)}`);
 }
 
-function stop({ cfg, input, root, dir, key }, event) {
-  if (event === 'subagent-stop' && !cfg.hooks.implementers.includes(input.agent_type)) return null;
+// The check before an agent stops, after an edit outside docs/ on an epic branch: { block: reason },
+// { message } for the owner, or null. A red gate holds the agent back at most hooks.stopRetries
+// times in all until the gate is green again, however many edits come between.
+function checkBeforeStop({ cfg, root, dir, key }, who) {
   const dirty = join(dir, `${key}.dirty`);
   if (!existsSync(dirty)) return null;
   const branch = readFileSync(dirty, 'utf8');
-  const who = event === 'stop' ? 'the session' : input.agent_type;
   const seconds = cfg.hooks.gateTimeoutSeconds.changed;
   const g = runGate(root, '--changed', seconds);
   if (g.missing) {
     rmSync(dirty, { force: true });
     return null;
   }
-  if (g.error) return { systemMessage: `pitwall: scripts/gate --changed could not run before ${who} stopped (${g.error}); the edits on ${branch} are not checked.` };
-  if (g.timedOut) return { systemMessage: `pitwall: scripts/gate --changed did not finish in ${seconds} seconds before ${who} stopped; that is not counted as red, and it runs again at the next stop.` };
+  if (g.error) return { message: `pitwall: scripts/gate --changed could not run before ${who} stopped (${g.error}); the edits on ${branch} are not checked.` };
+  if (g.timedOut) return { message: `pitwall: scripts/gate --changed did not finish in ${seconds} seconds before ${who} stopped; that is not counted as red, and it runs again at the next stop.` };
   const retries = join(dir, `${key}.retries`);
   if (g.status === 0) {
     rmSync(dirty, { force: true });
@@ -191,15 +198,21 @@ function stop({ cfg, input, root, dir, key }, event) {
   const tries = Number(existsSync(retries) ? readFileSync(retries, 'utf8') : 0) || 0;
   const max = cfg.hooks.stopRetries;
   if (tries >= max) {
+    // The tries stay used up until the gate is green; the next edit runs the gate at the next stop again.
     rmSync(dirty, { force: true });
-    rmSync(retries, { force: true });
-    return { systemMessage: `pitwall: scripts/gate --changed is still red on ${branch} after ${max} tries; ${who} stops with it red.` };
+    return { message: `pitwall: scripts/gate --changed is still red on ${branch} after ${max} tries; ${who} stops with it red.` };
   }
   writeFileSync(retries, String(tries + 1));
-  return {
-    decision: 'block',
-    reason: `pitwall: scripts/gate --changed is red (exit ${g.status}) after the edits on ${branch}. Fix it before you stop (try ${tries + 1} of ${max}); if you cannot, stop and report PARTIAL with what the gate says:\n${tail(g.output, cfg.hooks.gateOutputChars)}`,
-  };
+  return { block: `pitwall: scripts/gate --changed is red (exit ${g.status}) after the edits on ${branch}. Fix it before you stop (try ${tries + 1} of ${max}); if you cannot, stop and report PARTIAL with what the gate says:\n${tail(g.output, cfg.hooks.gateOutputChars)}` };
+}
+
+function stop(s, event) {
+  const { cfg, input } = s;
+  // A sub-agent that ends without a handback: the implementers only.
+  if (event === 'subagent-stop' && !cfg.hooks.implementers.includes(input.agent_type)) return null;
+  const check = checkBeforeStop(s, event === 'stop' ? 'the session' : input.agent_type);
+  if (check?.block) return { decision: 'block', reason: check.block };
+  return check?.message ? { systemMessage: check.message } : null;
 }
 
 // ---- SessionStart: the brief and the self-test (T3a-AC1, T3a-AC2) ----
@@ -231,6 +244,21 @@ function currentEpic(root) {
   return 'docs/EPICS.md has no epic that is not merged or released.';
 }
 
+// While the plan is being made (on the planning branch, or while main holds only the skeleton):
+// the first stage whose docs check does not pass yet. Null once planning is over.
+function planningStage(root, cfg, branch) {
+  const plan = cfg.planning.branch;
+  const mainCommits = git(['rev-list', '--count', `refs/heads/${cfg.mergeProtection.branch}`], root).out;
+  if (branch !== plan && mainCommits !== '1') return null;
+  const spikes = existsSync(join(root, 'docs', 'spikes')) && readdirSync(join(root, 'docs', 'spikes')).some((f) => f.endsWith('.md') && !['README.md', 'template.md'].includes(f));
+  const stages = ['kickoff', 'discovery', 'decide', ...(spikes ? ['spike'] : []), 'plan', 'plan-review'];
+  for (const stage of stages) {
+    const r = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'docs-check.mjs'), '--root', root, '--stage', stage], { encoding: 'utf8' });
+    if (r.status !== 0) return `planning on ${plan}; the next stage is ${stage} (its docs check does not pass yet): /pitwall:${stage === 'plan-review' ? 'plan' : stage}.`;
+  }
+  return `planning on ${plan}; the plan is reviewed and waits for its merge: /pitwall:plan.`;
+}
+
 function selfTest(s) {
   const ctx = guardContext(s);
   const write = guard({ tool: 'Write', input: { file_path: join(s.root, '.claude', 'pitwall.json'), content: '{}' } }, ctx);
@@ -253,7 +281,8 @@ function sessionStart(s) {
     const changed = status.out ? status.out.split('\n').length : 0;
     lines.push(`- Branch: ${branch.ok ? branch.out : 'a detached HEAD'}, ${changed ? `${changed} changed or untracked files` : 'tree clean'}.`);
   }
-  lines.push(`- Current epic: ${currentEpic(root)}`);
+  const stage = branch.ok ? planningStage(root, cfg, branch.out) : null;
+  lines.push(stage ? `- Stage: ${stage}` : `- Current epic: ${currentEpic(root)}`);
   const b = cfg.budgets.sessionToolCalls;
   const attended = process.env.CLAUDE_CODE_SESSION_ATTENDED;
   lines.push(

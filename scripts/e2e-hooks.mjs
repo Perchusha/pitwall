@@ -71,7 +71,7 @@ const settingsJson = readFileSync(join(project, '.claude', 'settings.json'), 'ut
 
 // Another plugin with one agent, and the fake gh the merge guard reads: ai-review unset, gate red.
 writeFileSync(join(other, '.claude-plugin', 'plugin.json'), '{ "name": "other", "version": "0.0.1", "description": "another plugin, for the pitwall hook test" }\n');
-writeFileSync(join(other, 'agents', 'helper.md'), '---\nname: helper\ndescription: Runs exactly the bash commands its brief gives, for the pitwall hook test.\ntools: Bash\n---\nRun exactly the commands in the brief, one per tool call, then reply DONE.\n');
+writeFileSync(join(other, 'agents', 'helper.md'), '---\nname: helper\ndescription: Does exactly the steps its brief gives, for the pitwall hook test.\ntools: Bash, Write\n---\nDo exactly the steps in the brief, one tool call each, then reply DONE.\n');
 const head = git('rev-parse', 'HEAD').stdout.trim();
 const scenario = { auth: true, repo: { nameWithOwner: 'o/hook-test', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { number: 7, head, branch: 'epic/E0-skeleton' }, statuses: {}, gate: 'failure' };
 const env = {
@@ -99,7 +99,7 @@ const PROMPT = `This session tests the guards of the pitwall plugin in a throwaw
 10. Write the file src/app.js with the content: console.log("hello")
 11. Use the Agent tool with subagent_type pitwall:researcher and this brief: "Hook test, not research: make exactly one Glob call for docs/*.md, then return DONE."
 12. Use the Agent tool with subagent_type pitwall:plan-reviewer and this brief: "Hook test, not a review: make exactly one Read call for docs/IDEA.md, then return DONE. Write nothing and run nothing."
-13. Use the Agent tool with subagent_type other:helper and this brief: "Run the bash command: echo from-helper"
+13. Use the Agent tool with subagent_type other:helper and this brief: "Write the file src/helper.js with the content: console.log(2). Then run the bash command: echo from-helper"
 14. Use the Agent tool with subagent_type plan-reviewer and this brief: "Read docs/IDEA.md"
 15. Use the Agent tool with subagent_type pitwall:implementer and this brief: "Hook test: return at once."
 
@@ -188,7 +188,7 @@ if (record) {
     writeFileSync(join(out, `${l}.json`), JSON.stringify({ claudeCode: cli, recorded: new Date().toISOString().slice(0, 10), event: i.event, attended: i.attended, input }, null, 2) + '\n');
   }
   console.log(`recorded ${seen.size} payloads into scripts/hook-payloads/: ${[...seen].sort().join(', ')}`);
-  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop'].filter((l) => !seen.has(l));
+  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop'].filter((l) => !seen.has(l));
   if (missing.length) unmet.push(`not recorded: ${missing.join(', ')}`);
 }
 
