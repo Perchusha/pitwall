@@ -1,6 +1,7 @@
 ---
 name: continue
 description: Stage 6 of pitwall, the conductor of the epic loop. Orients from the session brief, git and the docs, selects the next change (an open bug, the change in flight, or the next epic), clarifies it with the owner, dispatches an implementer, gates it, opens the PR, runs the code-reviewer until it approves, merges by risk class and records the result, then loops. The owner runs it as /pitwall:continue once the plan is merged, and again to resume.
+argument-hint: "[how many changes to merge in this session]"
 disable-model-invocation: true
 ---
 
@@ -62,7 +63,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`riskClasses`, 
    - Exit 4 (`RESULT: waits for the owner`): show the owner one summary (the change, its risk class, the reviewer's verdict and its file, what was not done) and ask one question: merge it now? On yes, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --change --owner-approved`. On no, or not yet, stop here; `/pitwall:continue` resumes at this step.
    - Exit 3: when the gate is still running, run the same command again (a yes still stands); otherwise show the HANDOFF block verbatim and stop.
    - Exit 1: show why it refused; when `ai-review` is not success on the head, run one more review round (step 8).
-10. **Record and loop.** With a remote, `git switch main` and `git pull --ff-only`. The merge is recorded by the first commit of the next branch (step 4), since `main` is protected. Count the changes merged in this session: after `budgets.epicsPerSession`, stop and suggest a fresh session; otherwise go back to step 2. When you stop, say in a few lines where each change stands and what waits for the owner.
+10. **Record and loop.** With a remote, `git switch main` and `git pull --ff-only`. The merge is recorded by the first commit of the next branch (step 4), since `main` is protected. Count the changes merged in this session: after `$ARGUMENTS` of them when it gives a number, and never more than `budgets.epicsPerSession`, stop and suggest a fresh session; otherwise go back to step 2. When you stop, say in a few lines where each change stands and what waits for the owner.
 
 ## Implementer brief
 

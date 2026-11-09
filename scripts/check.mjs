@@ -1561,6 +1561,99 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
   });
 });
 
+// 6l. T3b-AC7: the fake GitHub of the headless loop runs (scripts/fake-github.mjs) answers like GitHub,
+// as `node scripts/e2e.mjs --github <owner/repo>` recorded GitHub's answers in scripts/github-responses/:
+// every field the fake gives, GitHub gave with the same type, and its refusals read the same.
+const GITHUB_KINDS = ['repo-view', 'pr-create', 'pr-list', 'pr-view', 'pr-merge', 'api-status-post', 'api-statuses', 'api-check-runs', 'api-commit', 'api-rules', 'api-protection', 'api-branch'];
+step('fake GitHub against GitHub\'s answers', (report) => {
+  const recDir = join(root, 'scripts', 'github-responses');
+  const recs = Object.fromEntries((existsSync(recDir) ? readdirSync(recDir).filter((f) => f.endsWith('.json')) : []).map((f) => [f.slice(0, -5), JSON.parse(readFileSync(join(recDir, f), 'utf8'))]));
+  const missing = GITHUB_KINDS.filter((k) => !recs[k]);
+  if (missing.length) return report(`no recorded answer of GitHub for ${missing.join(', ')}: run node scripts/e2e.mjs --from e0 --github <owner/repo> against an empty private repository`);
+  // The type of every field, by its path; the items of a list as "[]".
+  const shape = (v, at = '', out = new Map()) => {
+    const t = v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v;
+    out.set(at || '.', t);
+    if (t === 'array') for (const x of v) shape(x, `${at}[]`, out);
+    if (t === 'object') for (const [k, x] of Object.entries(v)) shape(x, `${at}.${k}`, out);
+    return out;
+  };
+  scratch('pitwall-fake-github-', (dir) => {
+    const origin = join(dir, 'origin.git');
+    const state = join(dir, 'state');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    const p = join(dir, 'p');
+    if (layOut(p).status !== 0) return report('layout failed');
+    gitIn(p, 'init', '-q', '-b', 'main');
+    gitIn(p, 'add', '-A');
+    gitIn(p, 'commit', '-qm', 'skeleton');
+    gitIn(p, 'remote', 'add', 'origin', origin);
+    gitIn(p, 'switch', '-qc', 'epic/E0-skeleton');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'docs: start E0-skeleton');
+    gitIn(p, 'push', '-q', 'origin', 'main', 'epic/E0-skeleton');
+    const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+    const env = { ...process.env, ...identity, FAKE_GH_LIVE: state, FAKE_GH_ORIGIN: origin, FAKE_GH_REPO: 'e2e/move-reminder' };
+    const fake = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env, encoding: 'utf8' });
+    const json = (r) => {
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return undefined;
+      }
+    };
+    const fieldsOf = (k) => recs[k].args[recs[k].args.indexOf('--json') + 1];
+    const repo = 'repos/e2e/move-reminder';
+    const answers = {};
+    answers['repo-view'] = fake('repo', 'view', '--json', fieldsOf('repo-view'));
+    answers['pr-create'] = fake('pr', 'create', '--base', 'main', '--head', 'epic/E0-skeleton', '--title', 'E0 - Walking skeleton', '--body', 'x');
+    answers['pr-list'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open', '--json', fieldsOf('pr-list'));
+    answers['pr-view'] = fake('pr', 'view', 'epic/E0-skeleton', '--json', fieldsOf('pr-view'));
+    answers['api-status-post'] = fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=code review: approved');
+    answers['api-statuses'] = fake('api', `${repo}/commits/${head}/statuses`);
+    // The CI runs the template's gate in the background: wait for it, at most a minute.
+    let runs;
+    for (let i = 0; i < 60; i += 1) {
+      runs = fake('api', `${repo}/commits/${head}/check-runs`);
+      if (json(runs)?.check_runs?.[0]?.status === 'completed') break;
+      spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    }
+    answers['api-check-runs'] = runs;
+    if (json(runs)?.check_runs?.[0]?.conclusion !== 'success') report(`the fake CI did not pass the template's gate on a docs-only commit: ${runs.stdout}`);
+    answers['api-commit'] = fake('api', `${repo}/commits/${head}`);
+    answers['api-rules'] = fake('api', `${repo}/rules/branches/main`);
+    answers['api-protection'] = fake('api', `${repo}/branches/main/protection`);
+    answers['api-branch'] = fake('api', `${repo}/branches/main`);
+    answers['pr-merge'] = fake('pr', 'merge', '1', '--merge', '--match-head-commit', head, '--subject', 'feat(E0): Walking skeleton (#1)', '--body', 'Risk class: normal.');
+    for (const kind of GITHUB_KINDS) {
+      const rec = recs[kind];
+      const got = answers[kind];
+      if ((got.status === 0) !== (rec.status === 0)) report(`${kind}: the fake exits ${got.status}, GitHub exited ${rec.status}\n${got.stdout}${got.stderr}`);
+      if (rec.status !== 0) {
+        // A refusal reads the same: its last line names the same reason.
+        const reason = (s) => String(s).replace(/\(HTTP \d+\)/, '').replace(/^gh: /, '').trim();
+        if (!reason(got.stderr.trim().split('\n').pop()).startsWith(reason(rec.stderr).slice(0, 40))) report(`${kind}: the fake refuses with "${got.stderr.trim()}", GitHub with "${rec.stderr}"`);
+        continue;
+      }
+      const real = typeof rec.stdout === 'string' ? undefined : rec.stdout;
+      const mine = json(got);
+      if (real === undefined) {
+        // Text: a PR's address, a line saying it merged.
+        if (kind === 'pr-create' && !(/\/pull\/\d+\s*$/.test(got.stdout) && /\/pull\/\d+\s*$/.test(rec.stdout))) report(`pr-create: the fake prints "${got.stdout.trim()}", GitHub printed "${String(rec.stdout).trim()}"`);
+        continue;
+      }
+      if (mine === undefined) {
+        report(`${kind}: GitHub answered JSON, the fake "${got.stdout.slice(0, 200)}"`);
+        continue;
+      }
+      const theirs = shape(real);
+      for (const [path, type] of shape(mine)) {
+        if (!theirs.has(path)) report(`${kind}: the fake gives ${path}, which GitHub's answer does not hold`);
+        else if (type !== theirs.get(path) && type !== 'null' && theirs.get(path) !== 'null') report(`${kind}: ${path} is ${type} in the fake and ${theirs.get(path)} on GitHub`);
+      }
+    }
+  });
+});
+
 // 6f. T1-AC2, T2-AC6: protect.mjs against the fake gh. It checks before it writes (L-5), writes the
 // protection ADR-0005 and ADR-0008 ask for, hands over instead of failing, and a dry run writes nothing.
 step('merge protection (fake gh)', (report) => {

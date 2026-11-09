@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7).
+// Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7, T3b-AC7).
 //
-//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>]
+//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>]
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
-// Stages, in order: kickoff, discovery, decide, spike, plan. A run goes from --from
-// (default kickoff) to --until (default plan). Every stage that passes saves the
+// Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0 and e1
+// (scripts/e2e-loop.mjs). With no flags it runs e1 from the state e0 saved, the cheap run after a
+// change; --from e0 runs E0 and E1, the run before a PR; --until plan runs the planning stages from
+// kickoff. A run is either planning stages or loop stages. --github <owner/repo> runs the loop
+// stages against an empty private repository the owner created, and records GitHub's answers.
+// A planning run goes from --from (default kickoff) to --until (default plan). Every stage that passes saves the
 // project as it left it in the state folder (default ~/.cache/pitwall-e2e/<stage>),
 // and a run that starts later starts from the state the stage before it saved: that
 // is the normal way to run one stage again without paying for the ones before it.
@@ -49,18 +53,31 @@ const opt = (name, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan'];
-const from = opt('from', 'kickoff');
-const until = opt('until', 'plan');
+const LOOP = ['e0', 'e1'];
+const ALL = [...STAGES, ...LOOP];
+const fromArg = opt('from', '');
+const untilArg = opt('until', '');
+// No flags: e1 from the saved e0 (owner, T3b). --until a planning stage alone: from kickoff, as before.
+const from = fromArg || (STAGES.includes(untilArg) ? 'kickoff' : 'e1');
+const until = untilArg || (STAGES.includes(from) ? 'plan' : 'e1');
 const seedArg = opt('seed', '');
+const github = opt('github', '');
 const stateDir = resolve(opt('state', join(homedir(), '.cache', 'pitwall-e2e')));
-const stages = STAGES.slice(STAGES.indexOf(from), STAGES.indexOf(until) + 1);
 const maxTurns = Number(opt('max-turns', '30'));
-const flags = ['--from', '--until', '--max-turns', '--state', '--seed'];
-const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>]\n       stages: ' + STAGES.join(', ');
-if (!STAGES.includes(from) || !STAGES.includes(until) || stages.length === 0 || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
+const flags = ['--from', '--until', '--max-turns', '--state', '--seed', '--github'];
+const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages or loop stages)';
+const loop = LOOP.includes(from) && LOOP.includes(until);
+const span = ALL.slice(ALL.indexOf(from), ALL.indexOf(until) + 1);
+const bad = !ALL.includes(from) || !ALL.includes(until) || span.length === 0 || (!loop && span.some((x) => LOOP.includes(x))) || (loop && seedArg) || (!loop && github) || (github && !/^[\w.-]+\/[\w.-]+$/.test(github));
+if (bad || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
   console.error(usage);
   process.exit(2);
 }
+if (loop) {
+  const { runLoop } = await import('./e2e-loop.mjs');
+  process.exit(await runLoop({ stages: span, stateDir, maxTurns, github }));
+}
+const stages = span;
 // A later stage starts from a project: the seed, or what the stage before it saved.
 const seed = from === 'kickoff' ? '' : resolve(seedArg || join(stateDir, STAGES[STAGES.indexOf(from) - 1]));
 if (seed && !existsSync(join(seed, '.git'))) {
@@ -85,6 +102,7 @@ const OWNER_RULES = `Answer as this owner, in English, in one to three sentences
 - When shown the plan, accept it as drafted: no changes, and no further spike (one spike is enough for this project).
 - When asked to accept a risk, accept it with the fallback the assistant proposes.
 - When asked whether to merge the plan, say yes.
+- When asked whether low and normal risk epics may merge without you, say no: every merge waits for you.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
 - When the assistant has run a command that you are told to run yourself, say you will do it later, and ask it to go on.
 - When the assistant asks nothing and reports that the stage is done, reply exactly: DONE`;

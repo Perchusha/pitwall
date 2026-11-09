@@ -19,6 +19,8 @@
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+// FAKE_GH_LIVE: the stateful fake GitHub of the headless loop runs (scripts/fake-github.mjs), which exits itself.
+if (process.env.FAKE_GH_LIVE) await import('./fake-github.mjs');
 const s = JSON.parse(process.env.FAKE_GH);
 const args = process.argv.slice(2);
 let input = '';
