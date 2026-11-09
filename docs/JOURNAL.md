@@ -42,8 +42,9 @@ The first run was stopped in its plan stage, before it printed its costs, so the
 | 7 | 1 realistic, 3 exotic | 204,493 | 21 | 5.8 |
 | 8, verification | none | 149,040 | 32 | 14.1 |
 | 9, check of the last fixes | 1 realistic | 109,805 | 14 | 8.9 |
+| 10, recheck | none | 134,894 | 7 | 3.4 |
 
-The nine rounds come to about 1.93 million tokens, 413 tool calls and 152 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The verification round found no realistic blocking finding, which ends the review under the owner's rule; its five smaller findings (a superseded ADR next to the new one in a place, two tildes that strike nothing, where a cover counts, a stage list) were fixed after it. A short check of those fixes found that one of them read tildes for "about" ("~2 s ... (~1 s)") as a strikethrough and so lost a cover, a realistic false failure; the strikethrough rule now follows GitHub's, as the checker tested it against GitHub's renderer. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
+The ten rounds come to about 2.06 million tokens, 420 tool calls and 155 minutes; round 7 was cut off when its session ended and resumed, and only its resumed part is counted. The verification round found no realistic blocking finding, which ends the review under the owner's rule; its five smaller findings (a superseded ADR next to the new one in a place, two tildes that strike nothing, where a cover counts, a stage list) were fixed after it. A short check of those fixes found that one of them read tildes for "about" ("~2 s ... (~1 s)") as a strikethrough and so lost a cover, a realistic false failure; the strikethrough rule now follows the GFM spec's flanking rules, as the checker derived them and tried them on its cases. A recheck of that fix found nothing blocking. The plan reviewer inside the headless run is separate: four rounds within the plan stage's $39.99.
 
 **Next:** T3, the epic loop. It takes the hook rule of ADR-0007, the Approval line of ADR-0008 and the verification rounds of L-8 for the code-reviewer.
 

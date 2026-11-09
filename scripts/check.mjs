@@ -1063,6 +1063,14 @@ step('plan and spike checks', (report) => {
       writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Status: accepted', '- Status: proposed'));
       e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0004, E1-AC1 |'));
     }, [/"Backups and restore" has no place where it lives/], 'plan-review');
+    planCase('a place with a superseded ADR whose successor it does not name', (p, e) => {
+      e('docs/adr/0002-language.md', (t) => t.replace('- Status: accepted', '- Status: superseded by ADR-0003'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| Backups and restore | Settings reset to defaults | SPEC.md |', '| Backups and restore | Settings reset to defaults | ADR-0002, E1-AC1 |'));
+    }, [/"Backups and restore" has no place where it lives/], 'plan-review');
+    planCase('a tilde after punctuation before another tilde', (p, e) => {
+      noSpikeNoAc(p, e);
+      e('docs/epics/E1-reminder.md', (t) => t.replace('Snooze delays it by 10 minutes.', 'Settles A-1 within ~2 s.~~'));
+    }, [], 'plan-review');
     planCase('an assumption on a criterion line after a blank line', (p, e) => {
       noSpikeNoAc(p, e);
       e('docs/epics/E1-reminder.md', (t) => t.replace('- [ ] E1-AC2: Snooze delays it by 10 minutes.', '- [ ] E1-AC2: Snooze delays it by 10 minutes.\n\n  This settles A-1.'));

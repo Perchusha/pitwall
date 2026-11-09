@@ -225,8 +225,9 @@ function decodeRefs(text) {
 // A strikethrough as GitHub finds one: a run of one or two tildes before a non-space opens it, the
 // same run closes it after a non-space (after punctuation only when a space, punctuation or the
 // end follows), and it never runs past a blank line or the start of a list item. So "~2 s ...
-// (~1 s)" strikes nothing, and "within ~1 s~" does (tested against GitHub's renderer in T2).
-const STRIKE = /(~~?)(?=[^\s~])(?:(?!\n[ \t]*(?:\n|[-*+] |\d+[.)] ))[^~])*?(?:[^\s~\p{P}\p{S}]|[\p{P}\p{S}](?=\1(?:[\s\p{P}\p{S}]|$)))\1(?!~)/u;
+// (~1 s)" strikes nothing, and "within ~1 s~" does. Derived in T2 from the flanking rules of the
+// GFM spec and tried on the review's cases, not on GitHub's renderer itself.
+const STRIKE = /(~~?)(?=[^\s~])(?:(?!\n[ \t]*(?:\n|[-*+] |\d+[.)] ))[^~])*?(?:[^\s~\p{P}\p{S}]|(?!~)[\p{P}\p{S}](?=\1(?:[\s\p{P}\p{S}]|$)))\1(?!~)/u;
 function visible(text) {
   const shown = (text ?? '')
     .replace(new RegExp(STRIKE.source, 'gu'), ' ')
@@ -1058,8 +1059,13 @@ function checkPlanReview() {
   const place = (cell) => {
     if (blank(cell)) return false;
     const ids = cellText(cell).match(/\b(?:E\d+(?:-AC\d+)?|ADR-(?!0000)\d{4}|R-\d+)\b/g) ?? [];
-    // Every ID is settled, or an ADR a newer one superseded (named next to its successor), and one is settled.
-    const superseded = (id) => id.startsWith('ADR-') && adrFiles.some((f) => f.startsWith(id.slice(4) + '-') && field(read(`docs/adr/${f}`), 'Status').startsWith('superseded'));
+    // Every ID is settled, or an ADR a newer one superseded with that successor named in the same
+    // cell, and at least one ID is settled.
+    const superseded = (id) => {
+      const f = id.startsWith('ADR-') && adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+      const by = f ? /^superseded by (ADR-\d{4})\b/.exec(field(read(`docs/adr/${f}`), 'Status'))?.[1] : null;
+      return Boolean(by && ids.includes(by));
+    };
     if (ids.length > 0) return ids.every((id) => settled(id) || superseded(id)) && ids.some(settled);
     const doc = /([\w./-]+\.md)\b/.exec(visible((cell ?? '').replace(/`/g, '')))?.[1];
     return Boolean(doc && (has(doc) || has(`docs/${doc}`)));
