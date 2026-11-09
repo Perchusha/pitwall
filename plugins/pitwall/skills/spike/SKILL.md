@@ -18,7 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 - Run each command in the steps as written, from the project root, one command per call.
 - One question per message, then wait. The owner confirms the criterion before it is committed.
 - Never edit the Criterion section after its commit, and never measure against anything else. A result that misses the criterion is "not confirmed", whatever the reason.
-- Write the spike file in plain Markdown the docs check reads as GitHub shows it: fields and headings at the first column, a blank line after every table, one table each in Criterion and Result; no HTML or comments, no block quotes.
+- Write the spike file in plain Markdown the docs check reads as GitHub shows it: fields and headings at the first column, fields written "- Name:", a blank line after every table, one table each in Criterion and Result, fences at the first column and never inside a list item; no HTML or comments, no block quotes, no invisible characters.
 - Prototype code goes only on the spike branch. The planning branch holds the spike file and nothing else from this stage.
 - Keep the prototype small: the least code that measures the metric, within `budgets.subagentToolCalls.stop` tool calls from the first prototype commit. Near the budget, stop building and measure what there is.
 

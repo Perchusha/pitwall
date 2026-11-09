@@ -18,6 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `p
 - One question per message, then wait. Never answer for the owner, and never fill a constraint from a guess.
 - A fact in the document comes from a page that was opened or from the owner. A search snippet is not a source.
 - Keep the template's headings and table columns exactly as they are: the docs check reads them.
+- Write plain Markdown the docs check reads as GitHub shows it: headings and table rows at the first column, a blank line after every table, one table in each section that has one; no HTML or comments, no block quotes, no setext headings, no invisible characters. The ID, risk and date cells hold plain text: no links, HTML, strikethrough or character references.
 
 ## Steps
 

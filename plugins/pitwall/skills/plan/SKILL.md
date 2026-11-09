@@ -18,7 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 - One question per message, then wait. Never answer for the owner, never accept a risk for them, and never merge without their yes in this conversation.
 - Never edit `docs/PLAN-REVIEW.md` and never set `ai-review`: both belong to the reviewer. Close findings in the epics, `docs/SPEC.md`, `docs/RISKS.md` or through `/pitwall:decide`, and let the next round record them.
 - Keep the template's headings and table columns exactly as they are: the docs check reads them.
-- Write plain Markdown the docs check reads as GitHub shows it: headings and table rows at the first column, a blank line after every table, tables only where the template has one, fences at the first column; no HTML or comments, no block quotes, no setext headings, no link reference definitions.
+- Write plain Markdown the docs check reads as GitHub shows it: headings and table rows at the first column, a blank line after every table, tables only where the template has one, fences at the first column; no HTML or comments, no block quotes, no setext headings, no link reference definitions, no invisible characters. Cells the check judges (an epic's risk, dependencies and status; a risk's ID, fallback and date) hold plain text: no links, HTML, strikethrough or character references.
 - When a script hands a step over, show the owner its HANDOFF lines verbatim: the commands under "Run this yourself" are for the owner, and the one under "Then run this to record the result" finishes the step afterwards. Never retry a refused write another way.
 
 ## Steps

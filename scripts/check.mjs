@@ -971,6 +971,41 @@ step('plan and spike checks', (report) => {
     }, [], 'plan-review');
     hide('an indented heading', 'docs/PLAN-REVIEW.md', (t) => t.replace('## Findings', '  ## Findings, again\n\n## Findings'), [/an indented heading/]);
     hide('a conclusion in the template words', 'docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'Confirmed or not confirmed, against the criterion, in a few sentences. A spike that is not confirmed names its follow-up: a new ADR from `/pitwall:decide <area>`, or a risk the owner accepted in `RISKS.md`.'), [/the conclusion is not written/]);
+    // T2 review, round 6: line endings and white space as GitHub reads them, and judged cells in plain text only.
+    const NBSP = String.fromCodePoint(0xa0);
+    const ZWSP = String.fromCodePoint(0x200b);
+    hide('a second table after lone carriage returns', 'docs/PLAN-REVIEW.md', afterRow2('\nRound 8.\r\r| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\r| --- | --- | --- | --- |\r| 15 | Reboot | blocking | open: add a criterion |\n'), [/"## Findings" holds 2 tables/]);
+    hide('a second table of epics after lone carriage returns', 'docs/EPICS.md', (t) => `${t}\nLater.\r\r| Epic | Goal | Risk | Depends on | Status |\r| --- | --- | --- | --- | --- |\r| E4 | Sync | high | E0 | planned |\n`, [/EPICS\.md: holds 2 tables/]);
+    hide('an outcome under another list marker, a copy in a details block', 'docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '* Outcome: not confirmed') + '\nRaw notes.\r\r<details>\r\r~~~\r- Outcome: confirmed\r~~~\r\r</details>\n', [/"Outcome:" is written with "\*" or "\+"/, /an HTML block/]);
+    hide('a row after a line of non-breaking spaces', 'docs/PLAN-REVIEW.md', afterRow2(`${NBSP}\n15 | Reboot | blocking | open: add a criterion\n`), [/an invisible character or a space other than a plain one/]);
+    hide('an epic after a line of non-breaking spaces', 'docs/EPICS.md', (t) => t.replace('| low | E1 | planned |\n', `| low | E1 | planned |\n${NBSP}\nE&#52; | Sync | high | E0 | planned\n`), [/an invisible character/]);
+    hide('an assumption after a line of non-breaking spaces', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', `| A-2 | A tray icon is enough | low | Ask two users |\n${NBSP}\nA-&#55; | Cloud sync works | high | nothing |\n`), [/an invisible character/]);
+    hide('a closer struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | <s>E1-AC2</s> nothing covers it |'), [/"Closed by" cell of "1" holds HTML/]);
+    hide('a risk date struck out with an HTML tag', 'docs/RISKS.md', (t) => t.replace('| A tray badge | 2026-11-08 |', '| A tray badge | <del>2026-11-08</del> withdrawn |'), [/"Accepted on" cell of "R-1" holds HTML/, /finding 2 is not closed/]);
+    hide('a launch date struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| GitHub issues | 2026-11-08 |', '| GitHub issues | <strike>2026-11-08</strike> withdrawn |'), [/"Confirmed on" cell of "Support channel" holds HTML/]);
+    hide('an action struck out with an HTML tag', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E1 | M | partly | - |', '| E1 | L | unknown | <s>split it in two</s> |'), [/action cell of "E1" holds HTML/]);
+    hide('a closer that is an image', 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | ![E1-AC2](https://example.com/x.gif) nothing covers it |'), [/"Closed by" cell of "1" holds a link, an image or a bracket/, /finding 1 is not closed/]);
+    hide('a status hidden in an ADR comment', 'docs/adr/0001-stack.md', (t) => t.replace('- Status: accepted', '<!--\n- Status: accepted\n-->\n- Status: superseded by ADR-0003'), [/0001-stack\.md:\d+: an HTML comment/, /"- Status:" appears 2 times/]);
+    hide('an epic ID with a zero-width space', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', `| E2 | S | known | - |\n| E${ZWSP}2, second half | L | unknown | - |\n`), [/an invisible character/]);
+    hide('an epic ID with a character reference', 'docs/PLAN-REVIEW.md', (t) => t.replace('| E2 | S | known | - |\n', '| E2 | S | known | - |\n| E&#8203;2 second half | L | unknown | - |\n'), [/epic cell of "E&#8203;2 second half" holds a character reference/]);
+    hide('a high risk in emphasis that nothing covers', 'docs/DISCOVERY.md', (t) => t.replace('| A-2 | A tray icon is enough | low | Ask two users |\n', '| A-2 | A tray icon is enough | low | Ask two users |\n| A-3 | Cloud sync works | **high** | nothing yet |\n'), [/high-risk assumption A-3 is covered by no spike/]);
+    for (const [label, cell, pattern] of [
+      ['tildes that strike nothing', '~~ open: nothing covers it ~~E1-AC2', /holds a tilde/],
+      ['an open written with a character reference', 'E1-AC2 was cut, open&colon; nothing covers it', /holds a character reference/],
+      ['an open in angle brackets', 'E1-AC2 <open: nothing covers it>', /holds HTML or an angle bracket/],
+      ['an open as a broken link', '[E1-AC2](open: nothing covers it)', /holds a link, an image or a bracket/],
+      ['backticks that open no code span', 'E1-AC2 ``` open: nothing covers it ``', /holds a backtick that opens no code span/],
+      ['an open behind a backslash', 'E1-AC2 is cut, open\\: nothing covers it', /holds a backslash escape/],
+      ['an ID written with a character reference', 'ADR-&#48;099', /holds a character reference/],
+    ]) hide(label, 'docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', `| should fix | ${cell} |`), [pattern]);
+    hide('a heading after a non-breaking space', 'docs/spikes/notify.md', (t) => t.replace('## Result', `##${NBSP}Notes\n\n## Result`), [/an invisible character/]);
+    planCase('a constraint date struck out, at the discovery stage', (p, e) => e('docs/DISCOVERY.md', (t) => t.replace('| Licence | Settled | 2026-11-05 |', '| Licence | Settled | ~~2026-11-05~~ open: withdrawn |')), [/constraint "Licence" has no confirmation date/, /"Confirmed on" cell of "Licence" holds a tilde/], 'discovery');
+    // Ordinary Markdown from the round-6 review stays allowed.
+    planCase('free tables, repeated rows and plain words', (p, e) => {
+      e('docs/spikes/notify.md', (t) => t.replace('The reminder was confirmed against the criterion.', 'The reminder was confirmed against the criterion.\n\n| Run | Date |\n| --- | --- |\n| 1 | 2026-11-08 |\n| 1 | 2026-11-08 |'));
+      e('docs/epics/E1-reminder.md', (t) => t.replace('## Out of scope', '| System | Check |\n| --- | --- |\n| Windows 11 | tray |\n| Windows 11 | full screen |\n\n<owner@example.com> answers questions.\n\n## Out of scope'));
+      e('docs/PLAN-REVIEW.md', (t) => t.replace('| should fix | E1-AC2 |', '| should fix | E1-AC2: the reminder is still open after 5 clicks, `scripts/gate` checks it, Settings > System |').replace('| Under 50 MB | E1-AC1 |', '| Under 50 MB, the window still open after a lock | E1-AC1 |').replace('| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n| --- | --- | --- | --- |', '| # | Finding | Severity | Closed by (epic, ADR) or accepted risk |\n|-|-|-|-|'));
+    }, [], 'plan-review');
     planCase('a broken link in RISKS.md', (p, e) => e('docs/RISKS.md', (t) => t.replace('| A tray badge |', '| A [tray badge](spikes/badge.md) |')), [/RISKS\.md: broken link spikes\/badge\.md/], 'plan-review');
     planCase('a high-risk assumption only a risk nobody accepted names', (p, e) => {
       e('docs/epics/E1-reminder.md', (t) => t.replace(' (A-1)', ''));

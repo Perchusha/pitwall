@@ -47,8 +47,10 @@ const report = (where, msg) => problems.push(`${where}: ${msg}`);
 const has = (rel) => existsSync(join(root, rel));
 // A byte order mark (Windows PowerShell 5.1 writes one) is not part of the text.
 const BOM = new RegExp(`^${String.fromCodePoint(0xfeff)}`);
-const read = (rel) => readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n').replace(BOM, '');
-const readTemplate = (rel) => readFileSync(join(templateRoot, rel), 'utf8').replace(/\r\n/g, '\n');
+// Line endings as GitHub reads them: CRLF, and a CR on its own, each end a line.
+const lf = (text) => text.replace(/\r\n?/g, '\n');
+const read = (rel) => lf(readFileSync(join(root, rel), 'utf8')).replace(BOM, '');
+const readTemplate = (rel) => lf(readFileSync(join(templateRoot, rel), 'utf8'));
 
 // Which lines belong to a fenced block, its fences included, the way GitHub reads them: a fence
 // is three or more backticks or tildes indented at most three spaces, and the block ends at a
@@ -75,11 +77,51 @@ function fencedLines(lines) {
   return out;
 }
 
+// Code spans in a line become spaces, the way CommonMark finds them: a run of backticks opens a
+// span only when a later run of exactly as many backticks closes it.
+function blankCodeSpans(line) {
+  let out = '';
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      out += line[i];
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (line[j] === '`') j += 1;
+    const run = j - i;
+    let k = j;
+    let close = -1;
+    while (k < line.length) {
+      if (line[k] !== '`') {
+        k += 1;
+        continue;
+      }
+      let m = k;
+      while (line[m] === '`') m += 1;
+      if (m - k === run) {
+        close = k;
+        break;
+      }
+      k = m;
+    }
+    if (close < 0) {
+      out += line.slice(i, j);
+      i = j;
+    } else {
+      out += ' '.repeat(close + run - i);
+      i = close + run;
+    }
+  }
+  return out;
+}
+
 // Fenced blocks become empty lines and code spans become spaces, so line numbers hold.
 function stripCode(text) {
   const lines = text.split('\n');
   const fenced = fencedLines(lines);
-  return lines.map((line, i) => (fenced[i] ? '' : line.replace(/(`+).*?\1/g, (m) => ' '.repeat(m.length)))).join('\n');
+  return lines.map((line, i) => (fenced[i] ? '' : blankCodeSpans(line))).join('\n');
 }
 // The text with its fenced blocks blanked out, code spans kept.
 const unfenced = (text) => {
@@ -95,11 +137,11 @@ function sections(text) {
   const lines = text.split('\n');
   const fenced = fencedLines(lines);
   lines.forEach((line, i) => {
-    const h = !fenced[i] && /^##\s+(.+?)\s*$/.exec(line);
+    const h = !fenced[i] && /^##[ \t]+(.+?)[ \t]*$/.exec(line);
     if (h) {
       current = h[1];
       map.set(current, []);
-    } else if (!fenced[i] && /^#\s/.test(line)) {
+    } else if (!fenced[i] && /^#[ \t]/.test(line)) {
       current = null;
     } else if (current) {
       map.get(current).push(line);
@@ -108,7 +150,7 @@ function sections(text) {
   return map;
 }
 
-const isSeparator = (cells) => cells.every((c) => /^:?-{3,}:?$/.test(c));
+const isSeparator = (cells) => cells.every((c) => /^:?-+:?$/.test(c));
 const splitRow = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
 
 // Data rows of the first table in some lines, outside fenced blocks: header and separator dropped.
@@ -164,22 +206,65 @@ function headingList(text) {
   const lines = text.split('\n');
   const fenced = fencedLines(lines);
   return lines.flatMap((line, i) => {
-    const h = !fenced[i] && /^##\s+(.+?)\s*$/.exec(line);
+    const h = !fenced[i] && /^##[ \t]+(.+?)[ \t]*$/.exec(line);
     return h ? [h[1]] : [];
   });
 }
 
-// What a reader sees in a cell or a line of text: struck-through text gone, inline HTML tags
-// gone, character references decoded, links reduced to their text.
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
-function visible(text) {
+// What a reader sees in a line of prose, near enough for the ID and link checks: struck-through
+// text, inline HTML and images gone, character references decoded, links reduced to their text.
+// It approximates GitHub; the cells the checks judge do not rely on it, they must be plain text.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', colon: ':' };
+function decodeRefs(text) {
+  const code = (n) => (n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : ' ');
   return (text ?? '')
+    .replace(/&#(\d+);/g, (_, n) => code(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => code(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m);
+}
+function visible(text) {
+  const shown = (text ?? '')
     .replace(/~~.*?~~/g, ' ')
+    .replace(/<(s|del|strike)\b[^>]*>.*?<\/\1>/gi, ' ')
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m)
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, (_, label) => label);
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ');
+  return decodeRefs(shown).replace(/\[([^\]]*)\]\([^)]*\)/g, (_, label) => label);
+}
+
+// Characters GitHub shows differently from what a line reader sees: format characters (zero
+// width, soft hyphen, byte order mark, direction marks), line and paragraph separators, and
+// every space but the plain one. Unicode classes, so no such character is written here (L-3).
+const INVISIBLE = /[\p{Cf}\p{Zl}\p{Zp}]|(?! )\p{Zs}/u;
+
+// The cells the checks judge, per file and section: [column, what it is]. These are plain text,
+// because GitHub would show anything else differently from what the checks read.
+const JUDGED = {
+  'docs/PLAN-REVIEW.md': {
+    'Pre-mortem': [[0, 'number'], [2, '"Closed by"']],
+    Findings: [[0, 'number'], [2, 'severity'], [3, '"Closed by"']],
+    'Non-functional requirements': [[0, 'requirement'], [1, 'answer'], [2, '"Where it lives"']],
+    'Launch questions': [[0, 'question'], [1, 'answer'], [2, '"Confirmed on"']],
+    'Epic sizing': [[0, 'epic'], [1, 'size'], [2, 'uncertainty'], [3, 'action']],
+  },
+  'docs/RISKS.md': { null: [[0, 'ID'], [2, 'fallback'], [3, '"Accepted on"']] },
+  'docs/EPICS.md': { null: [[2, 'risk'], [3, '"Depends on"'], [4, 'status']] },
+  'docs/DISCOVERY.md': { 'Assumptions by risk': [[0, 'ID'], [2, 'risk']], 'Owner constraints': [[0, 'constraint'], [2, '"Confirmed on"']] },
+  spike: { Criterion: [[2, '"Success when"']], Result: [[1, 'measured'], [2, '"Measured by"'], [3, 'date']] },
+};
+function plainCells(rel, section, n) {
+  const map = JUDGED[rel.startsWith('docs/spikes/') ? 'spike' : rel] ?? {};
+  return (map[section ?? 'null'] ?? []).filter(([col]) => col < n);
+}
+// What keeps a cell from being plain text, outside its code spans, or '' when nothing does.
+function notPlain(cell) {
+  const t = blankCodeSpans(cell);
+  if (t.includes('`')) return 'a backtick that opens no code span';
+  if (t.includes('<')) return 'HTML or an angle bracket';
+  if (/&[#A-Za-z0-9]+;/.test(t)) return 'a character reference';
+  if (t.includes('~')) return 'a tilde, which can strike text through';
+  if (/[[\]]/.test(t)) return 'a link, an image or a bracket';
+  if (t.includes('\\')) return 'a backslash escape';
+  return '';
 }
 
 // The checks read a file line by line: tables are lines that start with "|", sections start at
@@ -217,14 +302,16 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
       return;
     }
     const text = plain[i];
-    const blank = line.trim() === '';
-    const heading = /^##\s+(.+?)\s*$/.exec(line);
+    // Blank means spaces and tabs only: GitHub reads a line of other white space as content.
+    const blank = /^[ \t]*$/.test(line);
+    if (INVISIBLE.test(line)) report(where, 'an invisible character or a space other than a plain one: GitHub shows the text differently from what the checks read; use plain spaces');
+    const heading = /^##[ \t]+(.+?)[ \t]*$/.exec(line);
     if (heading) section = heading[1];
-    else if (/^#\s/.test(line)) section = null;
+    else if (/^#[ \t]/.test(line)) section = null;
     const row = /^\|/.test(line);
     if (prevRow && !blank && !row) report(where, 'a line right after a table: GitHub reads it as a row of the table; leave a blank line after a table');
     if (text.includes('<!--')) report(where, 'an HTML comment: GitHub hides it, the checks would read it; remove it');
-    else if (/^ {0,3}<(?!https?:)[A-Za-z/!?]/.test(line)) report(where, 'an HTML block: write it in Markdown the checks read');
+    else if (/^ {0,3}<(?!https?:|[^\s>]+@[^\s>]+>)[A-Za-z/!?]/.test(line)) report(where, 'an HTML block: write it in Markdown the checks read');
     if (!quotes && /^ {0,3}>/.test(line)) report(where, 'a block quote: the checks read tables and fields outside quotes only');
     if (/^ {0,3}\[[^\]]+\]:/.test(line)) report(where, 'a link reference definition, which GitHub does not show: write the link inline');
     if (/^ {0,3}(?:=+|-+)[ \t]*$/.test(line) && prev.trim() !== '') report(where, 'a setext heading (text underlined with = or -): use a "## " heading');
@@ -239,10 +326,17 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
       }
       const cells = splitRow(line);
       rowIndex += 1;
-      if (rowIndex > 1 && !isSeparator(cells)) {
+      // Rows repeat only in the tables the checks read row by row: the template's tables.
+      const judged = tables === null || (Array.isArray(tables) && tables.includes(section)) || once.includes(section);
+      if (judged && rowIndex > 1 && !isSeparator(cells)) {
         const first = visible(stripCode(cells[0] ?? '')).replace(/[*_]/g, '').trim().toLowerCase();
         if (first && firsts.has(first)) report(where, `the row "${cells[0]}" repeats a row above it in the same table: keep one row for it`);
         firsts.add(first);
+        // The cells the checks judge are plain text (cellRule names them per section).
+        for (const [col, what] of plainCells(rel, section, cells.length)) {
+          const bad = notPlain(cells[col] ?? '');
+          if (bad) report(where, `the ${what} cell of "${cells[0]}" holds ${bad}: write it as plain text, so GitHub shows what the check reads`);
+        }
       }
     }
     prev = line;
@@ -261,8 +355,10 @@ function checkStructure(rel, { tables = null, once = [], quotes = false, fields 
   }
   const body = unfenced(lines.join('\n'));
   for (const name of fields) {
-    const times = (body.match(new RegExp(`^${dash ? '- ' : ''}${name}:`, 'gm')) ?? []).length;
+    // Under any list marker: "* Outcome:" shows as the same field as "- Outcome:".
+    const times = (body.match(new RegExp(`^${dash ? '[-*+] ' : ''}${name}:`, 'gm')) ?? []).length;
     if (times > 1) report(rel, `"${dash ? '- ' : ''}${name}:" appears ${times} times: keep one`);
+    if (dash && new RegExp(`^[*+] ${name}:`, 'm').test(body)) report(rel, `"${name}:" is written with "*" or "+": write the field as "- ${name}:"`);
   }
 }
 
@@ -354,7 +450,9 @@ if (kinds.includes('ids')) {
   for (const rel of scan) {
     stripCode(read(rel))
       .split('\n')
-      .forEach((line, i) => {
+      .forEach((raw, i) => {
+        // An ID written with character references shows as the ID, so it is checked as one.
+        const line = decodeRefs(raw);
         for (const re of patterns) {
           for (const m of line.matchAll(re)) {
             const id = m[0];
@@ -424,6 +522,7 @@ function checkKickoff() {
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);
 }
 
+const ADR_STRUCTURE = { tables: 'any', quotes: true, fields: ['Status', 'Date', 'Class', 'Decided by'] };
 const DISCOVERY_STRUCTURE = { tables: ['Analogues', 'Owner constraints', 'Assumptions by risk'] };
 function checkDiscovery() {
   checkStructure('docs/DISCOVERY.md', DISCOVERY_STRUCTURE);
@@ -452,7 +551,7 @@ function checkDiscovery() {
     const row = constraints.find((r) => r[0].toLowerCase() === want.toLowerCase());
     if (!row) report(rel, `constraint "${want}" is missing`);
     else if (!row[1]) report(rel, `constraint "${want}" has no answer`);
-    else if (!DATE.test(row[2] ?? '')) report(rel, `constraint "${want}" has no confirmation date`);
+    else if (openCell(row[2]) || !DATE_FIRST.test(bareCell(row[2]))) report(rel, `constraint "${want}" has no confirmation date at the start of its cell`);
   }
 
   const assumptions = tableRows(s.get('Assumptions by risk') ?? []);
@@ -547,7 +646,8 @@ function checkDecide() {
 
   for (const f of adrFiles) {
     const adr = `docs/adr/${f}`;
-    const text = read(adr);
+    checkStructure(adr, ADR_STRUCTURE);
+    const text = unfenced(read(adr));
     const field = (name) => new RegExp(`^- ${name}: *(.+)$`, 'm').exec(text)?.[1].trim() ?? '';
     if (!/^(proposed|accepted|superseded)/.test(field('Status'))) report(adr, 'no "- Status:" line');
     if (!DATE.test(field('Date'))) report(adr, 'no "- Date:" line');
@@ -657,7 +757,7 @@ function checkSpike() {
       report(rel, `cannot read ${origin.path} at ${first.slice(0, 7)}: ${shown.err}`);
       continue;
     }
-    const before = shown.raw.replace(/\r\n/g, '\n');
+    const before = lf(shown.raw);
     if (sectionText(before, 'Criterion') !== sectionText(text, 'Criterion')) report(rel, `the criterion changed after ${first.slice(0, 7)}, the commit that added it: a criterion is never adjusted to the result`);
     const conclusionBefore = sections(before).get('Conclusion') ?? [];
     const concludedBefore = filled(conclusionBefore, sections(readTemplate(SPIKE_TEMPLATE)).get('Conclusion')) && !/^pending\b/i.test(sectionText(before, 'Conclusion'));
@@ -692,11 +792,12 @@ function checkSpike() {
 // A status cell as a reader sees it: code spans, struck text, tags and references resolved.
 const cellText = (cell) => visible(stripCode(cell ?? '')).trim();
 // The same, with emphasis and a leading "closed by" or "confirmed on" taken off.
-const bareCell = (cell) => cellText(cell).replace(/^[*_\s]+/, '').replace(/^(?:closed by|confirmed(?: on)?)\s*:?\s*/i, '').replace(/^[*_\s]+/, '');
-// Open: the visible text starts with "open", or says "still open" or "open:" anywhere.
+const bareCell = (cell) => cellText(cell).replace(/^[*_\s]+/, '').replace(/^(?:closed by|confirmed(?: on)?)\s*:?\s*/i, '').replace(/^[*_\s]+/, '').replace(/[*_\s]+$/, '');
+// Open: the visible text starts with "open", or says "open:" anywhere. ("Still open" can describe
+// what a criterion checks, such as a window that stays open, so it decides nothing alone.)
 const openCell = (cell) => {
   const t = cellText(cell);
-  return new RegExp(`^[\\s*_]*${cfg.planReview.open}\\b`, 'i').test(t) || new RegExp(`\\bstill ${cfg.planReview.open}\\b|\\b${cfg.planReview.open}\\s*:`, 'i').test(t);
+  return new RegExp(`^[\\s*_]*${cfg.planReview.open}\\b`, 'i').test(t) || new RegExp(`\\b${cfg.planReview.open}\\s*:`, 'i').test(t);
 };
 const DATE_FIRST = /^\d{4}-\d{2}-\d{2}\b/;
 
@@ -845,6 +946,8 @@ function checkPlan() {
   }
   requireFilled('docs/SPEC.md', 'docs/SPEC.md', [...sections(readTemplate('docs/SPEC.md')).keys()]);
   // The files whose rows and fields this check reads keep to Markdown it reads as GitHub shows it.
+  // An ADR's Status decides whether it covers an assumption or follows a failed spike.
+  for (const f of adrFiles) checkStructure(`docs/adr/${f}`, ADR_STRUCTURE);
   checkStructure(rel, { tables: null });
   checkStructure('docs/RISKS.md', { tables: null });
   checkStructure('docs/DISCOVERY.md', DISCOVERY_STRUCTURE);
@@ -981,9 +1084,15 @@ function checkPlanReview() {
   // From docs/RISKS.md only the risks the owner accepted count.
   const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')) : [];
   for (const row of risks) if (accepted.get(row[0])) covering.push(stripCode(row.join(' | ')));
+  // The table is read again here, the way the discovery stage reads it, since the plan review
+  // relies on it: every row an A-n with a risk of the list, judged by its visible text.
   for (const [id, , risk] of assumptions) {
-    if (!same(risk, top) || !/^A-\d+$/.test(id ?? '')) continue;
-    if (!covering.some((text) => new RegExp(`\\b${id}\\b`).test(text))) report(rel, `high-risk assumption ${id} is covered by no spike, ADR, epic or accepted risk`);
+    const shownId = bareCell(id);
+    const shownRisk = bareCell(risk).toLowerCase();
+    if (!/^A-\d+$/.test(shownId)) report('docs/DISCOVERY.md', `assumption "${id}" has no ID A-n`);
+    if (!cfg.discovery.riskOrder.includes(shownRisk)) report('docs/DISCOVERY.md', `assumption ${shownId}: risk "${risk}" is not one of ${cfg.discovery.riskOrder.join(', ')}`);
+    if (shownRisk !== top || !/^A-\d+$/.test(shownId)) continue;
+    if (!covering.some((text) => new RegExp(`\\b${shownId}\\b`).test(text))) report(rel, `high-risk assumption ${shownId} is covered by no spike, ADR, epic or accepted risk`);
   }
   if (level.spikeRequired && assumptions[0]) {
     const riskiest = assumptions[0][0];
