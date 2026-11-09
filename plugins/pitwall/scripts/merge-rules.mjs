@@ -46,8 +46,11 @@ export function syncRules(projectRoot, pluginDir, want) {
     if (settings.permissions?.allow !== undefined && !Array.isArray(settings.permissions.allow)) return { error: 'has a "permissions.allow" that is not a list' };
   } else if (!want) return { changed: false };
   const before = settings.permissions?.allow ?? [];
-  const after = [...before.filter((r) => !isPitwallRule(r)), ...(want ? allowRules(pluginDir) : [])];
-  if (JSON.stringify(before) === JSON.stringify(after)) return { changed: false };
+  const wanted = want ? allowRules(pluginDir) : [];
+  // The rules already there, in any order, are left as they are: a session start rewrites nothing it need not.
+  const current = before.filter(isPitwallRule);
+  if (current.length === wanted.length && wanted.every((r) => current.includes(r))) return { changed: false };
+  const after = [...before.filter((r) => !isPitwallRule(r)), ...wanted];
   settings.permissions = { ...(settings.permissions ?? {}), allow: after };
   if (after.length === 0) delete settings.permissions.allow;
   if (Object.keys(settings.permissions).length === 0) delete settings.permissions;

@@ -1,8 +1,7 @@
 ---
 name: epic
-description: The implementer's procedure for one change of a pitwall project, an epic or a bug fix - read first, implement on the change's branch with tests for every new module and a test or QA scenario per acceptance criterion, keep the gate green, commit, and return a DONE, PARTIAL or NEEDS_OWNER report. Preloaded into the implementer and implementer-deep agents; not for the main conversation.
+description: The implementer's procedure for one change of a pitwall project, an epic or a bug fix - read first, implement on the change's branch with tests for every new module and a test or QA scenario per acceptance criterion, keep the gate green, commit, and return a DONE, PARTIAL or NEEDS_OWNER report. Preloaded into the implementer and implementer-deep agents; the main conversation never follows it itself, it dispatches an implementer through /pitwall:continue.
 user-invocable: false
-disable-model-invocation: true
 ---
 
 # epic - implement one change
