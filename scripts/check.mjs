@@ -1660,6 +1660,8 @@ step('hooks (recorded payloads)', (report) => {
     expect('main-pre-tool-use-bash', "PowerShell: $r=git push origin main", { tool: 'PowerShell', input: { tool_input: { command: "$r=git push origin main" } } }, 'deny:push');
     expect('main-pre-tool-use-bash', "PowerShell: if ($?) { Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { Invoke-RestMethod -Headers @{Authorization = \"token $t\"} -Method Put -Uri https://api.github.com/repos/o/r/branches/main/protection }" } } }, 'deny:protection');
     expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText('.claude/pitwall.json', '{}')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText('.claude/pitwall.json', '{}')" } } }, 'deny:switch');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText(\"$PWD/docs/STACK.md\", \"Settings: .claude/pitwall.json holds the level.\")", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText(\"$PWD/docs/STACK.md\", \"Settings: .claude/pitwall.json holds the level.\")" } } }, 'allow');
+    expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::Copy('backup.json', '.claude/settings.json')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::Copy('backup.json', '.claude/settings.json')" } } }, 'deny:switch');
     expect('main-pre-tool-use-bash', "PowerShell: [IO.File]::WriteAllText('notes.txt', 'x')", { tool: 'PowerShell', input: { tool_input: { command: "[IO.File]::WriteAllText('notes.txt', 'x')" } } }, 'allow');
     expect('main-pre-tool-use-bash', "PowerShell: $cfg = Get-Content .claude/pitwall.json | ConvertFrom-Json", { tool: 'PowerShell', input: { tool_input: { command: "$cfg = Get-Content .claude/pitwall.json | ConvertFrom-Json" } } }, 'allow');
     expect('main-pre-tool-use-bash', "PowerShell: if ($?) { git push -u origin epic/E1-x }", { tool: 'PowerShell', input: { tool_input: { command: "if ($?) { git push -u origin epic/E1-x }" } } }, 'allow');
@@ -1755,6 +1757,24 @@ step('hooks (recorded payloads)', (report) => {
     }
     bash(`ls "${P}/scripts" && wc -l "${P}/config/defaults.json"`, 'allow');
     bash('jq . .claude/pitwall.json > .claude/pitwall.json', 'deny:switch');
+    // An exclusion leaves a switch file alone; a pitwall script's free text names no file; a "<" only reads.
+    bash("git checkout -- . ':!.claude/pitwall.json'", 'allow');
+    bash("git restore -- . ':(exclude).claude/settings.json'", 'allow');
+    bash("npx prettier --write . '!.claude/settings.json'", 'allow');
+    bash(`node "${P}/scripts/layout.mjs" --name 'x' --idea 'a linter for .claude/settings.json files' --level lite`, 'allow');
+    bash(`node --no-warnings "${P}/scripts/docs-check.mjs" --stage plan`, 'allow');
+    bash(`node "${P}/scripts/docs-check.mjs" --root .claude/pitwall.json`, 'deny:switch');
+    bash('while read -r l; do echo "$l"; done < .claude/settings.json', 'allow');
+    bash('python -m json.tool < .claude/settings.json', 'allow');
+    // The plugin's own files read the ways agents read them; the switch files keep the strict list.
+    bash(`sed -n '140,170p' "${P}/config/defaults.json"`, 'allow');
+    bash(`find "${P}/template/docs" -name '*.md'`, 'allow');
+    bash(`cd "${P}" && ls`, 'allow');
+    bash(`sort "${P}/config/defaults.json"`, 'allow');
+    bash(`find "${P}/template" -name '*.tmpl' -delete`, 'deny:switch');
+    bash(`sed -i 's/a/b/' "${P}/config/defaults.json"`, 'deny:switch');
+    bash(`cd "${P}" && rm -rf hooks`, 'deny:switch');
+    bash("sed -n '1,20p' .claude/settings.json", 'deny:switch');
     bash("jq '.mergeProtection = \"branch-protection\"' .claude/pitwall.json > /tmp/p.json && mv /tmp/p.json .claude/pitwall.json", 'deny:switch');
     bash('diff .claude/settings.json backup.json > .claude/settings.local.json', 'deny:switch');
     bash('git diff .claude/settings.json && git log -p .claude/pitwall.json && git show HEAD:.claude/pitwall.json', 'allow');

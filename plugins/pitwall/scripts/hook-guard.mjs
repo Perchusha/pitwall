@@ -563,9 +563,14 @@ export function guard(call, ctx) {
   const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cwd, home);
   if (keyIn(text)) return refuse('secrets', 'this command holds what looks like a key or a token. Keep secrets out of commands; tests make their keys at run time.');
   // PowerShell writing through .NET ([IO.File]::WriteAllText, the usual way to write without a byte order mark).
-  const flat = text.split('\\').join('/');
-  if (/\[(System\.)?IO\.(File|Directory)\]::\s*(Write|Append|Delete|Move|Copy|Replace|Create)/i.test(text) && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(flat) || plugins.some((d) => (WIN ? flat.toLowerCase() : flat).includes(d)))) {
-    return refuse('switch', 'this .NET call writes one of the switches of pitwall\'s guards: only the owner, or a pitwall script, changes it.');
+  // Only the paths it writes count: the first argument of a Write, Append, Create or Delete, both of a Copy,
+  // Move or Replace; the text it writes may mention anything.
+  for (const m of text.matchAll(/\[(?:System\.)?IO\.(?:File|Directory)\]::\s*(Write|Append|Delete|Move|Copy|Replace|Create)\w*\s*\(\s*(["'])((?:(?!\2).)*)\2(?:\s*,\s*(["'])((?:(?!\4).)*)\4)?/gi)) {
+    const paths = /^(Move|Copy|Replace)$/i.test(m[1]) ? [m[3], m[5]] : [m[3]];
+    const flatPath = (s) => String(s ?? '').split('\\').join('/');
+    if (paths.some((s) => s !== undefined && (/\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(flatPath(s)) || plugins.some((d) => (WIN ? flatPath(s).toLowerCase() : flatPath(s)).includes(d))))) {
+      return refuse('switch', 'this .NET call writes one of the switches of pitwall\'s guards: only the owner, or a pitwall script, changes it.');
+    }
   }
   const reviewer = Boolean(agentId) && h.reviewers.includes(agentType);
   const base = ctx.cfg.mergeProtection.branch;
@@ -629,12 +634,28 @@ export function guard(call, ctx) {
     // a copy onto them alike (owner, 2026-11-09). A message or a search pattern is no path (pathWords).
     const namesSwitch = (w) => {
       const f = String(w).split('\\').join('/');
+      // An exclusion leaves the file alone: git's ":!x" and ":(exclude)x", a formatter's "!x".
+      if (/^(!|:!|:\^|:\([^)]*exclude[^)]*\))/.test(f)) return false;
       const g = WIN ? f.toLowerCase() : f;
       return /\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(f) || /\$\{?CLAUDE_PLUGIN_ROOT\b/.test(f) || plugins.some((d) => g.includes(d) || g.includes(d.replace(/^([a-z]):/i, (_, x) => `/${x.toLowerCase()}`)));
     };
-    const pitwallScript = p === 'node' && /\.mjs$/i.test(argv[1] ?? '') && plugins.some((d) => inside(norm(argv[1], dir, home), `${d}/scripts`)) && !argv.slice(2).some(namesSwitch);
-    const naming = [...words, ...inputs].find(namesSwitch) ?? (code !== null && namesSwitch(code) ? 'this inline script' : null);
-    if (naming && !readOnly && !pitwallScript) {
+    // One of pitwall's own scripts: node, its options, then a script in the plugin's scripts folder; the
+    // other words that may be paths (not an --idea or a --description) name no switch.
+    const script = p === 'node' ? argv.slice(1).find((a) => !a.startsWith('-')) : undefined;
+    const pitwallScript = Boolean(script) && /\.mjs$/i.test(script) && plugins.some((d) => inside(norm(script, dir, home), `${d}/scripts`)) && !words.filter((w) => w !== script).some(namesSwitch);
+    // The plugin's own files (defaults.json, the template) may also be read the ways agents read: sed -n, find,
+    // tree, du, sort, cd. The switch files themselves keep to hooks.readOnlyCommands.
+    const isSwitchFile = (w) => /\.claude\/+(pitwall|settings(\.local)?)\.json/i.test(String(w).split('\\').join('/'));
+    const pluginReader =
+      ['tree', 'du', 'cd', 'pushd', 'set-location', 'sl', 'realpath', 'readlink', 'dirname', 'basename'].includes(p) ||
+      (p === 'sort' && !argv.some((a) => /^(-o|--output)/.test(a))) ||
+      (p === 'find' && !argv.some((a) => /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/.test(a))) ||
+      (p === 'sed' && argv.includes('-n') && !inPlace && /^(\d+|\$)(,(\d+|\$))?p$/.test(argv.slice(1).find((a) => !a.startsWith('-')) ?? ''));
+    // A "<" only reads, so what it reads from names nothing here.
+    const named = words.filter(namesSwitch);
+    const naming = named[0] ?? (code !== null && namesSwitch(code) ? 'this inline script' : null);
+    const readsPlugin = pluginReader && named.length > 0 && !named.some(isSwitchFile);
+    if (naming && !readOnly && !pitwallScript && !readsPlugin) {
       return refuse('switch', `${naming} names one of the switches of pitwall's guards (.claude/pitwall.json, the Claude Code settings, the plugin's folder). A command that names one may only read it (cat, head, grep, git diff, log, show) or stage it (git add); only the owner, or a pitwall script, changes it.`);
     }
     if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a)) && !git.args.some((a) => a === '--dry-run' || /^-[a-zA-Z]*n/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
