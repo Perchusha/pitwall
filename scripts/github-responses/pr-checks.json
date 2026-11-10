@@ -1,0 +1,12 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "checks",
+    "2"
+  ],
+  "status": 1,
+  "stdout": "ai-review\tfail\t0\t\tcode review: 3 open\ngate\tpass\t19s\thttps://github.com/<owner>/<repo>/actions/runs/42814967692/job/129825615815\t\n",
+  "stderr": ""
+}

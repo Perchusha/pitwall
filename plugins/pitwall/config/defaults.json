@@ -93,7 +93,8 @@
       "warn": 250,
       "stop": 300
     },
-    "epicsPerSession": 3
+    "epicsPerSession": 3,
+    "implementersPerChange": 3
   },
   "hooks": {
     "briefMaxChars": 2000,
@@ -120,8 +121,22 @@
           "docs-check.mjs",
           "review-status.mjs"
         ]
+      },
+      "pitwall:code-reviewer": {
+        "write": [
+          "docs/reviews/*.md"
+        ],
+        "run": [
+          "docs-check.mjs",
+          "review-status.mjs"
+        ],
+        "git": ["diff", "log", "show", "status", "rev-parse", "ls-files", "blame", "merge-base", "branch"],
+        "gate": true
       }
     },
+    "ownerOnly": [
+      "merge-choice.mjs"
+    ],
     "handback": [
       "SubagentHandback"
     ],
@@ -195,6 +210,18 @@
   },
   "planning": {
     "branch": "plan/initial"
+  },
+  "loop": {
+    "branches": {
+      "epic": "epic/",
+      "fix": "fix/"
+    },
+    "reviews": "docs/reviews",
+    "severities": [
+      "blocking",
+      "should fix"
+    ],
+    "ownerChoice": "autoMerge"
   },
   "discovery": {
     "scenarios": {

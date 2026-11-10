@@ -111,6 +111,19 @@ export function readGate(gh, name, sha, cfg) {
   return { gate, foreign: !gate && named.length > 0 ? named[0] : null };
 }
 
+// The change a branch of the epic loop holds (T3b, ADR-0011): epic/E<n>-<slug>, named as the
+// epic's file in docs/epics/, or fix/BUG-<n>. Null for any other branch; id is null when the
+// branch has a loop prefix but names no change.
+export function changeOf(branch, cfg) {
+  const kind = Object.keys(cfg.loop.branches).find((k) => String(branch ?? '').startsWith(cfg.loop.branches[k]));
+  if (!kind) return null;
+  const name = branch.slice(cfg.loop.branches[kind].length);
+  const epic = kind === 'epic' ? /^(E\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(name) : null;
+  const bug = kind === 'fix' ? /^BUG-\d+$/.exec(name) : null;
+  if (!epic && !bug) return { kind, branch, id: null };
+  return { kind, branch, id: name, epic: epic?.[1] ?? null, bug: bug?.[0] ?? null, review: `${cfg.loop.reviews}/${name}.md` };
+}
+
 export function gitRunner(cwd) {
   return (...args) => {
     const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });

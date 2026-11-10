@@ -1,0 +1,19 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "create",
+    "--base",
+    "main",
+    "--head",
+    "epic/E1-count-and-pause",
+    "--title",
+    "E1 - Count and pause in the tray",
+    "--body-file",
+    "-"
+  ],
+  "status": 0,
+  "stdout": "https://github.com/<owner>/<repo>/pull/3\n",
+  "stderr": ""
+}

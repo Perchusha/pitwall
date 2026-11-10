@@ -1,0 +1,19 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "merge",
+    "3",
+    "--merge",
+    "--match-head-commit",
+    "34f2c15bb52ec0da380f4ff14210ee9f839079e2",
+    "--subject",
+    "feat(E1): Count and pause in the tray (#3)",
+    "--body",
+    "Risk class: normal. Merged without the owner, who allowed low and normal risk to merge once gate and ai-review are green (pitwall ADR-0010), at 34f2c15bb52ec0da380f4ff14210ee9f839079e2."
+  ],
+  "status": 0,
+  "stdout": "",
+  "stderr": ""
+}

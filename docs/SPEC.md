@@ -45,13 +45,13 @@ Project docs are tens or hundreds of kilobytes and change with almost every comm
 
 ## 6. The epic loop
 
-1. **Clarify.** Reread the epic, its acceptance criteria and ADRs. Questions go to the owner one at a time, before any code.
-2. **Implement.** One implementer sub-agent per epic on `epic/E<n>-<slug>`, with a call budget. The risk class picks `implementer` or `implementer-deep`.
+1. **Clarify.** `/pitwall:continue` takes one change at a time: an open bug's fix first, then the change in flight, then the next epic whose dependencies are merged. It rereads the change, its acceptance criteria and ADRs. Questions go to the owner one at a time, before any code.
+2. **Implement.** One implementer sub-agent per change on `epic/E<n>-<slug>` or `fix/BUG-<n>`, with a call budget. The risk class picks `implementer` or `implementer-deep`; a PARTIAL report gets a fresh one with the handoff.
 3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping.
 4. **Gate.** `scripts/gate --full`. Red gate: no PR.
 5. **PR** with the acceptance criteria, ADR links and what was not done. CI runs the gate as the check `gate`.
-6. **Review** by `code-reviewer` in the local session with a fresh context: the diff, the epic, its ADRs and `docs/LESSONS.md`. Its verdict is the commit status `ai-review` (ADR-0002). When rejects on one epic reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides.
-7. **Merge** by risk class, at every process level: low and normal merge themselves when `gate` and `ai-review` are green; high waits for the owner.
+6. **Review** by `code-reviewer` in the local session with a fresh context each round: the diff, the change, its ADRs and `docs/LESSONS.md`. It writes `docs/reviews/E<n>-<slug>.md` or `docs/reviews/BUG-<n>.md`, its only file: the commit it reviewed, what covers each criterion and the findings, each closed by a commit or an accepted risk (ADR-0011). Its verdict is the commit status `ai-review` (ADR-0002, ADR-0007), set only while nothing but that file changed after the reviewed commit. When rejects on one change reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides, and rounds stop at `review.maxRounds` (L-8).
+7. **Merge** by risk class, at every process level, with a merge commit `feat(E<n>): ...` or `fix(BUG-<n>): ...` that records who approved it: low and normal merge themselves when `gate` and `ai-review` are green and the project's owner chose that (ADR-0010); otherwise, and always for high risk, the owner says yes. A merged change is recorded in the first commit of the next branch, since `main` is protected.
 8. **Release and QA.** A semver tag with a changelog, a deploy to staging, QA against the acceptance criteria of every closed epic plus an exploratory pass, then production and a smoke check. Red QA files a bug and makes its fix the first item of the next loop.
 
 Staging defaults: web, a separate environment with its own database and URL; desktop, a built installer, and for Steam a closed beta branch; mobile, TestFlight and Google Play internal testing; lite level, a local build.
@@ -70,7 +70,7 @@ Staging defaults: web, a separate environment with its own database and URL; des
 | `researcher` | 1, 2 | Sub-agent, several in parallel | The topic and its criteria | A table with links to opened pages |
 | `plan-reviewer` | 5 | Sub-agent, fresh context, one per round | The documents only | `docs/PLAN-REVIEW.md` (its only write), the `ai-review` verdict, questions for the owner |
 | `implementer`, `implementer-deep` | 6 | Sub-agent per epic, call budget | The epic, its ADRs, LESSONS, CLAUDE.md | Code, tests, a DONE, PARTIAL or NEEDS_OWNER report |
-| `code-reviewer` | 6 | Sub-agent in the local session, fresh context | The diff, the epic, its ADRs, LESSONS | The `ai-review` verdict |
+| `code-reviewer` | 6 | Sub-agent in the local session, fresh context, one per round | The diff, the change, its ADRs, LESSONS | `docs/reviews/<change>.md` (its only write), the `ai-review` verdict, questions for the owner |
 | `qa` | 6 | Sub-agent with a browser and E2E | Acceptance criteria, scenarios, the staging address | A report and new BUG-n |
 
 Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversation asks.
@@ -79,9 +79,9 @@ Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversatio
 
 - **The plugin** holds the process: skills, agents, hooks, scripts and defaults. Improving the process ships as a new plugin version to every project.
 - **The template** (`plugins/pitwall/template/`) is copied into a new project by `kickoff` (ADR-0001). It holds no code; E0 adds the code and the real `scripts/gate` once the stack is chosen.
-- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json` and `scripts/gate --fast|--changed|--full`, plus the `##` headings of the template's documents (ADR-0006). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode and `templateVersion`, the plugin version the project was laid out from.
-- **Plugin scripts** run on Node.js (ADR-0004): the layout, the docs check, merge protection, the review status, the merge and the hooks. A project's stack needs no Node.
-- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status and their own switch, call budgets, and the gate after edits and before stopping (T3a). A guard that cannot run refuses.
+- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/reviews/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json` and `scripts/gate --fast|--changed|--full`, plus the `##` headings of the template's documents (ADR-0006, ADR-0011). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, the owner's choice of ADR-0010, which only the owner records, through `merge-choice.mjs` in a terminal.
+- **Plugin scripts** run on Node.js (ADR-0004): the layout, the docs check, merge protection, the review status, the merge, the owner's choice of merges without them and the hooks. A project's stack needs no Node.
+- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status, the reviewers' limits, the owner's own script and their own switch, call budgets, and the gate after edits and before stopping on epic and fix branches (T3a, T3b). On the owner's yes to merges without them, the session-start hook keeps the two narrow allow rules of ADR-0010 in `.claude/settings.local.json` in step with the plugin's path. A guard that cannot run refuses.
 - **MCP** is for data outside the repository: library docs for the stack, GitHub, a browser for QA, hosting and databases. Project state stays in files, and the process stays in skills.
 - **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review`, admins included (ADR-0005), wherever GitHub offers it, and a local hook that refuses the merge on private repositories on GitHub Free.
 - **Planning** happens on one branch: the skeleton is the only direct commit on `main`, stages 1 to 5 commit on `plan/initial`, and the plan reaches `main` in one PR after stage 5, merged with a merge commit once the owner says yes (ADR-0008). Spike code stays on `spike/<topic>`.

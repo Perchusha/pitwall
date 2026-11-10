@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // The docs check of a pitwall project (T1-AC5, T2-AC1, T2-AC3, T2-AC4, ADR-0003, ADR-0006).
 //
-//   node docs-check.mjs [--root <dir>] [--stage <stage>[,<stage>...]] [--only sections,ids,size]
+//   node docs-check.mjs [--root <dir>] [--stage <stage>[,<stage>...]] [--change <id>] [--only sections,ids,size]
 //
-// Stages: kickoff, discovery, decide, spike-criterion (before the criterion is committed), spike, plan, plan-review.
+// Stages: kickoff, discovery, decide, spike-criterion (before the criterion is committed), spike, plan, plan-review,
+// code-review (T3b-AC4, ADR-0011: the review file of the change on the current branch, or of --change).
 //
 // Always, unless --only narrows it:
 //   sections  every "## " heading of a template document is in the project's copy,
@@ -20,13 +21,13 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { config, gitRunner, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
+import { changeOf, config, gitRunner, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
 
 requireNode();
-const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review[,...]] [--only sections,ids,size]';
-const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', only: 'value' }, usage);
+const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review|code-review[,...]] [--change <id>] [--only sections,ids,size]';
+const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', change: 'value', only: 'value' }, usage);
 const KINDS = ['sections', 'ids', 'size'];
-const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review'];
+const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review', 'code-review'];
 const kinds = args.only ? args.only.split(',').map((k) => k.trim()) : KINDS;
 const stages = args.stage ? args.stage.split(',').map((s) => s.trim()) : [];
 if (kinds.some((k) => !KINDS.includes(k)) || stages.some((s) => !STAGES.includes(s))) {
@@ -256,9 +257,10 @@ const JUDGED = {
   'docs/EPICS.md': { null: [[2, 'risk'], [3, '"Depends on"'], [4, 'status']] },
   'docs/DISCOVERY.md': { 'Assumptions by risk': [[0, 'ID'], [2, 'risk']], 'Owner constraints': [[0, 'constraint'], [2, '"Confirmed on"']] },
   spike: { Criterion: [[2, '"Success when"']], Result: [[1, 'measured'], [2, '"Measured by"'], [3, 'date']] },
+  review: { 'Acceptance criteria': [[0, 'criterion']], Findings: [[0, 'number'], [2, 'severity'], [3, '"Closed by"']] },
 };
 function plainCells(rel, section, n) {
-  const map = JUDGED[rel.startsWith('docs/spikes/') ? 'spike' : rel] ?? {};
+  const map = JUDGED[rel.startsWith('docs/spikes/') ? 'spike' : rel.startsWith(`${cfg.loop.reviews}/`) ? 'review' : rel] ?? {};
   return (map[section ?? 'null'] ?? []).filter(([col]) => col < n);
 }
 // What keeps a cell from being plain text, outside its code spans, or '' when nothing does.
@@ -423,9 +425,14 @@ const filesIn = (rel) => (has(rel) && statSync(join(root, rel)).isDirectory() ? 
 const adrFiles = filesIn('docs/adr').filter((f) => /^\d{4}-.+\.md$/.test(f) && !f.startsWith('0000-'));
 const epicFiles = filesIn('docs/epics').filter((f) => f.endsWith('.md'));
 const spikeFiles = filesIn('docs/spikes').filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md');
+// The code reviews (ADR-0011). The folder came with template 0.5.0: a project laid out before gets it
+// with its first review, so its README and template are not required, and reviews follow the plugin's template.
+const REVIEW_TEMPLATE = `${cfg.loop.reviews}/template.md`;
+const reviewFiles = filesIn(cfg.loop.reviews).filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md');
 
 if (kinds.includes('sections')) {
-  for (const { rel, dest } of templateDocs) requireHeadings(dest, rel);
+  for (const { rel, dest } of templateDocs) if (!dest.startsWith(`${cfg.loop.reviews}/`)) requireHeadings(dest, rel);
+  for (const f of reviewFiles) requireHeadings(`${cfg.loop.reviews}/${f}`, REVIEW_TEMPLATE);
   for (const f of adrFiles) requireHeadings(`docs/adr/${f}`, 'docs/adr/0000-template.md');
   for (const f of epicFiles.filter((f) => f !== 'E0-skeleton.md')) requireHeadings(`docs/epics/${f}`, 'docs/epics/E0-skeleton.md');
   for (const f of spikeFiles) requireHeadings(`docs/spikes/${f}`, 'docs/spikes/template.md');
@@ -530,6 +537,9 @@ function checkKickoff() {
       if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(s.templateVersion ?? ''))) report(file, `templateVersion "${s.templateVersion}" is not a version`);
       if (!Object.keys(cfg.processLevels).includes(s.processLevel)) report(file, `processLevel "${s.processLevel}" is not one of ${Object.keys(cfg.processLevels).join(', ')}`);
       if (!cfg.mergeProtection.modes.includes(s.mergeProtection)) report(file, `mergeProtection "${s.mergeProtection}" is not one of ${cfg.mergeProtection.modes.join(', ')}`);
+      // The owner's choice of ADR-0010; a project laid out before it has no key yet.
+      const choice = cfg.loop.ownerChoice;
+      if (Object.hasOwn(s, choice) && typeof s[choice] !== 'boolean') report(file, `${choice} "${s[choice]}" is not true or false`);
     }
   }
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);
@@ -1168,7 +1178,117 @@ function checkPlanReview() {
   }
 }
 
-const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview };
+// ---------- code review (T3b-AC4, ADR-0011) ----------
+
+// The change a review belongs to: --change, or the branch the project is on (loop.branches:
+// epic/E<n>-<slug>, fix/BUG-<n>). Its review file is <loop.reviews>/<change>.md.
+function changeId(git) {
+  if (args.change) return args.change;
+  const b = git('symbolic-ref', '--short', '-q', 'HEAD');
+  const c = b.ok ? changeOf(b.out, cfg) : null;
+  return c ? (c.id ?? c.branch) : null;
+}
+
+function checkCodeReview() {
+  const git = gitRunner(root);
+  if (!git('rev-parse', '--show-toplevel').ok) return report(root, 'not inside a git repository: a code review names commits');
+  const id = changeId(git);
+  if (!id) return report(root, `not on the branch of a change (${Object.values(cfg.loop.branches).map((b) => `${b}...`).join(', ')}), and no --change names one`);
+  const epic = /^(E\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(id);
+  if (!epic && !/^BUG-\d+$/.test(id)) return report(root, `"${id}" names no change: an epic as its file in docs/epics/ is named (E<n>-<slug>), or a bug BUG-<n>`);
+  const rel = `${cfg.loop.reviews}/${id}.md`;
+  if (!has(rel)) return report(rel, 'missing: the code reviewer writes it from the template (pitwall ADR-0011)');
+  const text = read(rel);
+  const TABLED = ['Acceptance criteria', 'Findings'];
+  // The rows and fields read here decide the review, so the file keeps to Markdown read as GitHub shows it (L-7).
+  checkStructure(rel, { tables: TABLED, fields: ['Change', 'Reviewed', 'Round'] });
+  const s = sections(text);
+  const tpl = sections(readTemplate(REVIEW_TEMPLATE));
+  const headings = headingList(text);
+  for (const h of new Set(headings)) if (!tpl.has(h)) report(rel, `"## ${h}" is not a section of the template: keep every row in the template's sections`);
+  for (const name of TABLED) {
+    const times = headings.filter((h) => h === name).length;
+    if (times !== 1) {
+      report(rel, times === 0 ? `missing section "## ${name}"` : `"## ${name}" appears ${times} times: keep one`);
+      continue;
+    }
+    const want = tableHeader(tpl.get(name));
+    const got = tableHeader(s.get(name));
+    if (!got || got.join('|').toLowerCase() !== want.join('|').toLowerCase()) report(rel, `the table in "## ${name}" must keep the template's columns: | ${want.join(' | ')} |`);
+    else for (const row of tableRows(s.get(name))) if (row.length !== want.length) report(rel, `"## ${name}": the row "${row[0]}" has ${row.length} cells, the table has ${want.length} columns`);
+  }
+
+  // The fields: which change, which round, and the commit the round reviewed.
+  const change = bareCell(field(text, 'Change'));
+  if (change !== id) report(rel, `"- Change:" reads "${change}", and this is the review of ${id}`);
+  const round = bareCell(field(text, 'Round'));
+  if (!/^[1-9]\d*$/.test(round)) report(rel, `"- Round:" reads "${round}": the number of the round`);
+  const reviewed = bareCell(field(text, 'Reviewed'));
+  if (!/^[0-9a-f]{40}$/.test(reviewed)) report(rel, `"- Reviewed:" reads "${reviewed}": the full sha of the commit the round reviewed, as git rev-parse HEAD prints it`);
+  else if (!git('rev-parse', '--verify', '-q', `${reviewed}^{commit}`).ok) report(rel, `the reviewed commit ${reviewed.slice(0, 7)} is not in this repository`);
+  else if (!git('merge-base', '--is-ancestor', reviewed, 'HEAD').ok) report(rel, `the reviewed commit ${reviewed.slice(0, 7)} is not in the history of HEAD`);
+  else {
+    // The verdict holds for the reviewed commit: after it, only the review file may change (owner, ADR-0011).
+    const committed = git('-c', 'core.quotePath=false', 'diff', '--name-only', reviewed, 'HEAD').out.split('\n');
+    const working = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all').raw.split('\n').map((l) => l.slice(3));
+    const changed = [...new Set([...committed, ...working])].filter((f) => f && f !== rel);
+    if (changed.length > 0) report(rel, `files changed after the reviewed commit ${reviewed.slice(0, 7)} (${changed.slice(0, 5).join(', ')}${changed.length > 5 ? ', ...' : ''}): the review holds for that commit only, so a new round reviews the head`);
+  }
+
+  // Every acceptance criterion of the epic, or the bug itself, is covered by a test or a QA scenario.
+  // A test named in a code span (`src/a.test.js`) is a test named: the cell is read with its code spans kept.
+  const withCode = (cell) => visible(cell ?? '').replace(/`/g, '').replace(/^[*_\s]+|[*_\s]+$/g, '');
+  const nothing = (cell) => !withCode(cell) || openCell(cell) || /^(?:-+|n\/a|tbd|todo|pending|none|nothing|\?+)\.?$/i.test(withCode(cell));
+  let want = [];
+  if (epic) {
+    const ef = `docs/epics/${id}.md`;
+    if (!has(ef)) report(rel, `${ef}, the epic this review is for, does not exist`);
+    else {
+      want = listItems(sections(read(ef)).get('Acceptance criteria') ?? []).map((l) => /^- \[[ xX]\] (E\d+-AC\d+):/.exec(l)?.[1]).filter(Boolean);
+      if (want.length === 0) report(ef, 'no acceptance criteria to review against');
+    }
+  } else {
+    const bugs = has('docs/BUGS.md') ? tableRows(read('docs/BUGS.md').split('\n')).map((r) => bareCell(r[0])) : [];
+    if (!bugs.includes(id)) report(rel, `${id} is not a row of docs/BUGS.md`);
+    want = [id];
+  }
+  const covered = new Map();
+  for (const row of tableRows(s.get('Acceptance criteria') ?? [])) {
+    const c = bareCell(row[0]);
+    if (!want.includes(c)) report(rel, `"## Acceptance criteria": "${row[0]}" is not ${epic ? `a criterion of ${epic[1]}` : id}`);
+    covered.set(c, row);
+  }
+  for (const c of want) {
+    const row = covered.get(c);
+    if (!row) report(rel, `${c} is not in "## Acceptance criteria": name the test or the QA scenario that covers it`);
+    else if (nothing(row[1])) report(rel, `${c} is not covered: name the test (its file and name) or the QA scenario that checks it`);
+  }
+
+  // Every finding is closed: by a commit of this change's branch, or by a risk the owner accepted.
+  const accepted = risksAccepted();
+  const main = cfg.mergeProtection.branch;
+  const mainRef = [`refs/heads/${main}`, `refs/remotes/origin/${main}`].find((r) => git('rev-parse', '--verify', '-q', r).ok);
+  tableRows(s.get('Findings') ?? []).forEach(([n, finding, severity, by], i) => {
+    const num = bareCell(n);
+    if (num !== String(i + 1)) report(rel, `finding "${n}" is row ${i + 1}: number the findings 1, 2, ... in their order, each keeping its number from round to round`);
+    if (!cellText(finding)) report(rel, `finding ${num} says nothing`);
+    if (!cfg.loop.severities.includes(bareCell(severity).toLowerCase())) report(rel, `finding ${num}: severity "${severity ?? ''}" is not one of ${cfg.loop.severities.join(', ')}`);
+    const cell = bareCell(by);
+    const sha = /^([0-9a-f]{7,40})\b/.exec(cell)?.[1];
+    const risk = /^(R-\d+)\b/.exec(cell)?.[1];
+    if (openCell(by) || (!sha && !risk)) return report(rel, `finding ${num} is not closed: start its last cell with the commit on this branch that closes it, or with a risk R-n the owner accepted, written plainly, outside a code span`);
+    if (risk) {
+      if (!accepted.get(risk)) report(rel, `finding ${num} is closed by ${risk}, which is not a risk the owner accepted: a row of docs/RISKS.md with a fallback and the date in "Accepted on"`);
+      return;
+    }
+    const commit = git('rev-parse', '--verify', '-q', `${sha}^{commit}`);
+    if (!commit.ok) report(rel, `finding ${num} is closed by ${sha}, which is no commit of this repository`);
+    else if (!git('merge-base', '--is-ancestor', commit.out, 'HEAD').ok) report(rel, `finding ${num} is closed by ${sha}, which is not in the history of HEAD`);
+    else if (mainRef && git('merge-base', '--is-ancestor', commit.out, mainRef).ok) report(rel, `finding ${num} is closed by ${sha}, which is already on ${main}: a commit of this change's branch closes it`);
+  });
+}
+
+const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview };
 for (const s of stages) checks[s]();
 
 const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;

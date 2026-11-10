@@ -174,6 +174,16 @@ step('agents', (report) => {
     if (text.includes('NOT_IMPLEMENTED') && !fm.description?.startsWith('(Planned')) {
       report(`agents/${file}: not implemented but the description does not say so`);
     }
+    // L-10: a skill an agent preloads names the plugin (pitwall:<skill>) and allows model invocation,
+    // or Claude Code leaves it out of the agent without a word (2.1.318).
+    const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
+    const preload = /^skills:\s*\r?\n((?:\s+- .+\r?\n?)+)/m.exec(block)?.[1].split(/\r?\n/).map((l) => l.replace(/^\s+- /, '').trim()).filter(Boolean) ?? [];
+    for (const s of preload) {
+      const skill = /^pitwall:([a-z-]+)$/.exec(s)?.[1];
+      const skillFile = skill ? join(plugin, 'skills', skill, 'SKILL.md') : null;
+      if (!skillFile || !existsSync(skillFile)) report(`agents/${file}: preloads "${s}", which is no skill of this plugin named pitwall:<skill>`);
+      else if (frontmatter(readFileSync(skillFile, 'utf8'))?.['disable-model-invocation'] === 'true') report(`agents/${file}: preloads ${s}, whose disable-model-invocation: true keeps it out of the agent (L-10)`);
+    }
   }
 });
 
@@ -291,7 +301,7 @@ step('layout', (report) => {
     if (!claude.startsWith('# scratch\n\nA scratch project for the checks\n')) report(`CLAUDE.md does not start with the name and the idea:\n${claude.slice(0, 120)}`);
     const settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8'));
     const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending' };
+    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending', autoMerge: false };
     if (JSON.stringify(settings) !== JSON.stringify(want)) report(`.claude/pitwall.json is ${JSON.stringify(settings)}, expected ${JSON.stringify(want)}`);
 
     const again = layOut(project);
@@ -1207,7 +1217,7 @@ step('review status (fake gh)', (report) => {
     const emptyConfig = join(dir, 'empty.gitconfig');
     writeFileSync(emptyConfig, '');
     run('git cannot commit', ok, { env: { GIT_AUTHOR_NAME: '', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: '', GIT_COMMITTER_EMAIL: '', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' }, code: 1, posts: 0, commits: 0, says: ['git could not commit docs/PLAN-REVIEW.md'] });
-    for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'code', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
+    for (const [label, a] of [['no --state', ['--review', 'plan']], ['an unknown review', ['--review', 'epic', '--state', 'success']], ['an unknown flag', ['--review', 'plan', '--state', 'success', '--force']]]) {
       run(label, ok, { args: a, code: 2, posts: 0 });
     }
   });
@@ -1282,6 +1292,420 @@ step('plan merge (fake gh)', (report) => {
     gitIn(nobranch, 'switch', '-q', 'main');
     gitIn(nobranch, 'branch', '-q', '-D', 'plan/initial');
     run('no local planning branch', ok, { project: nobranch, code: 1, merges: 0, says: ['there is no local branch plan/initial'] });
+  });
+});
+
+// T3b: a project after its plan merged, with E1 on its branch: a code commit, a fix commit, and the
+// review file the code reviewer would write. Returns the project and the commits.
+function makeChangeRepo(dir) {
+  const { project } = makePlanRepo(dir, { spike: false });
+  gitIn(project, 'switch', '-q', 'main');
+  gitIn(project, 'merge', '-q', '--no-ff', 'plan/initial', '-m', 'Merge the plan from plan/initial (#1)', '-m', 'Plan approved by the owner, 2026-11-09, at x');
+  gitIn(project, 'switch', '-qc', 'epic/E1-reminder');
+  const epics = join(project, 'docs', 'EPICS.md');
+  writeFileSync(epics, readFileSync(epics, 'utf8').replace('| The reminder | normal | E0 | planned |', '| The reminder | normal | E0 | in progress |'));
+  gitIn(project, 'commit', '-qam', 'docs: start E1-reminder');
+  mkdirSync(join(project, 'src'));
+  writeFileSync(join(project, 'src', 'reminder.js'), 'export const minutes = 45;\n');
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'feat: the reminder');
+  const code = gitIn(project, 'rev-parse', 'HEAD').stdout.trim();
+  writeFileSync(join(project, 'src', 'reminder.test.js'), 'import { minutes } from "./reminder.js";\n');
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'fix: review finding 1, a test');
+  const fix = gitIn(project, 'rev-parse', 'HEAD').stdout.trim();
+  return { project, code, fix, main: gitIn(project, 'rev-parse', 'main').stdout.trim() };
+}
+// A review file as the code reviewer writes it from the template.
+function reviewText({ change = 'E1-reminder', reviewed, round = 2, criteria = [['E1-AC1', '`src/reminder.test.js` "shows after 45 minutes"'], ['E1-AC2', 'QA: snooze, then wait 10 minutes']], findings = [], extra = '' }) {
+  return [
+    `# Review: ${change}`, '', `- Change: ${change}`, `- Reviewed: ${reviewed}`, `- Round: ${round}`, '',
+    '## Acceptance criteria', '', '| Criterion | Covered by |', '| --- | --- |', ...criteria.map(([c, by]) => `| ${c} | ${by} |`), '',
+    '## Findings', '', '| # | Finding | Severity (blocking, should fix) | Closed by (commit) or accepted risk |', '| --- | --- | --- | --- |', ...findings.map((f, i) => `| ${f[3] ?? i + 1} | ${f[0]} | ${f[1]} | ${f[2]} |`), '', extra,
+  ].join('\n');
+}
+
+// 6j. T3b-AC4, ADR-0011: docs-check --stage code-review on a review the way the code reviewer leaves it,
+// and on each kind of gap: a criterion not covered, a finding not closed, the code changed after the review.
+step('code review check', (report) => {
+  scratch('pitwall-code-review-', (dir) => {
+    const { project: base, code, fix, main } = makeChangeRepo(dir);
+    const good = { reviewed: fix, findings: [['`src/reminder.js:1` has no test', 'blocking', `${fix.slice(0, 9)} adds it`], ['A game in full screen hides it', 'should fix', 'R-1']] };
+    let n = 0;
+    const run = (label, { review = good, prepare, args = [], pass = false, says = [] }) => {
+      const p = join(dir, `c${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      mkdirSync(join(p, 'docs', 'reviews'), { recursive: true });
+      if (review) writeFileSync(join(p, 'docs', 'reviews', `${review.change ?? 'E1-reminder'}.md`), reviewText(review));
+      prepare?.(p);
+      const r = docsCheck(p, ['--stage', 'code-review', ...args]);
+      const out = `${r.stdout}${r.stderr}`;
+      if ((r.status === 0) !== pass) report(`${label}: exit ${r.status}, expected ${pass ? 0 : 1}\n${out}`);
+      for (const s of says) if (!out.includes(s)) report(`${label}: output lacks "${s}"\n${out}`);
+    };
+    run('a review the way the reviewer leaves it', { pass: true });
+    run('a review with no findings', { review: { reviewed: fix }, pass: true });
+    run('a project laid out before docs/reviews/ had a README and a template', {
+      prepare: (p) => {
+        gitIn(p, 'rm', '-q', 'docs/reviews/README.md', 'docs/reviews/template.md');
+        gitIn(p, 'commit', '-qm', 'an older layout');
+        writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText({ ...good, reviewed: gitIn(p, 'rev-parse', 'HEAD').stdout.trim() }));
+      },
+      pass: true,
+    });
+    run('an open finding', { review: { ...good, findings: [...good.findings, ['No snooze test', 'should fix', 'open: add one']] }, says: ['finding 3 is not closed'] });
+    run('a finding with nothing in its last cell', { review: { ...good, findings: [['No snooze test', 'should fix', '']] }, says: ['finding 1 is not closed'] });
+    run('a finding closed by words', { review: { ...good, findings: [['No snooze test', 'should fix', 'fixed in the last commit']] }, says: ['finding 1 is not closed'] });
+    run('a criterion left out', { review: { ...good, criteria: [['E1-AC1', 'a test']] }, says: ['E1-AC2 is not in "## Acceptance criteria"'] });
+    run('a criterion not covered', { review: { ...good, criteria: [['E1-AC1', 'a test'], ['E1-AC2', 'open: no test yet']] }, says: ['E1-AC2 is not covered'] });
+    run('criteria covered by a test in a code span, and by a link', { review: { ...good, criteria: [['E1-AC1', '`src/reminder.test.js`'], ['E1-AC2', '[the snooze test](../../src/reminder.test.js)']] }, pass: true });
+    run('a criterion covered by a dash', { review: { ...good, criteria: [['E1-AC1', 'a test'], ['E1-AC2', '-']] }, says: ['E1-AC2 is not covered'] });
+    run('a criterion of another epic', { review: { ...good, criteria: [...good.criteria ?? [['E1-AC1', 'a'], ['E1-AC2', 'b']], ['E2-AC1', 'a test']] }, says: ['"E2-AC1" is not a criterion of E1'] });
+    run('a short reviewed sha', { review: { ...good, reviewed: fix.slice(0, 7) }, says: ['the full sha of the commit the round reviewed'] });
+    run('a reviewed commit that is not here', { review: { ...good, reviewed: '1'.repeat(40) }, says: ['is not in this repository'] });
+    run('code changed after the reviewed commit', { review: { ...good, reviewed: code, findings: [] }, says: ['files changed after the reviewed commit', 'src/reminder.test.js'] });
+    run('a change in the tree besides the review file', { prepare: (p) => writeFileSync(join(p, 'src', 'reminder.js'), 'export const minutes = 40;\n'), says: ['files changed after the reviewed commit', 'src/reminder.js'] });
+    run('a reviewed commit from another branch', {
+      prepare: (p) => {
+        gitIn(p, 'switch', '-qc', 'side', 'main');
+        gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'side');
+        const side = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+        gitIn(p, 'switch', '-q', 'epic/E1-reminder');
+        writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText({ ...good, reviewed: side }));
+      },
+      says: ['is not in the history of HEAD'],
+    });
+    run('a finding closed by a commit on main', { review: { ...good, findings: [['x', 'blocking', main.slice(0, 9)]] }, says: ['is already on main'] });
+    run('a finding closed by a sha that is no commit', { review: { ...good, findings: [['x', 'blocking', 'abcdef1234']] }, says: ['no commit of this repository'] });
+    run('a finding closed by a risk nobody accepted', { review: { ...good, findings: [['x', 'blocking', 'R-9']] }, says: ['closed by R-9, which is not a risk the owner accepted'] });
+    run('a severity of its own', { review: { ...good, findings: [['x', 'nit', fix.slice(0, 9)]] }, says: ['severity "nit" is not one of blocking, should fix'] });
+    run('findings numbered out of order', { review: { ...good, findings: [['x', 'blocking', fix.slice(0, 9)], ['y', 'blocking', fix.slice(0, 9), 3]] }, says: ['finding "3" is row 2'] });
+    run('a Change field for another epic', { review: { ...good, change: 'E1-reminder' }, prepare: (p) => writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText(good).replace('- Change: E1-reminder', '- Change: E2-release')), says: ['"- Change:" reads "E2-release"'] });
+    run('a round that is no number', { prepare: (p) => writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText(good).replace('- Round: 2', '- Round: two')), says: ['"- Round:" reads "two"'] });
+    run('a heading of its own', { review: { ...good, extra: '## Round 1 findings\n\n| # | Finding | Severity (blocking, should fix) | Closed by (commit) or accepted risk |\n| --- | --- | --- | --- |\n| 1 | x | blocking | open: y |\n' }, says: ['"## Round 1 findings" is not a section of the template'] });
+    run('a second table in Findings', { prepare: (p) => writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText(good).replace('## Findings\n', '## Findings\n\n| # | x |\n| --- | --- |\n| 1 | open: hidden |\n')), says: ['"## Findings" holds 2 tables'] });
+    run('a closed cell as a link', { review: { ...good, findings: [['x', 'blocking', `[${fix.slice(0, 9)}](https://example.com)`]] }, says: ['holds a link'] });
+    run('the template\'s columns changed', { prepare: (p) => writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText(good).replace('| Criterion | Covered by |', '| Criterion | Test |')), says: ['must keep the template\'s columns'] });
+    run('no review file', { review: null, says: ['docs/reviews/E1-reminder.md: missing'] });
+    run('on main', { prepare: (p) => { gitIn(p, 'stash', '-q', '-u'); gitIn(p, 'switch', '-q', 'main'); }, says: ['not on the branch of a change'] });
+    run('a branch that names no change', { prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'epic/reminder'), says: ['"epic/reminder" names no change'] });
+    run('--change names the review', { args: ['--change', 'E1-reminder'], prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'work'), pass: true });
+    const bug = (p) => {
+      gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
+      const bugs = join(p, 'docs', 'BUGS.md');
+      writeFileSync(bugs, readFileSync(bugs, 'utf8').replace(/(\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n)/, '$1| BUG-1 | QA | Open the app | A tray icon | Nothing | in progress | - |\n'));
+      gitIn(p, 'commit', '-qam', 'docs: BUG-1');
+      const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+      writeFileSync(join(p, 'docs', 'reviews', 'BUG-1.md'), reviewText({ change: 'BUG-1', reviewed: head, criteria: [['BUG-1', '`src/reminder.test.js` "shows the tray icon"']], findings: [['x', 'blocking', fix.slice(0, 9)]] }));
+    };
+    run('a bug fix\'s review', { review: null, prepare: bug, pass: true });
+    run('a bug fix\'s review without its row in BUGS.md', {
+      review: null,
+      prepare: (p) => {
+        bug(p);
+        gitIn(p, 'branch', '-q', '-m', 'fix/BUG-2');
+        cpSync(join(p, 'docs', 'reviews', 'BUG-1.md'), join(p, 'docs', 'reviews', 'BUG-2.md'));
+        writeFileSync(join(p, 'docs', 'reviews', 'BUG-2.md'), readFileSync(join(p, 'docs', 'reviews', 'BUG-2.md'), 'utf8').split('BUG-1').join('BUG-2'));
+        rmSync(join(p, 'docs', 'reviews', 'BUG-1.md'));
+      },
+      says: ['BUG-2 is not a row of docs/BUGS.md'],
+    });
+  });
+});
+
+// 6k. T3b-AC4, AC5, AC6: review-status.mjs --review code, merge.mjs --change and merge-choice.mjs against
+// the fake gh, on a change the way the loop leaves it.
+step('code review status, merges by risk class, the owner\'s choice (fake gh)', (report) => {
+  scratch('pitwall-loop-', (dir) => {
+    const { project: base, fix } = makeChangeRepo(dir);
+    const origin = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    gitIn(base, 'remote', 'add', 'origin', origin);
+    gitIn(base, 'push', '-q', 'origin', 'main', 'epic/E1-reminder');
+    const branch = 'epic/E1-reminder';
+    let n = 0;
+    const fresh = (prepare) => {
+      const p = join(dir, `l${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      cpSync(origin, `${p}-origin.git`, { recursive: true });
+      gitIn(p, 'remote', 'set-url', 'origin', `${p}-origin.git`);
+      prepare?.(p);
+      return p;
+    };
+    const writeReview = (p, review) => {
+      mkdirSync(join(p, 'docs', 'reviews'), { recursive: true });
+      writeFileSync(join(p, 'docs', 'reviews', 'E1-reminder.md'), reviewText(review));
+    };
+    const closed = { reviewed: fix, findings: [['`src/reminder.js:1` has no test', 'blocking', `${fix.slice(0, 9)} adds it`]] };
+
+    // review-status.mjs --review code.
+    const okReview = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN' }, pr: { head: 'local', branch }, status: 'ok' };
+    const status = (label, { args = ['--review', 'code', '--state', 'success'], review = closed, prepare, code, result, posts, commits = 0, says = [] }) => {
+      const p = fresh((q) => {
+        if (review) writeReview(q, review);
+        prepare?.(q);
+      });
+      const before = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim());
+      const { r, calls } = withFakeGh('review-status.mjs', p, okReview, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir });
+      const fail = (msg) => report(`review-status, ${label}: ${msg}\n${r.stdout}${r.stderr}`);
+      const writes = calls.filter((c) => c.args.includes('POST'));
+      const made = Number(gitIn(p, 'rev-list', '--count', 'HEAD').stdout.trim()) - before;
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
+      if (writes.length !== posts) fail(`${writes.length} status writes, expected ${posts}`);
+      if (made !== commits) fail(`${made} commits, expected ${commits}`);
+      if (made > 0) {
+        const touched = gitIn(p, 'diff', '--name-only', 'HEAD~1', 'HEAD').stdout.trim();
+        if (touched !== 'docs/reviews/E1-reminder.md') fail(`the commit touched ${touched}, expected the review file only`);
+        const subject = gitIn(p, 'log', '-1', '--format=%s').stdout.trim();
+        if (!/^docs: code review of E1-reminder, (approved|changes requested)$/.test(subject)) fail(`the commit says "${subject}"`);
+      }
+      for (const w of writes) if (!w.args.includes(`repos/o/r/statuses/${gitIn(p, 'rev-parse', 'HEAD').stdout.trim()}`)) fail(`wrote ${w.args.join(' ')}, not on the head`);
+      for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+      checkHandoff(r.stdout, fail);
+    };
+    status('approved', { code: 0, result: 'success', posts: 1, commits: 1 });
+    status('changes requested', { args: ['--review', 'code', '--state', 'failure', '--description', 'code review: 1 open'], review: { ...closed, findings: [['x', 'blocking', 'open: y']] }, code: 0, result: 'failure', posts: 1, commits: 1 });
+    status('success with an open finding', { review: { ...closed, findings: [['x', 'blocking', 'open: y']] }, code: 1, posts: 0, says: ['does not pass docs-check --stage code-review', 'finding 1 is not closed'] });
+    status('success after the code changed', { review: { ...closed, reviewed: gitIn(base, 'rev-parse', 'HEAD~1').stdout.trim(), findings: [] }, code: 1, posts: 0, says: ['files changed after the reviewed commit'] });
+    status('failure after the code changed', { args: ['--review', 'code', '--state', 'failure'], review: { ...closed, reviewed: gitIn(base, 'rev-parse', 'HEAD~1').stdout.trim() }, code: 0, result: 'failure', posts: 1, commits: 1 });
+    status('a branch that names no change', { prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'epic/reminder'), code: 1, posts: 0, says: ['names no change'] });
+    status('on main', { review: null, prepare: (p) => gitIn(p, 'switch', '-q', 'main'), code: 1, posts: 0, says: ['sets its status on epic/<change> or fix/<change>'] });
+    status('other changes in the tree', { prepare: (p) => writeFileSync(join(p, 'docs', 'SPEC.md'), 'changed\n'), code: 1, posts: 0, says: ['changes besides docs/reviews/E1-reminder.md'] });
+
+    // merge.mjs --change, by risk class and the owner's choice.
+    const green = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local', branch, title: 'E1 - The reminder' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
+    const choose = (p, v) => {
+      const f = join(p, '.claude', 'pitwall.json');
+      const s = JSON.parse(readFileSync(f, 'utf8'));
+      // null: a project laid out before the owner's choice existed.
+      if (v === null) delete s.autoMerge;
+      else s.autoMerge = v;
+      writeFileSync(f, JSON.stringify(s, null, 2) + '\n');
+    };
+    const merge = (label, { scenario = green, args = ['--change'], autoMerge = true, prepare, code, result, merges, subject, body, says = [] }) => {
+      const p = fresh((q) => {
+        choose(q, autoMerge);
+        prepare?.(q);
+      });
+      const sha = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+      const { r, calls } = withFakeGh('merge.mjs', p, scenario, [...args, '--project', p, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir });
+      const fail = (msg) => report(`merge, ${label}: ${msg}\n${r.stdout}${r.stderr}`);
+      const merged = calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      if (result && !r.stdout.includes(`RESULT: ${result}`)) fail(`no "RESULT: ${result}"`);
+      if (merged.length !== merges) fail(`${merged.length} merges, expected ${merges}`);
+      for (const m of merged) {
+        const got = { subject: m.args[m.args.indexOf('--subject') + 1], body: m.args[m.args.indexOf('--body') + 1] };
+        if (!m.args.includes('--merge') || m.args[m.args.indexOf('--match-head-commit') + 1] !== sha) fail(`merged with ${m.args.join(' ')}, expected --merge --match-head-commit ${sha}`);
+        if (subject && got.subject !== subject) fail(`the merge commit's subject is "${got.subject}", expected "${subject}"`);
+        if (body && !body.test(got.body)) fail(`the merge commit's body is "${got.body}"`);
+      }
+      for (const s of says) if (!r.stdout.includes(s) && !r.stderr.includes(s)) fail(`output lacks "${s}"`);
+      checkHandoff(r.stdout, fail);
+    };
+    const without = new RegExp(`^Risk class: normal\\. Merged without the owner, .*\\(pitwall ADR-0010\\), at [0-9a-f]{40}\\.$`);
+    const byOwner = (cls) => new RegExp(`^${cls ? `Risk class: ${cls}\\.` : 'A bug fix, approved by the owner as every fix is until bugs carry a risk class\\.'} Approved by the owner, \\d{4}-\\d{2}-\\d{2}, at [0-9a-f]{40}\\.$`);
+    merge('normal risk, the owner allowed it', { code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: without });
+    merge('normal risk, the owner said no', { autoMerge: false, code: 4, result: 'waits for the owner', merges: 0, says: ['every merge waits for them'] });
+    merge('normal risk, the owner not asked yet', { autoMerge: null, code: 4, result: 'waits for the owner', merges: 0, says: ['has not chosen yet'] });
+    merge('normal risk, the owner said yes to this merge', { autoMerge: false, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: byOwner('normal') });
+    const high = (p) => {
+      const f = join(p, 'docs', 'EPICS.md');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('| The reminder | normal | E0 |', '| The reminder | high | E0 |'));
+      gitIn(p, 'commit', '-qm', 'docs: E1 is high risk', '--', 'docs/EPICS.md');
+    };
+    merge('high risk, the owner allowed low and normal', { prepare: high, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
+    merge('high risk, the owner said yes', { prepare: high, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, body: byOwner('high') });
+    // T3b review: the plan on main says high, the branch says normal: the higher class holds.
+    const lowered = (p) => {
+      gitIn(p, 'switch', '-q', 'main');
+      high(p);
+      gitIn(p, 'switch', '-q', branch);
+      gitIn(p, 'merge', '-q', '-s', 'ours', 'main', '-m', 'merge main, keeping the branch\'s EPICS.md');
+    };
+    merge('high on main, lowered on the branch', { prepare: lowered, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
+    merge('a class read from the commit, not the tree', { prepare: (p) => writeFileSync(join(p, 'docs', 'EPICS.md'), readFileSync(join(p, 'docs', 'EPICS.md'), 'utf8').replace('| The reminder | normal | E0 | in progress |', '| The reminder | high | E0 | in progress |')), code: 0, result: 'merged', merges: 1, body: without });
+    const toFix = (p) => gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
+    const fixPr = { ...green, pr: { head: 'local', branch: 'fix/BUG-1', title: 'BUG-1: no tray icon after login' } };
+    merge('a bug fix, the owner allowed low and normal', { prepare: toFix, scenario: fixPr, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is a bug fix'] });
+    merge('a bug fix, the owner said yes', { prepare: toFix, scenario: fixPr, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): no tray icon after login (#7)', body: byOwner(null) });
+    merge('ai-review red', { scenario: { ...green, statuses: { 'ai-review': 'failure' } }, code: 1, merges: 0, says: ['ai-review is failure', 'the code reviewer sets it'] });
+    merge('gate red', { scenario: { ...green, gate: 'failure' }, code: 1, merges: 0, says: ['gate is failure'] });
+    merge('the head moved', { scenario: { ...green, pr: { ...green.pr, head: '0'.repeat(40) } }, code: 1, merges: 0, says: ['push it and review it again'] });
+    merge('on main', { prepare: (p) => gitIn(p, 'switch', '-q', 'main'), code: 1, merges: 0, says: ['--change merges the PR of the change on this branch'] });
+    merge('a branch that names no change', { prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'epic/reminder'), code: 1, merges: 0, says: ['--change merges the PR of the change on this branch'] });
+    merge('--plan and --change', { args: ['--plan', '--change', '--owner-approved'], code: 2, merges: 0, says: ['give one'] });
+    merge('a dry run', { args: ['--change', '--dry-run'], code: 0, result: 'merged (dry run', merges: 0, says: ['would run gh pr merge 7 --merge --match-head-commit', '--subject "feat(E1): The reminder (#7)"'] });
+    merge('already merged', { scenario: { ...green, pr: { ...green.pr, state: 'MERGED' } }, code: 0, result: 'merged', merges: 0, says: ['already merged'] });
+    merge('no PR', { scenario: { ...green, pr: null }, code: 3, result: 'pending', merges: 0, says: ['there is no PR from epic/E1-reminder'] });
+
+    // merge-choice.mjs: the owner's script, never under Claude Code, rules only while the guard works.
+    const owner = { ...process.env, CLAUDECODE: '' };
+    delete owner.CLAUDECODE;
+    const choiceRun = (p, args, env = owner, script = join(scripts, 'merge-choice.mjs')) => spawnSync(process.execPath, [script, ...args, '--project', p], { encoding: 'utf8', env });
+    const local = (p) => join(p, '.claude', 'settings.local.json');
+    const rules = (p) => (existsSync(local(p)) ? JSON.parse(readFileSync(local(p), 'utf8')).permissions?.allow ?? [] : []);
+    const choiceOf = (p) => JSON.parse(readFileSync(join(p, '.claude', 'pitwall.json'), 'utf8')).autoMerge;
+    // Both spellings of the plugin's folder (Windows has two), until a session start keeps the session's own.
+    const expectRules = [...new Set([plugin, plugin.split('\\').join('/')])].flatMap((d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`]);
+    let p = fresh();
+    let r = choiceRun(p, ['--allow'], { ...owner, CLAUDECODE: '1' });
+    if (r.status !== 1 || !/not inside Claude Code/.test(r.stdout) || existsSync(local(p)) || choiceOf(p) !== false) report(`merge-choice under Claude Code must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
+    r = choiceRun(p, ['--allow']);
+    if (r.status !== 0 || choiceOf(p) !== true || JSON.stringify(rules(p)) !== JSON.stringify(expectRules)) report(`merge-choice --allow: exit ${r.status}, autoMerge ${choiceOf(p)}, rules ${JSON.stringify(rules(p))}\n${r.stdout}${r.stderr}`);
+    writeFileSync(local(p), JSON.stringify({ permissions: { allow: ['Bash(npm test)', ...expectRules] } }, null, 2));
+    r = choiceRun(p, ['--allow']);
+    if (r.status !== 0 || !/as before/.test(r.stdout) || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)', ...expectRules])) report(`merge-choice --allow a second time must change nothing: ${JSON.stringify(rules(p))}\n${r.stdout}`);
+    r = choiceRun(p, ['--deny']);
+    if (r.status !== 0 || choiceOf(p) !== false || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)'])) report(`merge-choice --deny must record false and keep only the owner's rules: ${JSON.stringify(rules(p))}\n${r.stdout}`);
+    for (const args of [[], ['--allow', '--deny']]) if (choiceRun(p, args).status !== 2) report(`merge-choice ${args.join(' ') || 'without a flag'}: expected a usage error`);
+    r = choiceRun(dir, ['--allow']);
+    if (r.status !== 1 || !/not a pitwall project/.test(r.stdout)) report(`merge-choice outside a pitwall project must refuse\n${r.stdout}`);
+    p = fresh();
+    writeFileSync(local(p), '{ not json');
+    r = choiceRun(p, ['--allow']);
+    if (r.status !== 1 || !/does not parse/.test(r.stdout) || choiceOf(p) !== false) report(`merge-choice with a settings.local.json that does not parse must refuse and record nothing\n${r.stdout}`);
+    const blind = join(dir, 'blind-plugin');
+    cpSync(plugin, blind, { recursive: true });
+    const g = join(blind, 'scripts', 'hook-guard.mjs');
+    writeFileSync(g, readFileSync(g, 'utf8').replace('export function guard(call, ctx) {', 'export function guard(call, ctx) {\n  return null;'));
+    p = fresh();
+    r = choiceRun(p, ['--allow'], owner, join(blind, 'scripts', 'merge-choice.mjs'));
+    if (r.status !== 1 || !/review guard does not work/.test(r.stdout) || choiceOf(p) !== false || existsSync(local(p))) report(`merge-choice with a guard that refuses nothing must refuse and record nothing\n${r.stdout}`);
+    const noHooks = join(dir, 'no-hooks-plugin');
+    cpSync(plugin, noHooks, { recursive: true });
+    writeFileSync(join(noHooks, 'hooks', 'hooks.json'), '{ "hooks": {} }\n');
+    r = choiceRun(p, ['--allow'], owner, join(noHooks, 'scripts', 'merge-choice.mjs'));
+    if (r.status !== 1 || !/registers no guard/.test(r.stdout)) report(`merge-choice with a plugin whose hooks.json registers no guard must refuse\n${r.stdout}`);
+  });
+});
+
+// 6l. T3b-AC7: the fake GitHub of the headless loop runs (scripts/fake-github.mjs) answers like GitHub,
+// as `node scripts/e2e.mjs --github <owner/repo>` recorded GitHub's answers in scripts/github-responses/:
+// every field the fake gives, GitHub gave with the same type, and its refusals read the same.
+// The kinds a run of the loop makes; a recording of others (pr-list as JSON, a commit) is compared too.
+const GITHUB_KINDS = ['repo-view', 'pr-create', 'pr-list-text', 'pr-view', 'pr-checks', 'pr-comment', 'pr-merge', 'run-list', 'api-status-post', 'api-statuses', 'api-check-runs', 'api-rules', 'api-protection', 'api-branch'];
+step('fake GitHub against GitHub\'s answers', (report) => {
+  const recDir = join(root, 'scripts', 'github-responses');
+  const recs = Object.fromEntries((existsSync(recDir) ? readdirSync(recDir).filter((f) => f.endsWith('.json')) : []).map((f) => [f.slice(0, -5), JSON.parse(readFileSync(join(recDir, f), 'utf8'))]));
+  // The recordings came from the owner's private repository into a public one: no node id may stay, since
+  // GitHub's encode the repository's numeric id, and no numeric id of a repository or an account.
+  for (const [k, r] of Object.entries(recs)) {
+    const text = JSON.stringify(r);
+    for (const m of text.matchAll(/"(\w*node_id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
+    if (/"(owner|repository|repo|creator|author|committer|user)":\{[^{}]*"id":[1-9]/.test(text)) report(`${k}: an account's or a repository's numeric id is in the recording`);
+  }
+  const missing = GITHUB_KINDS.filter((k) => !recs[k]);
+  if (missing.length) return report(`no recorded answer of GitHub for ${missing.join(', ')}: run node scripts/e2e.mjs --from e0 --github <owner/repo> against an empty private repository`);
+  // The type of every field, by its path; the items of a list as "[]".
+  const shape = (v, at = '', out = new Map()) => {
+    const t = v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v;
+    out.set(at || '.', t);
+    if (t === 'array') for (const x of v) shape(x, `${at}[]`, out);
+    if (t === 'object') for (const [k, x] of Object.entries(v)) shape(x, `${at}.${k}`, out);
+    return out;
+  };
+  scratch('pitwall-fake-github-', (dir) => {
+    const origin = join(dir, 'origin.git');
+    const state = join(dir, 'state');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    const p = join(dir, 'p');
+    if (layOut(p).status !== 0) return report('layout failed');
+    gitIn(p, 'init', '-q', '-b', 'main');
+    gitIn(p, 'add', '-A');
+    gitIn(p, 'commit', '-qm', 'skeleton');
+    gitIn(p, 'remote', 'add', 'origin', origin);
+    gitIn(p, 'switch', '-qc', 'epic/E0-skeleton');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'docs: start E0-skeleton');
+    gitIn(p, 'push', '-q', 'origin', 'main', 'epic/E0-skeleton');
+    const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
+    const env = { ...process.env, ...identity, FAKE_GH_LIVE: state, FAKE_GH_ORIGIN: origin, FAKE_GH_REPO: 'e2e/move-reminder' };
+    const fake = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env, encoding: 'utf8' });
+    const json = (r) => {
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return undefined;
+      }
+    };
+    const fieldsOf = (k) => recs[k].args[recs[k].args.indexOf('--json') + 1];
+    const repo = 'repos/e2e/move-reminder';
+    const answers = {};
+    // The same requests the recorded run made, in the same states: a PR whose review asked for changes when
+    // its checks were read (so gh exits 1), then approved, merged, and main read afterwards.
+    answers['repo-view'] = fake('repo', 'view', '--json', fieldsOf('repo-view'));
+    answers['pr-list-text'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open');
+    answers['pr-create'] = fake('pr', 'create', '--base', 'main', '--head', 'epic/E0-skeleton', '--title', 'E0 - Walking skeleton', '--body', 'x');
+    if (recs['pr-list']) answers['pr-list'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open', '--json', fieldsOf('pr-list'));
+    answers['pr-view'] = fake('pr', 'view', 'epic/E0-skeleton', '--json', fieldsOf('pr-view'));
+    answers['api-status-post'] = fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=failure', '-f', 'context=ai-review', '-f', 'description=code review: 3 open');
+    answers['api-statuses'] = fake('api', `${repo}/commits/${head}/statuses`);
+    // The CI runs the template's gate in the background: wait for it, at most a minute.
+    let runs;
+    for (let i = 0; i < 60; i += 1) {
+      runs = fake('api', `${repo}/commits/${head}/check-runs`);
+      if (json(runs)?.check_runs?.[0]?.status === 'completed') break;
+      spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    }
+    answers['api-check-runs'] = runs;
+    if (json(runs)?.check_runs?.[0]?.conclusion !== 'success') report(`the fake CI did not pass the template's gate on a docs-only commit: ${runs.stdout}`);
+    answers['pr-checks'] = fake('pr', 'checks', '1');
+    fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=code review: approved');
+    answers['pr-comment'] = fake('pr', 'comment', '1', '--body', 'pitwall numbers: implementers 1');
+    if (recs['api-commit']) answers['api-commit'] = fake('api', `${repo}/commits/${head}`);
+    answers['api-rules'] = fake('api', `${repo}/rules/branches/main`);
+    answers['api-protection'] = fake('api', `${repo}/branches/main/protection`);
+    answers['pr-merge'] = fake('pr', 'merge', '1', '--merge', '--match-head-commit', head, '--subject', 'feat(E0): Walking skeleton (#1)', '--body', 'Risk class: normal.');
+    answers['api-branch'] = fake('api', `${repo}/branches/main`);
+    answers['run-list'] = fake('run', 'list', '--branch', 'main', '--limit', '1', '--json', fieldsOf('run-list'));
+    // Reading main's runs started the CI on the merge commit in the background: let it finish, so the
+    // scratch folder can go (Windows keeps a folder a running process works in).
+    for (let i = 0; i < 90; i += 1) {
+      const pendingRuns = readdirSync(join(state, 'ci')).filter((f) => f.endsWith('.json')).some((f) => JSON.parse(readFileSync(join(state, 'ci', f), 'utf8')).status !== 'completed');
+      if (!pendingRuns) break;
+      spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    }
+    // A text answer, as gh prints it without a terminal: the same form, line by line.
+    const TEXT = {
+      'pr-create': (t) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\n$/.test(t),
+      'pr-comment': (t) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+#issuecomment-\d+\n$/.test(t),
+      'pr-merge': (t) => t === '',
+      'pr-list-text': (t) => t === '' || t.split('\n').filter(Boolean).every((l) => /^\d+\t/.test(l)),
+      // name, state, elapsed, link, description; one line per check, ai-review and gate among them.
+      'pr-checks': (t) => {
+        const rows = t.split('\n').filter(Boolean).map((l) => l.split('\t'));
+        return rows.every((r) => r.length === 5 && /^(pass|fail|pending|skipping)$/.test(r[1])) && ['ai-review', 'gate'].every((n) => rows.some((r) => r[0] === n));
+      },
+    };
+    for (const kind of Object.keys(answers)) {
+      const rec = recs[kind];
+      const got = answers[kind];
+      if (!rec) continue;
+      if ((got.status === 0) !== (rec.status === 0)) report(`${kind}: the fake exits ${got.status}, GitHub exited ${rec.status}\n${got.stdout}${got.stderr}`);
+      if (TEXT[kind]) {
+        if (!TEXT[kind](String(rec.stdout))) report(`${kind}: GitHub's recorded answer no longer has the form the check expects: ${JSON.stringify(rec.stdout)}`);
+        if (!TEXT[kind](got.stdout)) report(`${kind}: the fake prints ${JSON.stringify(got.stdout)}, and GitHub printed ${JSON.stringify(rec.stdout)}`);
+        continue;
+      }
+      if (rec.status !== 0) {
+        // A refusal reads the same: its last line names the same reason.
+        const reason = (x) => String(x).replace(/\(HTTP \d+\)/, '').replace(/^gh: /, '').trim();
+        if (!reason(got.stderr.trim().split('\n').pop()).startsWith(reason(rec.stderr).slice(0, 40))) report(`${kind}: the fake refuses with "${got.stderr.trim()}", GitHub with "${rec.stderr}"`);
+        continue;
+      }
+      const real = typeof rec.stdout === 'string' ? undefined : rec.stdout;
+      const mine = json(got);
+      if (real === undefined || mine === undefined) {
+        report(`${kind}: GitHub answered ${real === undefined ? 'text' : 'JSON'}, the fake "${got.stdout.slice(0, 200)}"`);
+        continue;
+      }
+      const theirs = shape(real);
+      for (const [path, type] of shape(mine)) {
+        if (!theirs.has(path)) report(`${kind}: the fake gives ${path}, which GitHub's answer does not hold`);
+        else if (type !== theirs.get(path) && type !== 'null' && theirs.get(path) !== 'null') report(`${kind}: ${path} is ${type} in the fake and ${theirs.get(path)} on GitHub`);
+      }
+    }
   });
 });
 
@@ -1437,6 +1861,8 @@ const PAYLOADS = [
   'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop',
   'project-agent-pre-tool-use-read', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop',
   'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
+  'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
+  'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
 ];
 step('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -1846,6 +2272,104 @@ step('hooks (recorded payloads)', (report) => {
     expect('project-agent-pre-tool-use-read', 'a project agent named plan-reviewer writes docs/SPEC.md', { tool: 'Write', input: { tool_input: { file_path: join(project, 'docs', 'SPEC.md'), content: 'x' } } }, 'allow');
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs review-status.mjs', { input: { tool_input: { command: reviewStatus } } }, 'deny:review');
 
+    // T3b-AC4: the code reviewer's limits (hooks.agents), on its own recorded calls.
+    if (payloads['code-reviewer-pre-tool-use-bash'].input.agent_type !== 'pitwall:code-reviewer') report('the code reviewer\'s calls do not carry agent_type pitwall:code-reviewer');
+    const codeStatus = `node "${P}/scripts/review-status.mjs" --review code --state success --project "${fwd(project)}"`;
+    const crBash = (what, command, want) => expect('code-reviewer-pre-tool-use-bash', `code reviewer: ${what}`, { input: { tool_input: { command } } }, want);
+    const crWrite = (what, file, want, tool = 'Write') => expect('code-reviewer-pre-tool-use-write', `code reviewer: ${what}`, { tool, input: { tool_input: tool === 'Edit' ? { file_path: file, old_string: 'a', new_string: 'b' } : { file_path: file, content: '# Review\n' } } }, want);
+    crBash('review-status.mjs', codeStatus, 'allow');
+    crBash('review-status.mjs with failure', `node "${P}/scripts/review-status.mjs" --review code --state failure --description "code review: 2 open"`, 'allow');
+    crBash('the docs check', `node "${P}/scripts/docs-check.mjs" --root "${fwd(project)}" --stage code-review`, 'allow');
+    crBash('git diff against main', 'git diff main...HEAD', 'allow');
+    crBash('git diff --stat', 'git diff main...HEAD --stat', 'allow');
+    crBash('git log', 'git log --oneline -5', 'allow');
+    crBash('git show a file at the head', 'git show HEAD:src/app.js', 'allow');
+    crBash('git rev-parse HEAD', 'git rev-parse HEAD', 'allow');
+    crBash('git blame', 'git blame -L 1,20 src/app.js', 'allow');
+    crBash('git --no-pager log', 'git --no-pager log -3', 'allow');
+    crBash('git -C the project', `git -C "${fwd(project)}" status`, 'allow');
+    crBash('cd to the project root, then git diff', `cd "${fwd(project)}" && git diff main...HEAD --stat`, 'allow');
+    crBash('the gate, as CI runs it', 'bash scripts/gate --full', 'allow');
+    crBash('the gate from its path', 'scripts/gate --fast', 'allow');
+    crBash('the gate by its full path', `bash "${fwd(project)}/scripts/gate" --changed`, 'allow');
+    crBash('the gate with a mode it lacks', 'bash scripts/gate --all', 'deny:agent');
+    crBash('git commit', 'git commit -am x', 'deny:agent');
+    crBash('git push', 'git push origin HEAD', 'deny:agent');
+    crBash('git checkout', 'git checkout main', 'deny:agent');
+    // L-9: what the code reviewers of the headless E0 run sent, verbatim, with the project's own (Windows) path.
+    const ran = [
+      'bash "{root}\\scripts\\gate" --full',
+      'git -C "{root}" diff --stat 92651f8 HEAD',
+      'git -C "{root}" diff main...HEAD -- .claude .github .gitignore .prettierignore .prettierrc.json CLAUDE.md docs package.json scripts forge.config.mjs tsconfig.base.json tsconfig.build.json tsconfig.json vitest.config.mts',
+      'git -C "{root}" diff main...HEAD --stat',
+      'git -C "{root}" log --oneline main..HEAD',
+      'git -C "{root}" ls-files src tsconfig.json tsconfig.renderer.json tsconfig.tests.json package.json',
+      'git -C "{root}" rev-parse HEAD',
+      'git -C "{root}" show 244dd07 --stat',
+      'git -C "{root}" status',
+      'git diff 238dc5e..HEAD -- . ":(exclude)package-lock.json"',
+      'git diff main...HEAD -- . ":(exclude)package-lock.json" ":(exclude).oxlintrc.json"',
+      'git diff main...HEAD -- docs/JOURNAL.md docs/SPEC.md docs/EPICS.md docs/PLAN-REVIEW.md CLAUDE.md .claude/pitwall.json .gitignore',
+      'git log --stat --format="%h %s" 238dc5e..HEAD',
+      'git ls-files -s scripts/gate',
+      // And from the E1 run.
+      'cd "{root}" && bash scripts/gate --full',
+      'git -C "{root}" log --format=%H%n%B%n----',
+      'git -C "{root}" log --format="%h %ad %s" --date=iso -- docs/JOURNAL.md',
+      `node "${P}/scripts/docs-check.mjs" --root "{root}" --stage code-review`,
+      `node "${P}/scripts/review-status.mjs" --review code --state failure --description "code review: 2 open" --project "{root}"`,
+      `node "${P}/scripts/review-status.mjs" --review code --state success --project "{root}"`,
+    ];
+    for (const c of ran) crBash(`as the E0 run sent it: ${c.slice(0, 60)}`, c.split('{root}').join(project), 'allow');
+    // T3b review: what a reviewer runs by habit.
+    crBash('git branch --show-current', 'git branch --show-current', 'allow');
+    crBash('git merge-base', 'git merge-base main HEAD', 'allow');
+    crBash('the gate with 2>&1', 'bash scripts/gate --full 2>&1', 'allow');
+    crBash('git diff --output-indicator-new', 'git diff --output-indicator-new=+ main...HEAD', 'allow');
+    crBash('git branch -D', 'git branch -D epic/E1-x', 'deny:agent');
+    crBash('git branch with a new name', 'git branch other', 'deny:agent');
+    crBash('2>&1 then more', 'git status 2>&1; git push', 'deny:agent');
+    crBash('git with a config option', 'git -c core.pager=less log', 'deny:agent');
+    crBash('git diff into a file', 'git diff --output=x.patch main', 'deny:agent');
+    crBash('git log into a file', 'git log --output x.txt', 'deny:agent');
+    crBash('git diff with an external tool', 'git diff --ext-diff main', 'deny:agent');
+    crBash('git in another folder', `git -C "${fwd(dir)}" log`, 'deny:agent');
+    crBash('two commands', 'git status; git push', 'deny:agent');
+    crBash('a pipe', 'git log | head', 'deny:agent');
+    crBash('npm test', 'npm test', 'deny:agent');
+    crBash('merge.mjs', `node "${P}/scripts/merge.mjs" --change`, 'deny:agent');
+    crBash('rm', 'rm docs/reviews/E1-x.md', 'deny:agent');
+    crWrite('its review file', join(project, 'docs', 'reviews', 'E1-x.md'), 'allow');
+    crWrite('a bug fix\'s review file', join(project, 'docs', 'reviews', 'BUG-3.md'), 'allow');
+    crWrite('Edit its review file', join(project, 'docs', 'reviews', 'E1-x.md'), 'allow', 'Edit');
+    crWrite('a review file in a subfolder', join(project, 'docs', 'reviews', 'old', 'E1-x.md'), 'deny:agent');
+    crWrite('the code', join(project, 'src', 'app.js'), 'deny:agent');
+    crWrite('Edit the code', join(project, 'src', 'app.js'), 'deny:agent', 'Edit');
+    crWrite('the plan review', join(project, 'docs', 'PLAN-REVIEW.md'), 'deny:agent');
+    crWrite('a review file outside docs', join(project, 'reviews', 'E1-x.md'), 'deny:agent');
+    reviewer('Write a code review file', 'Write', { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' }, 'deny:agent');
+    // The implementers write the code and run the gate, never the review status.
+    expect('implementer-pre-tool-use-bash', 'implementer runs review-status.mjs', { input: { tool_input: { command: codeStatus } } }, 'deny:review');
+    expect('implementer-pre-tool-use-bash', 'implementer runs the gate', { input: { tool_input: { command: 'bash scripts/gate --fast' } } }, 'allow');
+    expect('implementer-pre-tool-use-bash', 'implementer commits', { input: { tool_input: { command: 'git commit -m "feat: the reminder"' } } }, 'allow');
+    expect('implementer-pre-tool-use-write', 'implementer writes code', { input: { tool_input: { file_path: join(project, 'src', 'b.js'), content: 'x' } } }, 'allow');
+    expect('implementer-pre-tool-use-write', 'implementer writes a review file', { input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' } } }, 'allow');
+
+    // T3b-AC6: merge-choice.mjs records the owner's choice, so no agent runs it, the main conversation included.
+    const choice = `node "${P}/scripts/merge-choice.mjs" --allow`;
+    bash(choice, 'deny:owner');
+    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'deny:owner');
+    bash(`cd "${fwd(project)}" && ${choice}`, 'deny:owner');
+    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'deny:owner');
+    bash(`node -e "import('${P}/scripts/merge-choice.mjs')"`, 'deny:switch');
+    bash(`cat "${P}/scripts/merge-choice.mjs"`, 'allow');
+    bash(`grep -n allow "${P}/scripts/merge-choice.mjs"`, 'allow');
+    bash(`node "${P}/scripts/merge.mjs" --change`, 'allow');
+    bash(`node "${P}/scripts/merge.mjs" --change --owner-approved`, 'allow');
+    expect('implementer-pre-tool-use-bash', 'implementer runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
+    expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
+    crBash('merge-choice.mjs', choice, 'deny:agent');
+
     // AC7: the merge guard by mode.
     bash('gh pr merge 7 --merge', 'deny:merge');
     const pr = { number: 7, head, branch: 'epic/E1-x' };
@@ -1935,10 +2459,16 @@ step('hooks (recorded payloads)', (report) => {
     hook('other-plugin-post-tool-use-write', { session: 'gate-other', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
     for (const label of ['other-plugin-pre-tool-use-subagenthandback', 'other-plugin-subagent-stop']) if (verdict(hook(label, { session: 'gate-other' })) !== 'allow') report(`${label}: another plugin's agent must not wait for the gate`);
     if (verdict(hook('main-stop', { session: 'gate-other' })) !== 'block') report(`an edit by another plugin's agent (${helper.agent_type}) must be checked when the main conversation stops`);
+    // T3b: a bug fix's branch is checked like an epic's (loop.branches); the code reviewer's file under docs/ is not.
+    gitIn(project, 'checkout', '-qb', 'fix/BUG-1');
+    if (verdict(post('gate-fix')) !== 'context') report('an edit on a fix branch with a red gate must run the gate');
+    if (verdict(hook('code-reviewer-post-tool-use-write', { session: 'gate-fix-review', input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'BUG-1.md'), content: 'x' } } })) !== 'allow') report('the code reviewer\'s file under docs/ must not run the gate');
+    const implPost = hook('implementer-post-tool-use-write', { session: 'gate-fix-impl', input: { tool_input: { file_path: join(project, 'src.js'), content: 'x' } } });
+    if (verdict(implPost) !== 'context') report('an implementer\'s edit on a fix branch with a red gate must run the gate');
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
-    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop']) {
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write']) {
       const r = hook(label);
       if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
     }
@@ -2020,6 +2550,50 @@ step('hooks (recorded payloads)', (report) => {
     });
     const st = hook('main-session-start', { script: blind });
     if (!/self-test/.test(st.out?.systemMessage ?? '')) report(`a guard that refuses nothing must fail the self-test and warn the owner, got ${JSON.stringify(st.out)}`);
+
+    // T3b-AC6: the owner's choice in the brief, and its allow rules kept in step with it and with the plugin's path.
+    const local = join(project, '.claude', 'settings.local.json');
+    const setChoice = (v) => {
+      const s = JSON.parse(readFileSync(settingsFile, 'utf8'));
+      if (v === undefined) delete s.autoMerge;
+      else s.autoMerge = v;
+      writeFileSync(settingsFile, JSON.stringify(s, null, 2));
+    };
+    const rulesNow = () => (existsSync(local) ? JSON.parse(readFileSync(local, 'utf8')).permissions?.allow ?? [] : []);
+    const briefWith = (opts = {}) => hook('main-session-start', opts).out?.hookSpecificOutput?.additionalContext ?? '';
+    // The session's spelling of the plugin's folder and the same with forward slashes (one on POSIX).
+    const rulesFor = (d) => [...new Set([d, d.split('\\').join('/')])].flatMap((x) => [`Bash(node "${x}/scripts/review-status.mjs" *)`, `Bash(node "${x}/scripts/merge.mjs" --change)`]);
+    rmSync(local, { force: true });
+    setChoice(undefined);
+    if (!/has not chosen yet/.test(briefWith())) report('the brief of a project without autoMerge does not say the owner has not chosen yet');
+    if (existsSync(local)) report('without a yes, the session start wrote .claude/settings.local.json');
+    setChoice(true);
+    const yes = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(rulesFor(plugin))) report(`on yes, the session start must write the two rules for the plugin's path, got ${JSON.stringify(rulesNow())}`);
+    if (!/merge without the owner/.test(yes) || !/were written/.test(yes)) report(`the brief on yes does not say so, or that the rules were written:\n${yes}`);
+    // The owner's own rules and settings stay, and a second start rewrites nothing.
+    writeFileSync(local, JSON.stringify({ model: 'kept', permissions: { allow: ['Bash(npm test)', ...rulesFor(plugin)], deny: ['Bash(rm -rf *)'] } }, null, 2));
+    const kept = readFileSync(local, 'utf8');
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (readFileSync(local, 'utf8') !== kept) report('a second session start rewrote .claude/settings.local.json that already held the rules');
+    // The plugin moved (an update): the rules follow the path as the session spells it.
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: link } });
+    const moved = JSON.parse(readFileSync(local, 'utf8'));
+    if (JSON.stringify(moved.permissions.allow) !== JSON.stringify(['Bash(npm test)', ...rulesFor(link)]) || moved.model !== 'kept' || moved.permissions.deny?.[0] !== 'Bash(rm -rf *)') report(`after the plugin moved, expected the owner's rule and the rules for the new path, got ${JSON.stringify(moved)}`);
+    // A guard that does not work: no rules, and the brief says why.
+    const blindBrief = briefWith({ script: blind });
+    if (rulesNow().some((r) => /merge\.mjs|review-status\.mjs/.test(r)) || !/review guard does not work/.test(blindBrief)) report(`with a guard that refuses nothing, the rules must go and the brief say why, got ${JSON.stringify(rulesNow())}\n${blindBrief}`);
+    // No: the rules go, everything else stays.
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    setChoice(false);
+    const no = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(['Bash(npm test)']) || !/every merge waits for the owner/.test(no) || !/were removed/.test(no)) report(`on no, the rules must go and the owner's stay, got ${JSON.stringify(rulesNow())}\n${no}`);
+    // A settings.local.json that does not read as settings is left alone, and the brief says so.
+    setChoice(true);
+    writeFileSync(local, '{ not json');
+    if (!/does not parse/.test(briefWith()) || readFileSync(local, 'utf8') !== '{ not json') report('a .claude/settings.local.json that does not parse must be left alone and named in the brief');
+    rmSync(local, { force: true });
+    writeFileSync(settingsFile, good);
 
     // The commands in hooks.json, through bash as Claude Code runs them: nothing outside a pitwall
     // project, even without node; in one, the hook runs, and without node the guard refuses and the brief warns.

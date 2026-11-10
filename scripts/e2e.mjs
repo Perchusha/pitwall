@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-// Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7).
+// Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7, T3b-AC7).
 //
-//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>]
+//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
-// Stages, in order: kickoff, discovery, decide, spike, plan. A run goes from --from
-// (default kickoff) to --until (default plan). Every stage that passes saves the
+// Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0 and e1
+// (scripts/e2e-loop.mjs). With no flags it runs e1 from the state e0 saved, the cheap run after a
+// change; --from e0 runs E0 and E1, the run before a PR; --until plan runs the planning stages from
+// kickoff. A run is either planning stages or loop stages. --github <owner/repo> runs the loop
+// stages against an empty private repository the owner created, and records GitHub's answers.
+// A planning run goes from --from (default kickoff) to --until (default plan). Every stage that passes saves the
 // project as it left it in the state folder (default ~/.cache/pitwall-e2e/<stage>),
 // and a run that starts later starts from the state the stage before it saved: that
 // is the normal way to run one stage again without paying for the ones before it.
@@ -25,17 +29,59 @@
 // wording of the model's replies. The scratch folder is kept and its path printed.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readOwner, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'pitwall');
+
+let argv = process.argv.slice(2);
+// --log <file>: everything the run prints goes to that file too, so the owner can run it in a terminal of
+// their own, away from any Claude Code session that a restart could end, and the session reads the file.
+const logAt = argv.indexOf('--log');
+if (logAt >= 0) {
+  const file = resolve(argv[logAt + 1] ?? '');
+  if (!argv[logAt + 1] || argv[logAt + 1].startsWith('--')) {
+    console.error('usage: --log <file>');
+    process.exit(2);
+  }
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, '');
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write.bind(stream);
+    stream.write = (chunk, ...rest) => {
+      appendFileSync(file, chunk);
+      return write(chunk, ...rest);
+    };
+  }
+  argv = [...argv.slice(0, logAt), ...argv.slice(logAt + 2)];
+}
+// The plugin and the fake GitHub the run uses are copied from this checkout first, and every session loads
+// the copy through --plugin-dir: an edit in the checkout during a run never reaches it (owner, T3b). The
+// first line says which commit was copied, and whether plugins/ held uncommitted changes then; the
+// loop and hooks runs read the copy from PITWALL_E2E_PLUGIN and PITWALL_E2E_TOOLS.
+const runDir = mkdtempSync(join(tmpdir(), 'pitwall-run-'));
+const pluginCommit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+const dirty = spawnSync('git', ['status', '--porcelain', '--', 'plugins'], { cwd: root, encoding: 'utf8' }).stdout.trim() ? ', with uncommitted changes' : '';
+const plugin = join(runDir, 'pitwall');
+cpSync(join(root, 'plugins', 'pitwall'), plugin, { recursive: true });
+const tools = join(runDir, 'tools');
+mkdirSync(tools);
+for (const f of ['fake-gh.mjs', 'fake-github.mjs', 'fake-ci.mjs', 'gh-record.mjs']) cpSync(join(root, 'scripts', f), join(tools, f));
+process.env.PITWALL_E2E_PLUGIN = plugin;
+process.env.PITWALL_E2E_TOOLS = tools;
+process.env.PITWALL_E2E_COMMIT = `${pluginCommit}${dirty ? '+' : ''}`;
 const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-
-const argv = process.argv.slice(2);
+const cliVersion = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim().split(' ')[0] ?? '?';
+console.log(`e2e: pitwall ${version} from ${pluginCommit}${dirty} of ${join(root, 'plugins', 'pitwall').split('\\').join('/')}, copied to ${plugin.split('\\').join('/')} (--plugin-dir), Claude Code ${cliVersion}`);
+const installed = spawnSync('claude', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '';
+if (/\bpitwall@/.test(installed)) {
+  console.error('e2e: pitwall is installed from a marketplace (claude plugin list), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.');
+  process.exit(2);
+}
 // The hooks have a run of their own (T3a-AC8): scripts/e2e-hooks.mjs, which exits when done.
 if (argv[0] === '--hooks') {
   if (argv.slice(1).some((a) => a !== '--record')) {
@@ -49,18 +95,31 @@ const opt = (name, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan'];
-const from = opt('from', 'kickoff');
-const until = opt('until', 'plan');
+const LOOP = ['e0', 'e1'];
+const ALL = [...STAGES, ...LOOP];
+const fromArg = opt('from', '');
+const untilArg = opt('until', '');
+// No flags: e1 from the saved e0 (owner, T3b). --until a planning stage alone: from kickoff, as before.
+const from = fromArg || (STAGES.includes(untilArg) ? 'kickoff' : 'e1');
+const until = untilArg || (STAGES.includes(from) ? 'plan' : 'e1');
 const seedArg = opt('seed', '');
+const github = opt('github', '');
 const stateDir = resolve(opt('state', join(homedir(), '.cache', 'pitwall-e2e')));
-const stages = STAGES.slice(STAGES.indexOf(from), STAGES.indexOf(until) + 1);
 const maxTurns = Number(opt('max-turns', '30'));
-const flags = ['--from', '--until', '--max-turns', '--state', '--seed'];
-const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>]\n       stages: ' + STAGES.join(', ');
-if (!STAGES.includes(from) || !STAGES.includes(until) || stages.length === 0 || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
+const flags = ['--from', '--until', '--max-turns', '--state', '--seed', '--github'];
+const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages or loop stages)';
+const loop = LOOP.includes(from) && LOOP.includes(until);
+const span = ALL.slice(ALL.indexOf(from), ALL.indexOf(until) + 1);
+const bad = !ALL.includes(from) || !ALL.includes(until) || span.length === 0 || (!loop && span.some((x) => LOOP.includes(x))) || (loop && seedArg) || (!loop && github) || (github && !/^[\w.-]+\/[\w.-]+$/.test(github));
+if (bad || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
   console.error(usage);
   process.exit(2);
 }
+if (loop) {
+  const { runLoop } = await import('./e2e-loop.mjs');
+  process.exit(await runLoop({ stages: span, stateDir, maxTurns, github }));
+}
+const stages = span;
 // A later stage starts from a project: the seed, or what the stage before it saved.
 const seed = from === 'kickoff' ? '' : resolve(seedArg || join(stateDir, STAGES[STAGES.indexOf(from) - 1]));
 if (seed && !existsSync(join(seed, '.git'))) {
@@ -85,8 +144,10 @@ const OWNER_RULES = `Answer as this owner, in English, in one to three sentences
 - When shown the plan, accept it as drafted: no changes, and no further spike (one spike is enough for this project).
 - When asked to accept a risk, accept it with the fallback the assistant proposes.
 - When asked whether to merge the plan, say yes.
+- When asked whether low and normal risk epics may merge without you, say no: every merge waits for you.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
 - When the assistant has run a command that you are told to run yourself, say you will do it later, and ask it to go on.
+${UNSCRIPTED_RULE}
 - When the assistant asks nothing and reports that the stage is done, reply exactly: DONE`;
 
 function run(cmd, args, opts = {}) {
@@ -252,12 +313,15 @@ function save(stage, numbers) {
   mkdirSync(stateDir, { recursive: true });
   cpSync(project, dest, { recursive: true });
   const commit = git('rev-parse', '--short', 'HEAD').stdout.trim();
-  const pluginCommit = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout.trim();
+  // The commit the run copied at its start ("+" when plugins/ held uncommitted changes then).
+  const pluginCommit = process.env.PITWALL_E2E_COMMIT;
   writeFileSync(join(stateDir, `${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, head: commit, ...numbers }) + '\n');
   console.log(`  saved: ${numbers.turns} turns, ${numbers.minutes.toFixed(1)} min, $${numbers.cost.toFixed(2)}, plugin at ${pluginCommit}`);
 }
 
 const results = [];
+// Questions the scripted owner had no answer for (scripts/e2e-owner.mjs): printed at the end.
+const unscripted = [];
 for (const stage of stages) {
   const started = Date.now();
   const history = [];
@@ -280,6 +344,12 @@ for (const stage of stages) {
       if (verdict.done) break;
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
+      const read = readOwner(reply.text, history[history.length - 1].text);
+      reply.text = read.text;
+      if (read.question) {
+        unscripted.push({ stage, turn: turns, question: read.question });
+        console.log(`  UNSCRIPTED QUESTION: ${read.question.slice(0, 160)}`);
+      }
       if (/^DONE.?$/i.test(reply.text)) {
         error = 'the skill reported done, but the stage does not pass its check';
         break;
@@ -293,7 +363,7 @@ for (const stage of stages) {
   }
   if (!verdict.done) verdict = status(stage);
   const minutes = (Date.now() - started) / 60000;
-  if (verdict.done) save(stage, { turns, minutes, cost });
+  if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question) });
   results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
   if (!verdict.done) break;
 }
@@ -307,6 +377,7 @@ for (const r of results) {
     for (const u of r.unmet ?? []) console.log(`  - ${u}`);
   }
 }
+for (const u of unscripted) console.log(`UNSCRIPTED QUESTION (${u.stage}, turn ${u.turn}): ${u.question}`);
 const passed = results.length === stages.length && results.every((r) => r.pass);
 console.log(`\nE2E: ${passed ? 'PASS' : 'FAIL'}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

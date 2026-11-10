@@ -1,0 +1,15 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "list",
+    "--head",
+    "epic/E1-count-and-pause",
+    "--state",
+    "open"
+  ],
+  "status": 0,
+  "stdout": "",
+  "stderr": ""
+}

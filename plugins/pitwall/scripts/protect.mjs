@@ -193,8 +193,8 @@ if (probe.ok) {
 }
 if (/Upgrade to GitHub Pro/i.test(probe.err + probe.out)) {
   log('branch protection is not available: a private repository on GitHub Free');
-  log(`mode local-hook: a local hook will refuse "gh pr merge" until ${gateContext} and ${reviewContext} are green.`);
-  log('pitwall does not ship that hook yet. Until it does, nothing blocks a merge here except the review flow.');
+  log(`mode local-hook: pitwall's hook refuses "gh pr merge" in this project until ${gateContext} and ${reviewContext} are green on the PR's head.`);
+  log('A merge from the GitHub web page or another machine is not blocked: only the hook and the review flow guard main here.');
   done('local-hook');
 }
 if (!/HTTP 404/.test(probe.err)) {

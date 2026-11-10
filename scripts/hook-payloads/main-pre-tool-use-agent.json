@@ -16,7 +16,7 @@
     "hook_event_name": "PreToolUse",
     "tool_name": "Agent",
     "tool_input": {
-      "description": "Hook test researcher glob",
+      "description": "Hook test: researcher glob",
       "prompt": "Hook test, not research: make exactly one Glob call for docs/*.md, then return DONE.",
       "subagent_type": "pitwall:researcher",
       "run_in_background": false

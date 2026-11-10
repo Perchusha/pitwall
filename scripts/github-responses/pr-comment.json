@@ -1,0 +1,14 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "comment",
+    "3",
+    "--body",
+    "pitwall numbers: implementers 3, their tool calls unknown (the first stopped without a report when its session ended), 33, 30, review rounds 2, findings 4 (1 blocking)"
+  ],
+  "status": 0,
+  "stdout": "https://github.com/<owner>/<repo>/pull/3#issuecomment-6768701148\n",
+  "stderr": ""
+}
