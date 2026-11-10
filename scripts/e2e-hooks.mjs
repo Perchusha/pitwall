@@ -20,7 +20,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'pitwall');
+// The copy e2e.mjs made at the start of the run (PITWALL_E2E_PLUGIN), never the checkout itself.
+const plugin = process.env.PITWALL_E2E_PLUGIN ?? join(root, 'plugins', 'pitwall');
+const tools = process.env.PITWALL_E2E_TOOLS ?? join(root, 'scripts');
 const record = process.argv.includes('--record');
 const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
 
@@ -77,7 +79,7 @@ const head = git('rev-parse', 'HEAD').stdout.trim();
 const scenario = { auth: true, repo: { nameWithOwner: 'o/hook-test', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { number: 7, head, branch: 'epic/E0-skeleton' }, statuses: {}, gate: 'failure' };
 const env = {
   ...baseEnv,
-  PITWALL_GH: JSON.stringify([process.execPath, join(root, 'scripts', 'fake-gh.mjs')]),
+  PITWALL_GH: JSON.stringify([process.execPath, join(tools, 'fake-gh.mjs')]),
   FAKE_GH: JSON.stringify(scenario),
   FAKE_GH_LOG: join(scratch, 'gh.log'),
   FAKE_GH_STATE: join(scratch, 'gh-state.json'),

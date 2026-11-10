@@ -35,9 +35,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'pitwall');
-const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
-const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 
 let argv = process.argv.slice(2);
 // --log <file>: everything the run prints goes to that file too, so the owner can run it in a terminal of
@@ -60,12 +57,25 @@ if (logAt >= 0) {
   }
   argv = [...argv.slice(0, logAt), ...argv.slice(logAt + 2)];
 }
-// The first line of every run: which plugin its sessions load. Always this checkout through --plugin-dir,
-// never a copy installed from a marketplace, which the project's own settings would load beside it.
+// The plugin and the fake GitHub the run uses are copied from this checkout first, and every session loads
+// the copy through --plugin-dir: an edit in the checkout during a run never reaches it (owner, T3b). The
+// first line says which commit was copied, and whether plugins/ held uncommitted changes then; the
+// loop and hooks runs read the copy from PITWALL_E2E_PLUGIN and PITWALL_E2E_TOOLS.
+const runDir = mkdtempSync(join(tmpdir(), 'pitwall-run-'));
 const pluginCommit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
 const dirty = spawnSync('git', ['status', '--porcelain', '--', 'plugins'], { cwd: root, encoding: 'utf8' }).stdout.trim() ? ', with uncommitted changes' : '';
+const plugin = join(runDir, 'pitwall');
+cpSync(join(root, 'plugins', 'pitwall'), plugin, { recursive: true });
+const tools = join(runDir, 'tools');
+mkdirSync(tools);
+for (const f of ['fake-gh.mjs', 'fake-github.mjs', 'fake-ci.mjs', 'gh-record.mjs']) cpSync(join(root, 'scripts', f), join(tools, f));
+process.env.PITWALL_E2E_PLUGIN = plugin;
+process.env.PITWALL_E2E_TOOLS = tools;
+process.env.PITWALL_E2E_COMMIT = `${pluginCommit}${dirty ? '+' : ''}`;
+const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 const cliVersion = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim().split(' ')[0] ?? '?';
-console.log(`e2e: pitwall ${version} from ${plugin.split('\\').join('/')} at ${pluginCommit}${dirty} (--plugin-dir), Claude Code ${cliVersion}`);
+console.log(`e2e: pitwall ${version} from ${pluginCommit}${dirty} of ${join(root, 'plugins', 'pitwall').split('\\').join('/')}, copied to ${plugin.split('\\').join('/')} (--plugin-dir), Claude Code ${cliVersion}`);
 const installed = spawnSync('claude', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '';
 if (/\bpitwall@/.test(installed)) {
   console.error('e2e: pitwall is installed from a marketplace (claude plugin list), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.');
@@ -301,7 +311,8 @@ function save(stage, numbers) {
   mkdirSync(stateDir, { recursive: true });
   cpSync(project, dest, { recursive: true });
   const commit = git('rev-parse', '--short', 'HEAD').stdout.trim();
-  const pluginCommit = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout.trim();
+  // The commit the run copied at its start ("+" when plugins/ held uncommitted changes then).
+  const pluginCommit = process.env.PITWALL_E2E_COMMIT;
   writeFileSync(join(stateDir, `${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, head: commit, ...numbers }) + '\n');
   console.log(`  saved: ${numbers.turns} turns, ${numbers.minutes.toFixed(1)} min, $${numbers.cost.toFixed(2)}, plugin at ${pluginCommit}`);
 }

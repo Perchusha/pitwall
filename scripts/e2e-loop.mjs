@@ -26,7 +26,9 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const plugin = join(root, 'plugins', 'pitwall');
+// The copy e2e.mjs made at the start of the run (PITWALL_E2E_PLUGIN), never the checkout itself.
+const plugin = process.env.PITWALL_E2E_PLUGIN ?? join(root, 'plugins', 'pitwall');
+const tools = process.env.PITWALL_E2E_TOOLS ?? join(root, 'scripts');
 const P = plugin.split('\\').join('/');
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 export const LOOP_STAGES = ['e0', 'e1'];
@@ -67,7 +69,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
 
   // gh for the session and for the plugin's scripts: the fake GitHub, or the real one, recorded.
   const realGh = github ? run(process.platform === 'win32' ? 'where' : 'which', ['gh']).stdout.split(/\r?\n/)[0].trim() : '';
-  const ghScript = github ? join(root, 'scripts', 'gh-record.mjs') : join(root, 'scripts', 'fake-gh.mjs');
+  const ghScript = github ? join(tools, 'gh-record.mjs') : join(tools, 'fake-gh.mjs');
   const node = process.execPath.split('\\').join('/');
   writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\nexec "${node}" "${ghScript.split('\\').join('/')}" "$@"\n`);
   chmodSync(join(bin, 'gh'), 0o755);
@@ -268,7 +270,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         cpSync(originDir, join(dest, 'origin.git'), { recursive: true });
         cpSync(ghState, join(dest, 'github'), { recursive: true, filter: (src) => !/[\\/](merge-|work-)[^\\/]*$/.test(src) });
       }
-      const pluginCommit = run('git', ['rev-parse', '--short', 'HEAD'], { cwd: root }).stdout.trim();
+      const pluginCommit = process.env.PITWALL_E2E_COMMIT;
       writeFileSync(join(stateDir, `${tag}${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, github: github || null, turns, minutes, cost }) + '\n');
       console.log(`  saved: ${turns} turns, ${minutes.toFixed(1)} min, $${cost.toFixed(2)}, plugin at ${pluginCommit}`);
     } else {
