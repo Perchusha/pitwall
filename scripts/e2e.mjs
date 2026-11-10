@@ -33,7 +33,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readOwner, UNSCRIPTED_RULE } from './e2e-owner.mjs';
+import { readOwner, resultWord, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -347,8 +347,8 @@ for (const stage of stages) {
       const read = readOwner(reply.text, history[history.length - 1].text);
       reply.text = read.text;
       if (read.question) {
-        unscripted.push({ stage, turn: turns, question: read.question });
-        console.log(`  UNSCRIPTED QUESTION: ${read.question.slice(0, 160)}`);
+        unscripted.push({ stage, turn: turns, question: read.question, override: read.override });
+        console.log(`  UNSCRIPTED ${read.override ? 'STOP OVERRIDDEN' : 'QUESTION'}: ${read.question.slice(0, 160)}`);
       }
       if (/^DONE.?$/i.test(reply.text)) {
         error = 'the skill reported done, but the stage does not pass its check';
@@ -363,7 +363,7 @@ for (const stage of stages) {
   }
   if (!verdict.done) verdict = status(stage);
   const minutes = (Date.now() - started) / 60000;
-  if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question) });
+  if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question), overridden: unscripted.filter((u) => u.stage === stage && u.override).map((u) => u.question) });
   results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
   if (!verdict.done) break;
 }
@@ -377,7 +377,8 @@ for (const r of results) {
     for (const u of r.unmet ?? []) console.log(`  - ${u}`);
   }
 }
-for (const u of unscripted) console.log(`UNSCRIPTED QUESTION (${u.stage}, turn ${u.turn}): ${u.question}`);
+for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRIDDEN' : 'QUESTION'} (${u.stage}, turn ${u.turn}): ${u.question}`);
 const passed = results.length === stages.length && results.every((r) => r.pass);
-console.log(`\nE2E: ${passed ? 'PASS' : 'FAIL'}   scratch folder: ${scratch}   saved state: ${stateDir}`);
+// A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
+console.log(`\nE2E: ${resultWord(passed, unscripted)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

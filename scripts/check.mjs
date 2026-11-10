@@ -27,6 +27,8 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { captureRemote, restoreRemote } from './e2e-loop.mjs';
+import { readOwner, resultWord } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'plugins', 'pitwall');
@@ -1578,6 +1580,181 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     writeFileSync(join(noHooks, 'hooks', 'hooks.json'), '{ "hooks": {} }\n');
     r = choiceRun(p, ['--allow'], owner, join(noHooks, 'scripts', 'merge-choice.mjs'));
     if (r.status !== 1 || !/registers no guard/.test(r.stdout)) report(`merge-choice with a plugin whose hooks.json registers no guard must refuse\n${r.stdout}`);
+  });
+});
+
+// 6m. T4a-AC3, AC4, AC5: owner-calls.mjs on projects the way the loop leaves them, with the live fake
+// GitHub; the headless runs' restore of a snapshot on it; and the scripted owner's marks.
+step('owner calls, snapshots and unscripted stops', (report) => {
+  // The scripted owner's marks (T3b, T4a-AC5).
+  const ask = 'Status: E0 is merged.\n\nShould I hold E1 until you have run QA-E0-2?';
+  const cases = [
+    ['Yes, merge it now.', { text: 'Yes, merge it now.', question: null, override: false }],
+    ['UNSCRIPTED\nGo with your recommendation.', { text: 'Go with your recommendation.', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    ['UNSCRIPTED: yes, go on', { text: 'yes, go on', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    ['UNSCRIPTED OVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED OVERRIDE', { text: 'Do as you recommend.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+  ];
+  for (const [reply, want] of cases) {
+    const got = readOwner(reply, ask);
+    if (JSON.stringify(got) !== JSON.stringify(want)) report(`readOwner(${JSON.stringify(reply)}): ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  }
+  for (const [passed, list, want] of [[true, [], 'PASS'], [true, [{ override: false }], 'PASS'], [true, [{ override: true }, { override: true }], 'PASS, stops overridden: 2'], [false, [{ override: true }], 'FAIL']]) {
+    if (resultWord(passed, list) !== want) report(`resultWord(${passed}, ${JSON.stringify(list)}): ${resultWord(passed, list)}, expected ${want}`);
+  }
+
+  scratch('pitwall-owner-calls-', (dir) => {
+    const { project: base } = makeChangeRepo(dir);
+    const origin = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    gitIn(base, 'remote', 'add', 'origin', origin);
+    gitIn(base, 'push', '-q', 'origin', 'main', 'epic/E1-reminder');
+    let n = 0;
+    const live = (p) => ({ ...process.env, ...identity, FAKE_GH_LIVE: join(`${p}-gh`), FAKE_GH_ORIGIN: `${p}-origin.git`, FAKE_GH_REPO: 'e2e/move-reminder', PITWALL_GH: JSON.stringify([process.execPath, fakeGh]) });
+    const fresh = (prepare) => {
+      const p = join(dir, `o${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      cpSync(origin, `${p}-origin.git`, { recursive: true });
+      gitIn(p, 'remote', 'set-url', 'origin', `${p}-origin.git`);
+      prepare?.(p);
+      return p;
+    };
+    const fake = (p, ...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env: live(p), encoding: 'utf8' });
+    // A green PR from a branch: the fake CI's gate (the template's stub, docs only) and ai-review on its head.
+    const greenPr = (p, branch) => {
+      gitIn(p, 'push', '-q', '-f', 'origin', branch);
+      fake(p, 'pr', 'create', '--base', 'main', '--head', branch, '--title', branch, '--body', 'x');
+      const head = gitIn(p, 'rev-parse', branch).stdout.trim();
+      fake(p, 'api', '-X', 'POST', `repos/e2e/move-reminder/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=approved');
+      for (let i = 0; i < 60 && json(fake(p, 'api', `repos/e2e/move-reminder/commits/${head}/check-runs`))?.check_runs?.[0]?.status !== 'completed'; i += 1) spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    };
+    const json = (r) => {
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return null;
+      }
+    };
+    const calls = (p, extra = []) => {
+      const r = runScript('owner-calls.mjs', ['--project', p, '--json', ...extra], { env: live(p) });
+      return { r, out: json(r) ?? { groups: [], notes: [`no JSON: ${r.stdout}${r.stderr}`] } };
+    };
+    const items = (out, group) => (out.groups.find((g) => g.name === group)?.items ?? []).map((i) => i.what);
+    const setSettings = (p, change) => {
+      const f = join(p, '.claude', 'pitwall.json');
+      writeFileSync(f, JSON.stringify(change(JSON.parse(readFileSync(f, 'utf8'))), null, 2) + '\n');
+    };
+
+    // Switches: protection pending, no choice of ADR-0010; each handed over as commands that run as written (L-6).
+    let p = fresh((q) => setSettings(q, (s) => ({ ...s, autoMerge: undefined })));
+    let { r, out } = calls(p, ['--no-github']);
+    if (r.status !== 0) report(`owner-calls: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    const sw = out.groups.find((g) => g.name === 'switches')?.items ?? [];
+    if (!sw.some((i) => /merge protection is pending/.test(i.what) && i.run?.length === 1 && /protect\.mjs" --project "/.test(i.run[0]))) report(`owner-calls: no handed-over protect.mjs for a pending protection: ${JSON.stringify(sw)}`);
+    if (!sw.some((i) => /ADR-0010/.test(i.what) && /merge-choice\.mjs" --allow --project/.test(i.run?.[0]) && /merge-choice\.mjs" --deny --project/.test(i.run?.[1]))) report(`owner-calls: no --allow and --deny commands for the choice not made: ${JSON.stringify(sw)}`);
+    for (const c of sw.flatMap((i) => i.run ?? [])) if (/[<>|]|\(or /.test(c)) report(`owner-calls hands over a command that does not run as written (L-6): ${c}`);
+    if (!out.notes.some((x) => /not read \(--no-github\)/.test(x))) report('owner-calls --no-github does not say GitHub was not read');
+    const text = runScript('owner-calls.mjs', ['--project', p, '--no-github'], { env: live(p) }).stdout;
+    checkHandoff(text, (msg) => report(`owner-calls: ${msg}`));
+    p = fresh((q) => setSettings(q, (s) => ({ ...s, mergeProtection: 'local-hook', autoMerge: false })));
+    if (calls(p, ['--no-github']).out.groups.some((g) => g.name === 'switches')) report('owner-calls lists switches in a project that has set both');
+
+    // Questions: an epic's open question, not its answers or its notes; the plan review's open items while the plan is made.
+    p = fresh((q) => {
+      const f = join(q, 'docs', 'epics', 'E2-release.md');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.'));
+    });
+    out = calls(p, ['--no-github']).out;
+    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the one open question of E2`);
+    const planning = join(dir, 'planning');
+    makePlanRepo(join(dir, 'pl'), { spike: false });
+    cpSync(join(dir, 'pl', 'repo'), planning, { recursive: true });
+    const pr = join(planning, 'docs', 'PLAN-REVIEW.md');
+    writeFileSync(pr, readFileSync(pr, 'utf8').replace('| 2 | Full-screen games hide it | should fix | R-1 |', '| 2 | Full-screen games hide it | should fix | open: a fallback |'));
+    if (!items(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout ? JSON.parse(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout) : { groups: [] }, 'questions').some((q) => /^plan review: 2 \| Full-screen games hide it/.test(q))) report('owner-calls does not list an open item of the plan review while the plan is made');
+    if (items(out, 'questions').some((q) => /^plan review/.test(q))) report('owner-calls lists the plan review once the plan is merged');
+
+    // Bugs: open ones only.
+    p = fresh((q) => {
+      const f = join(q, 'docs', 'BUGS.md');
+      writeFileSync(f, readFileSync(f, 'utf8').replace(/(\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n)/, '$1| BUG-1 | QA | Open the app | A tray icon | Nothing | open | - |\n| BUG-2 | owner | Snooze | 10 minutes | 5 | fixed | #4 |\n'));
+    });
+    if (JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs')) !== JSON.stringify(['BUG-1 (open), found in QA: Nothing'])) report(`owner-calls: bugs ${JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs'))}, expected BUG-1 only`);
+
+    // Merges: a green PR waits for the owner when the epic is high risk, when it is a fix, or without the owner's yes to merges.
+    // The template's stub gate passes on docs only, so the green PR's branch holds docs alone.
+    p = fresh((q) => {
+      setSettings(q, (s) => ({ ...s, autoMerge: true }));
+      gitIn(q, 'switch', '-q', '-C', 'epic/E1-reminder', 'main');
+      gitIn(q, 'commit', '-q', '--allow-empty', '-m', 'docs: E1');
+    });
+    greenPr(p, 'epic/E1-reminder');
+    if (!items(calls(p).out, 'merges').length && !calls(p).out.notes.length) {
+      setSettings(p, (s) => ({ ...s, autoMerge: false }));
+      if (!items(calls(p).out, 'merges').length) report('owner-calls: the green PR of the test is not ready, so the cases below prove nothing');
+      setSettings(p, (s) => ({ ...s, autoMerge: true }));
+    }
+    if (items(calls(p).out, 'merges').length !== 0) report(`owner-calls lists a green normal-risk PR the owner allowed to merge by itself: ${JSON.stringify(items(calls(p).out, 'merges'))}`);
+    setSettings(p, (s) => ({ ...s, autoMerge: false }));
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*you have not allowed merges without you/.test(m))) report(`owner-calls does not list a green PR that waits for the owner's yes: ${JSON.stringify(calls(p).out)}`);
+    gitIn(p, 'switch', '-q', '-c', 'fix/BUG-1', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'fix: BUG-1');
+    greenPr(p, 'fix/BUG-1');
+    setSettings(p, (s) => ({ ...s, autoMerge: true }));
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #2 \(BUG-1\) is ready.*a bug fix/.test(m))) report(`owner-calls does not list a green fix PR: ${JSON.stringify(calls(p).out)}`);
+    gitIn(p, 'switch', '-q', '-c', 'epic/E2-release', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'feat: E2');
+    gitIn(p, 'push', '-q', 'origin', 'epic/E2-release');
+    fake(p, 'pr', 'create', '--base', 'main', '--head', 'epic/E2-release', '--title', 'E2', '--body', 'x');
+    if (items(calls(p).out, 'merges').some((m) => /E2-release/.test(m))) report('owner-calls lists a PR whose review is not done');
+    const unread = runScript('owner-calls.mjs', ['--project', p, '--json'], { env: { ...live(p), PITWALL_GH: JSON.stringify([join(dir, 'no-such-gh')]) } });
+    if (!/GitHub could not be read/.test(unread.stdout)) report(`owner-calls with a gh that does not run must say GitHub was not read: ${unread.stdout}${unread.stderr}`);
+    if (runScript('owner-calls.mjs', ['--project', dir]).status !== 2) report('owner-calls outside a pitwall project: expected exit 2');
+
+    // The headless runs' snapshot (T4a-AC4): the same repository, main where it was, nothing left over.
+    p = fresh();
+    const gh = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env: live(p), encoding: 'utf8' });
+    const g = (...args) => spawnSync('git', args, { cwd: p, encoding: 'utf8' });
+    const repo = 'e2e/move-reminder';
+    const snap = captureRemote(gh, g, repo);
+    if (snap.id !== 'R_fakeRepositoryId' || !snap.main || !snap.branches.includes('epic/E1-reminder')) report(`captureRemote: ${JSON.stringify(snap)}`);
+    if (JSON.stringify(restoreRemote(gh, g, repo, snap)) !== '[]') report('restoreRemote changed a repository that holds the snapshot');
+    // Left over: a PR and its branch, and a branch alone.
+    gitIn(p, 'switch', '-q', '-c', 'epic/E2-release', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'feat: E2');
+    gitIn(p, 'push', '-q', 'origin', 'epic/E2-release', 'main:refs/heads/scratch');
+    gh('pr', 'create', '--base', 'main', '--head', 'epic/E2-release', '--title', 'E2', '--body', 'x');
+    const throws = (label, fn, pattern) => {
+      try {
+        fn();
+        report(`${label}: expected the run to stop`);
+      } catch (e) {
+        if (!pattern.test(e.message)) report(`${label}: stopped with "${e.message}"`);
+      }
+    };
+    // Another repository (a typo in --github): nothing is touched.
+    throws('restore into another repository', () => restoreRemote(gh, g, repo, { ...snap, id: 'R_another' }), /is not the repository the snapshot was saved from.*changes nothing/);
+    if (!g('ls-remote', '--heads', 'origin').stdout.includes('refs/heads/scratch') || json(gh('pr', 'view', 'epic/E2-release', '--json', 'state'))?.state !== 'OPEN') report('restore into another repository changed something');
+    throws('restore from a snapshot without a remote state', () => restoreRemote(gh, g, repo, {}), /holds no remote snapshot/);
+    // A gh that answers what it should not: the run stops.
+    const failing = (...args) => (args[0] === 'pr' && args[1] === 'close' ? { status: 1, stdout: '', stderr: 'GraphQL: something unexpected' } : gh(...args));
+    throws('restore when GitHub answers a close unexpectedly', () => restoreRemote(failing, g, repo, snap), /closing PR #1: GitHub answered 1.*stops/);
+    const done = restoreRemote(gh, g, repo, snap);
+    if (JSON.stringify(done) !== JSON.stringify(['closed PR #1 and deleted its branch epic/E2-release', 'deleted the branch scratch'])) report(`restoreRemote: ${JSON.stringify(done)}`);
+    if (/epic\/E2-release|scratch/.test(g('ls-remote', '--heads', 'origin').stdout) || json(gh('pr', 'view', '1', '--json', 'state'))?.state !== 'CLOSED') report('restoreRemote left a branch or a PR the snapshot does not hold');
+    // main moved past the snapshot: stop.
+    gitIn(p, 'switch', '-q', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'later');
+    gitIn(p, 'push', '-q', 'origin', 'main');
+    throws('restore after main moved', () => restoreRemote(gh, g, repo, snap), /main on e2e\/move-reminder moved past the snapshot/);
+    // Let the fake CI finish before the folder goes (Windows keeps a folder a running process works in).
+    for (const d of readdirSync(dir).filter((x) => x.endsWith('-gh'))) {
+      for (let i = 0; i < 60; i += 1) {
+        const ci = join(dir, d, 'ci');
+        if (!existsSync(ci) || !readdirSync(ci).filter((f) => f.endsWith('.json')).some((f) => JSON.parse(readFileSync(join(ci, f), 'utf8')).status !== 'completed')) break;
+        spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+      }
+    }
   });
 });
 

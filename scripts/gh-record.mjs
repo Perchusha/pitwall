@@ -23,7 +23,9 @@ const allowed =
   (apiMethod === 'GET' && /^\/?repos\//.test(apiPath)) ||
   (apiMethod === 'POST' && /\/statuses\/[0-9a-f]{40}$/.test(apiPath)) ||
   // protect.mjs tries to protect main; on GitHub Free the probe refuses before this, and on a paid plan it is what kickoff does.
-  (apiMethod === 'PUT' && /\/branches\/[^/]+\/protection$/.test(apiPath));
+  (apiMethod === 'PUT' && /\/branches\/[^/]+\/protection$/.test(apiPath)) ||
+  // The harness alone, restoring the snapshot's remote state (T4a-AC4): a PR closed, a branch deleted.
+  (process.env.GH_RECORD_HARNESS === '1' && (/^pr close\b/.test(a) || (apiMethod === 'DELETE' && /\/git\/refs\/heads\/.+$/.test(apiPath))));
 if (!allowed || args.includes('--admin')) {
   process.stderr.write(`gh-record: the e2e run does not let a session run "gh ${a}" on the owner's account\n`);
   process.exit(1);
