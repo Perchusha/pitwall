@@ -1599,6 +1599,12 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     ['UNSCRIPTED (OVERRIDE): start E1 now.', { text: 'start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
     ['unscripted override\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
     ['**UNSCRIPTED**\nGo on.', { text: 'Go on.', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    // Review round 2: punctuation between the words, or OVERRIDE on a line of its own, and the word never leaks into the reply.
+    ['**UNSCRIPTED** **OVERRIDE**\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED - OVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED: OVERRIDE. Go on.', { text: 'Go on.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED, OVERRIDE: go', { text: 'go', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED\nOVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
   ];
   for (const [reply, want] of cases) {
     const got = readOwner(reply, ask);
@@ -1667,10 +1673,10 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     // Questions: an epic's open question, not its answers or its notes; the plan review's open items while the plan is made.
     p = fresh((q) => {
       const f = join(q, 'docs', 'epics', 'E2-release.md');
-      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.\n- Should the tray icon\n  follow the dark mode?'));
+      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.\n- Should the tray icon\n  follow the dark mode?\n  - In both themes?'));
     });
     out = calls(p, ['--no-github']).out;
-    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?', 'E2: Should the tray icon follow the dark mode?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the two open questions of E2, a wrapped one whole`);
+    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?', 'E2: Should the tray icon follow the dark mode? In both themes?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the two open questions of E2, a wrapped and nested one whole`);
     const planning = join(dir, 'planning');
     makePlanRepo(join(dir, 'pl'), { spike: false });
     cpSync(join(dir, 'pl', 'repo'), planning, { recursive: true });
@@ -2588,16 +2594,27 @@ step('hooks (recorded payloads)', (report) => {
       // Review round 1: what a stash or a commit earlier in the line kept is all it kept (no new files without -u, the paths it named, the index).
       'git stash && git clean -fd', 'git commit -am wip && git clean -fd', 'git add CLAUDE.md && git commit -m x && git checkout -- .', 'git stash push -- CLAUDE.md && git checkout -- "src/my file.js"',
       'git commit -m x -- CLAUDE.md && git reset --hard', 'git add -A && git reset --hard', 'git stash && git stash drop',
+      // Review round 2: a folder Claude Code names; paths only the run knows stand for the whole tree; a stash popped is back in the tree.
+      'cd "$CLAUDE_PROJECT_DIR" && git checkout -- .', 'cd $CLAUDE_PROJECT_DIR/src && git checkout -- "my file.js"',
+      'git diff --name-only | xargs git checkout --', 'git diff --name-only | xargs git restore', 'git ls-files -m | xargs -I{} git checkout -- {}', 'git checkout -- $(git diff --name-only)',
+      'git restore $(git diff --name-only)', 'for f in CLAUDE.md; do git checkout -- "$f"; done', 'git ls-files --others --exclude-standard | xargs git clean -f --',
+      'git stash && git stash pop && git checkout -- .', 'git add -A && git reset && git clean -f', 'mkdir fresh && cd fresh && git reset --hard',
     ]) W(c, 'deny:uncommitted');
+    for (const c of ['Set-Location $env:CLAUDE_PROJECT_DIR; git reset --hard', 'git diff --name-only | ForEach-Object { git checkout -- $_ }']) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    // A folder the guard cannot follow: a read that fails refuses (review round 2).
+    for (const c of ['cd "$(git rev-parse --show-toplevel)" && git reset --hard', 'git -C "$(git rev-parse --show-toplevel)" reset --hard', 'ROOT=$(git rev-parse --show-toplevel); cd "$ROOT" && git clean -fd']) W(c, 'deny:broken');
     for (const c of [
       'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
       'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',
       'git checkout -- docs/IDEA.md', 'git clean -fd docs', 'git add -A && git stash && git clean -fd', 'git stash -u && git clean -fd', 'git commit -am wip && git checkout -- .',
       'git stash push -- CLAUDE.md "src/my file.js" && git checkout -- .', 'git add . && git checkout -- .', 'git add new.js newdir && git clean -fd', 'git commit -m x -- CLAUDE.md "src/my file.js" && git reset --hard',
       'cd src && git stash push -- "my file.js" && cd .. && git checkout -- "src/my file.js"', 'git -C src stash && git reset --hard', 'git stash save wip && git reset --hard',
-      // A folder the line makes holds no work yet.
-      'git worktree add ../wt-x other && cd ../wt-x && git checkout -- CLAUDE.md',
+      // A repository the line makes holds no work yet.
+      'git worktree add ../wt-x other && cd ../wt-x && git checkout -- CLAUDE.md', 'git clone ../origin.git copy && cd copy && git checkout -- CLAUDE.md',
+      // A path Git Bash spells /c/... (review round 2).
+      ...(process.platform === 'win32' ? [`git stash push -- /${fwd(w)[0].toLowerCase()}${fwd(w).slice(2)}/CLAUDE.md && git checkout -- CLAUDE.md`] : []),
     ]) W(c, 'allow');
+    if (process.platform === 'win32') W(`git checkout -- /${fwd(w)[0].toLowerCase()}${fwd(w).slice(2)}/CLAUDE.md`, 'deny:uncommitted');
     W('git stash push -- CLAUDE.md; if ($?) { git checkout -- CLAUDE.md }', 'allow', { tool: 'PowerShell' });
     const said = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
     if (!/git stash push -- CLAUDE\.md/.test(said) || !/commit/.test(said) || !/L-12/.test(said)) report(`the refusal must name the files and offer git stash push -- <files> or a commit (owner's edit): ${said}`);
@@ -2618,6 +2635,10 @@ step('hooks (recorded payloads)', (report) => {
     rmSync(join(w, 'docs', 'IDEA.md'));
     for (const c of ['git checkout -- CLAUDE.md', 'git restore CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git checkout -- docs/IDEA.md', 'git restore docs/IDEA.md']) W(c, 'allow');
     for (const c of ['git checkout HEAD -- CLAUDE.md', 'git restore -SW CLAUDE.md', 'git reset --hard']) W(c, 'deny:uncommitted');
+    // Unstaged first, the staged change is thrown away by a restore from the index (review round 2); unstaging alone keeps it.
+    for (const c of ['git reset HEAD CLAUDE.md && git checkout -- CLAUDE.md', 'git restore --staged CLAUDE.md && git restore CLAUDE.md', 'git reset -q && git checkout -- .', 'git reset && git restore .', 'git rm --cached -q CLAUDE.md && git checkout -- CLAUDE.md']) W(c, 'deny:uncommitted');
+    W('git reset HEAD CLAUDE.md; git checkout -- CLAUDE.md', 'deny:uncommitted', { tool: 'PowerShell' });
+    for (const c of ['git reset HEAD CLAUDE.md', 'git restore --staged CLAUDE.md', 'git reset && git add -A && git checkout -- .']) W(c, 'allow');
     gitIn(w, 'checkout', '--', 'docs/IDEA.md');
     // A merge conflict resolved the usual way (review round 1): the conflicted path is the merge's, not uncommitted work.
     gitIn(w, 'commit', '-qm', 'the staged change');
@@ -2632,6 +2653,9 @@ step('hooks (recorded payloads)', (report) => {
     if (!/^UU CLAUDE\.md$/m.test(gitIn(w, 'status', '--short').stdout)) report(`the conflict case needs CLAUDE.md in conflict: ${gitIn(w, 'status', '--short').stdout}`);
     for (const c of ['git checkout --theirs CLAUDE.md', 'git checkout --ours -- CLAUDE.md', 'git restore --theirs CLAUDE.md', 'git checkout -m CLAUDE.md', 'git merge --abort']) W(c, 'allow');
     for (const c of ['git checkout --theirs -- "src/my file.js"', 'git reset --hard']) W(c, 'deny:uncommitted');
+    // In a merge, the refusal names its --abort (review round 2): git stash refuses unmerged paths.
+    const saidMerge = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git reset --hard' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/A merge is in progress: git merge --abort/.test(saidMerge)) report(`the refusal in a merge must name git merge --abort: ${saidMerge}`);
     gitIn(w, 'merge', '--abort');
     // A tree git cannot read refuses, as the other guards do.
     rmSync(join(w, '.git'), { recursive: true, force: true });

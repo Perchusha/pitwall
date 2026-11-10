@@ -41,15 +41,16 @@ const section = (text, name) => {
   const m = new RegExp(`^## ${name}[ \\t]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm').exec(text ?? '');
   return m ? m[1].trim() : '';
 };
-// The items of a list: a bullet with the lines wrapped under it, or a paragraph.
+// The items of a list: a bullet with the lines wrapped or nested under it, or a paragraph.
 const items = (text) => {
   const out = [];
   let open = false;
   for (const l of text.split('\n')) {
-    const bullet = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(l);
+    const bullet = /^([ \t]*)(?:[-*+]|\d+[.)])\s+(.*)$/.exec(l);
     if (!l.trim()) open = false;
+    else if (bullet && open && bullet[1].length >= 2) out[out.length - 1] += ` ${bullet[2].trim()}`;
     else if (bullet || !open) {
-      out.push((bullet ? bullet[1] : l).trim());
+      out.push((bullet ? bullet[2] : l).trim());
       open = true;
     } else out[out.length - 1] += ` ${l.trim()}`;
   }

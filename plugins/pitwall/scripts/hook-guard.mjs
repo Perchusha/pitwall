@@ -8,7 +8,7 @@
 // it, and that is the reviewer's and the owner's to catch (review.threatModel, R-2).
 
 import { existsSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 
 const WIN = process.platform === 'win32';
 
@@ -20,6 +20,9 @@ export function native(p, cwd = '.', home = '') {
   let w = String(p);
   const homeRef = /^(?:~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|\$env:HOME|%USERPROFILE%)(?=[\\/]|$)/i.exec(w);
   if (homeRef && home) w = home + w.slice(homeRef[0].length);
+  // The project folder as Claude Code gives it to hooks and to the shell.
+  const projectRef = /^(?:\$CLAUDE_PROJECT_DIR|\$\{CLAUDE_PROJECT_DIR\}|\$env:CLAUDE_PROJECT_DIR|%CLAUDE_PROJECT_DIR%)(?=[\\/]|$)/i.exec(w);
+  if (projectRef && process.env.CLAUDE_PROJECT_DIR) w = process.env.CLAUDE_PROJECT_DIR + w.slice(projectRef[0].length);
   w = w.split('\\').join('/');
   if (WIN && /^\/[a-zA-Z](\/|$)/.test(w)) w = `${w[1]}:${w.slice(2) || '/'}`;
   return resolve(String(cwd), w).split('\\').join('/');
@@ -369,6 +372,8 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
       continue;
     }
     let argv = cmd.argv;
+    // xargs hands its command operands only the run knows.
+    let xargs = false;
     for (;;) {
       if (argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0])) argv = argv.slice(1);
       // PowerShell's "$ok = (...)", "$ok=(...)" or "$r=git push": the assignment, not a program.
@@ -382,10 +387,11 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
         while (argv.length && (argv[0].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]))) argv = argv.slice(1);
       } else if (program(argv[0]) === 'xargs') {
         argv = argv.slice(1);
+        xargs = true;
         while (argv.length && argv[0].startsWith('-')) argv = argv.slice(1);
       } else break;
     }
-    out.push({ argv, redirects: cmd.redirects, inputs: cmd.inputs, cwd: dir });
+    out.push({ argv, redirects: cmd.redirects, inputs: cmd.inputs, cwd: dir, ...(xargs ? { xargs } : {}) });
     const p = program(argv[0]);
     if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(p)) {
       const target = argv.slice(1).find((a) => !a.startsWith('-'));
@@ -605,8 +611,11 @@ export function guard(call, ctx) {
   // What a stash, a commit or git add earlier in the line has already kept of the uncommitted work, by
   // repository (T4a-AC1).
   const lineState = keptInLine(ctx);
+  // Whether a git command after each one in the line can throw work away.
+  const discarding = cmds.map((c) => program(c.argv[0]) === 'git' && ['checkout', 'switch', 'restore', 'reset', 'clean', 'stash'].includes(gitCommand(c.argv).sub));
+  const laterDiscard = discarding.map((_, i) => discarding.slice(i + 1).some(Boolean));
 
-  for (const { argv, redirects, inputs, cwd: dir } of cmds) {
+  for (const [i, { argv, redirects, inputs, cwd: dir, xargs }] of cmds.entries()) {
     const p = program(argv[0]);
     const words = pathWords(argv);
     const code = inlineCode(argv);
@@ -703,17 +712,22 @@ export function guard(call, ctx) {
     // rest is judged on the tree as it is now.
     if (git) {
       const where = git.dir ? native(git.dir, dir, home) : dir;
+      if (xargs) git.runtime = true;
       const lost = discards(git, where, ctx, lineState);
       if (lost?.error) return refuse('broken', `git status could not read the tree before "git ${git.sub}": ${lost.error}.`);
       if (lost?.files.length) {
         const shown = lost.files.slice(0, 8).join(' ');
         const more = lost.files.length > 8 ? ` and ${lost.files.length - 8} more` : '';
-        return refuse('uncommitted', lost.stash
-          ? `git stash ${git.args[0]} would throw away ${shown}${more}, uncommitted work kept in the stash (L-12). Apply it first (git stash pop), or leave the stash; the owner drops it in a terminal if it should go.`
-          : `git ${git.sub} would throw away uncommitted ${lost.untracked ? 'new files' : 'changes in'} ${shown}${more} (L-12). Keep them first: git stash push${lost.untracked ? ' -u' : ''} -- ${shown} keeps them in a stash to restore with git stash pop, or commit them; then run it again.`);
+        if (lost.stash) return refuse('uncommitted', `git stash ${git.args[0]} would throw away ${shown}${more}, uncommitted work kept in the stash (L-12). Apply it first (git stash pop), or leave the stash; the owner drops it in a terminal if it should go.`);
+        // In a merge, a rebase, a cherry-pick or a revert, what it staged is its own, and git stash refuses
+        // its unmerged paths: its --abort is the way back.
+        const op = lost.untracked ? null : operation(where, ctx);
+        return refuse('uncommitted', `git ${git.sub} would throw away uncommitted ${lost.untracked ? 'new files' : 'changes in'} ${shown}${more} (L-12). ${op ? `A ${op.name} is in progress: ${op.abort} ends it and puts the tree back as it was before it. To keep the changes instead,` : 'Keep them first:'} git stash push${lost.untracked ? ' -u' : ''} -- ${shown} keeps them in a stash to restore with git stash pop, or commit them; then run it again.`);
       }
-      keeps(git, where, ctx, lineState);
+      // Only a command after it in the line can need what this one kept.
+      if (laterDiscard[i]) keeps(git, where, ctx, lineState);
     }
+    lineState.made.push(...foldersMade(argv, git, dir, home));
     if (git && (git.sub === 'checkout' || git.sub === 'switch')) {
       const flag = git.args.findIndex((a) => /^(-[bBcC]|--create|--force-create|--orphan)$/.test(a));
       if (flag >= 0 && git.args[flag + 1]) switchedTo = git.args[flag + 1];
@@ -860,7 +874,9 @@ function gitOperands(args, valued = [], shortValued = '') {
 // x, y, path }] } as porcelain v2 gives them ("1" and "2" changed, "u" in a merge conflict, "?" new;
 // x the index against HEAD, y the work tree against the index, "." unchanged), or { error }.
 function treeStatus(dir, ctx, paths, untracked = 'all') {
-  const r = ctx.git(['-c', 'core.quotePath=false', '-c', 'status.relativePaths=false', 'status', '--porcelain=v2', `--untracked-files=${untracked}`, ...(paths?.length ? ['--', ...paths] : [])], dir);
+  // Git Bash hands git a "/c/..." path as "C:/..."; the hook's own git gets it as the agent wrote it.
+  const specs = (paths ?? []).map((x) => (WIN && /^\/[a-zA-Z]\//.test(x) ? native(x) : x));
+  const r = ctx.git(['-c', 'core.quotePath=false', '-c', 'status.relativePaths=false', 'status', '--porcelain=v2', `--untracked-files=${untracked}`, ...(specs.length ? ['--', ...specs] : [])], dir);
   if (!r.ok) return { error: r.err || `exit ${r.status}` };
   // Porcelain v2 lines never start with a space, so a trimmed output still reads right.
   const field = (l, n) => l.split(' ').slice(n).join(' ').split('\t')[0];
@@ -875,22 +891,36 @@ function treeStatus(dir, ctx, paths, untracked = 'all') {
 }
 const has = (set, path) => set === 'all' || set.has(path);
 const join2 = (set, more) => (set === 'all' || more === 'all' ? 'all' : new Set([...set, ...more]));
+// What the line last did to a path in the index ('staged', 'unstaged', or null for nothing), and marking it.
+const staging = (side, path) => side.paths.get(path) ?? side.all;
+function mark(side, paths, value) {
+  if (paths === 'all') {
+    side.all = value;
+    side.paths.clear();
+  } else for (const p of paths) side.paths.set(p, value);
+}
+// An operand whose value only the run knows: a variable, a command's output, xargs' "{}".
+const late = (x) => /[$`]|\{\}/.test(x);
 
-// What the commands of one line kept of the uncommitted work, by repository: kept, by a stash or a commit,
-// is safe from every command after it; staged, by git add, from a restore of the work tree out of the index
-// and from git clean. Each is a set of paths from the repository's root, or 'all'.
+// What the commands of one line did to the uncommitted work, by repository:
+//   kept     by a stash or a commit: safe from every command after it (paths from the root, or 'all');
+//   index    by path or for all paths, the last one winning: what git add staged, safe from a restore of
+//            the work tree out of the index and from git clean; what git reset, restore --staged or
+//            rm --cached unstaged, whose staged change a restore from the index then throws away too;
+//   stashed  whether the line made a stash.
+// line.made holds the folders commands of the line make (git clone, git worktree add, mkdir).
 function keptInLine(ctx) {
   const tops = new Map();
   const states = new Map();
-  return (dir) => {
+  const line = (dir) => {
     if (!tops.has(dir)) {
       const r = ctx.git(['rev-parse', '--show-toplevel'], dir);
       tops.set(dir, r.ok && r.out ? r.out : dir);
     }
     const top = tops.get(dir);
-    if (!states.has(top)) states.set(top, { top, stashed: false, kept: { tracked: new Set(), untracked: new Set() }, staged: { tracked: new Set(), untracked: new Set() } });
+    const side = () => ({ all: null, paths: new Map() });
+    if (!states.has(top)) states.set(top, { top, stashed: false, kept: { tracked: new Set(), untracked: new Set() }, index: { tracked: side(), untracked: side() } });
     const st = states.get(top);
-    // A path from the root as the command's folder names it, quoted when the shell would split it.
     // A folder git names another way than the shell (a short or a linked path) gets git's ":/" from the root.
     const down = relative(top, dir).split('\\').join('/');
     const show = (p) => {
@@ -899,6 +929,29 @@ function keptInLine(ctx) {
     };
     return { st, show };
   };
+  line.made = [];
+  return line;
+}
+
+// The folders a command makes, as norm() gives them, and whether each is a repository of its own: git clone's
+// and git worktree add's are; mkdir's is an empty folder in the repository around it.
+function foldersMade(argv, git, dir, home) {
+  const p = program(argv[0]);
+  if (git?.sub === 'clone') {
+    const { before } = gitOperands(git.args, ['-o', '--origin', '-b', '--branch', '-u', '--upload-pack', '--reference', '--reference-if-able', '--separate-git-dir', '--depth', '--shallow-since', '--shallow-exclude', '-c', '--config', '--filter', '-j', '--jobs', '--template', '--server-option', '--bundle-uri']);
+    const url = String(before[0] ?? '').replace(/[\\/]+$/, '');
+    const target = before[1] ?? url.split(/[\\/:]/).pop()?.replace(/\.git$/, '');
+    return target ? [{ path: norm(target, dir, home), repo: true }] : [];
+  }
+  if (git?.sub === 'worktree' && git.args[0] === 'add') {
+    const target = gitOperands(git.args.slice(1), ['-b', '-B', '--reason']).before[0];
+    return target ? [{ path: norm(target, dir, home), repo: true }] : [];
+  }
+  if (['mkdir', 'md', 'new-item', 'ni'].includes(p)) {
+    const valued = /^-(itemtype|type|name|value)$/i;
+    return argv.slice(1).filter((a, i) => !a.startsWith('-') && !valued.test(argv[i] ?? '')).map((a) => ({ path: norm(a, dir, home), repo: false }));
+  }
+  return [];
 }
 
 // What a git command would throw away of the uncommitted work in dir: { files, untracked } with the
@@ -906,23 +959,41 @@ function keptInLine(ctx) {
 // or null. Only these lose work: checkout over paths or with -f, switch -f or --discard-changes, restore
 // of the work tree, reset --hard, clean -f, stash drop and clear. A branch switch without -f, restore
 // --staged alone, clean -n, reset --soft or --mixed keep it. Never lost: what a command earlier in the
-// line kept; a change already staged, when the work tree is restored from the index; a file that is only
-// deleted; a path in a merge conflict, which git merge --abort throws away too and --ours, --theirs or
-// -m resolve.
+// line kept; a change staged, when the work tree is restored from the index and the line did not unstage
+// it; a file that is only deleted; a path in a merge conflict, which git merge --abort throws away too
+// and --ours, --theirs or -m resolve. Paths that only the run knows ("-- $(git diff --name-only)", xargs)
+// stand for the whole tree.
 function discards(git, dir, ctx, line) {
-  // A folder a command earlier in the line makes (git clone, git worktree add) holds no work yet.
-  if (!existsSync(dir)) return null;
+  if (!existsSync(dir)) {
+    // A repository a command earlier in the line makes (git clone, git worktree add) holds no work yet. A
+    // folder mkdir makes sits in the repository around it, which git then works on: judged there, whole.
+    // Any other folder is one the guard could not follow (a variable, a command's output), and a read
+    // that fails refuses.
+    const made = line.made.find((m) => inside(norm(dir), m.path));
+    if (made?.repo) return null;
+    if (!made) return { error: `the folder ${dir} is not there as written: a folder named through a variable or a command's output is not followed, so name it plainly` };
+    let up = dir;
+    while (!existsSync(up) && dirname(up) !== up) up = dirname(up);
+    return discards({ ...git, runtime: true }, up, ctx, line);
+  }
   const a = git.args;
   const flag = (...names) => a.some((x) => names.includes(x));
   const short = (letter) => a.some((x) => /^-[a-zA-Z]+$/.test(x) && x.includes(letter));
   const isCommit = (x) => ctx.git(['rev-parse', '--verify', '-q', `${x}^{commit}`], dir).ok;
-  // fromIndex: the work tree is restored from the index, so what is staged stays there.
+  const runtime = (ops) => Boolean(git.runtime) || ops.some(late);
+  // fromIndex: the work tree is restored from the index, so what is staged stays there, unless the line
+  // took it out of the index first.
   const tracked = (paths, fromIndex) => {
-    const s = treeStatus(dir, ctx, paths);
+    const s = treeStatus(dir, ctx, paths, 'no');
     if (s.error) return s;
     const { st, show } = line(dir);
     const changed = (c) => !['.', 'D'].includes(c);
-    const files = s.entries.filter((e) => (e.kind === '1' || e.kind === '2') && (changed(e.y) || (!fromIndex && changed(e.x))) && !has(st.kept.tracked, e.path) && !(fromIndex && has(st.staged.tracked, e.path)));
+    const files = s.entries.filter((e) => {
+      if ((e.kind !== '1' && e.kind !== '2') || has(st.kept.tracked, e.path)) return false;
+      const was = staging(st.index.tracked, e.path);
+      if (!fromIndex) return changed(e.x) || changed(e.y);
+      return was !== 'staged' && (changed(e.y) || (was === 'unstaged' && changed(e.x)));
+    });
     return { files: files.map((e) => show(e.path)) };
   };
 
@@ -933,6 +1004,7 @@ function discards(git, dir, ctx, line) {
     // Without "--", a first operand that names a commit is the commit (or the branch); the rest are paths.
     const source = after ? (before[0] ?? null) : before.length && isCommit(before[0]) ? before[0] : null;
     const paths = after ?? (source ? before.slice(1) : before);
+    if ((after && (!after.length || runtime(after))) || (git.runtime && !after && !before.length)) return tracked(null, !source);
     if (!paths.length) return force ? tracked(null, false) : null;
     return tracked(paths, !source);
   }
@@ -943,19 +1015,21 @@ function discards(git, dir, ctx, line) {
     if (staged && !worktree) return null;
     const { before, after } = gitOperands(a, ['-s', '--source', '--pathspec-from-file']);
     const paths = [...before, ...(after ?? [])];
-    // The work tree alone: the index keeps what is staged, whatever the source.
-    return paths.length ? tracked(paths, !staged) : null;
+    // The work tree alone: the index keeps what is staged, whatever the source. git refuses a restore
+    // without a path, so none means paths that come at run time.
+    return tracked(!paths.length || runtime(paths) ? null : paths, !staged);
   }
   if (git.sub === 'reset') return flag('--hard') ? tracked(null, false) : null;
   if (git.sub === 'clean') {
     if (flag('-n', '--dry-run') || short('n') || !(flag('-f', '--force') || short('f'))) return null;
     const { before, after } = gitOperands(a, ['-e', '--exclude']);
     const paths = [...before, ...(after ?? [])];
+    const unknown = runtime(paths);
     // Without -d or a path, git clean leaves the new folders alone.
-    const s = treeStatus(dir, ctx, paths, paths.length || flag('-d') || short('d') ? 'all' : 'normal');
+    const s = treeStatus(dir, ctx, unknown ? [] : paths, unknown || paths.length || flag('-d') || short('d') ? 'all' : 'normal');
     if (s.error) return s;
     const { st, show } = line(dir);
-    const files = s.entries.filter((e) => e.kind === '?' && !e.path.endsWith('/') && !has(st.kept.untracked, e.path) && !has(st.staged.untracked, e.path));
+    const files = s.entries.filter((e) => e.kind === '?' && !e.path.endsWith('/') && !has(st.kept.untracked, e.path) && staging(st.index.untracked, e.path) !== 'staged');
     return { untracked: true, files: files.map((e) => show(e.path)) };
   }
   if (git.sub === 'stash' && (a[0] === 'drop' || a[0] === 'clear')) {
@@ -973,27 +1047,57 @@ function discards(git, dir, ctx, line) {
   return null;
 }
 
-// What a git command keeps of the uncommitted work for the commands after it in the line (discards):
-// git add stages paths; a commit keeps what it commits; a stash push keeps what it takes.
+// A merge, a rebase, a cherry-pick or a revert in progress, with the command that ends it, or null.
+function operation(dir, ctx) {
+  const ops = [['MERGE_HEAD', 'merge'], ['REBASE_HEAD', 'rebase'], ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']];
+  const found = ops.find(([ref]) => ctx.git(['rev-parse', '-q', '--verify', ref], dir).ok);
+  return found ? { name: found[1], abort: `git ${found[1]} --abort` } : null;
+}
+
+// What a git command does to the uncommitted work for the commands after it in the line (discards): git
+// add stages paths; git reset (mixed), restore --staged and rm --cached unstage them; a commit keeps what
+// it commits; a stash push keeps what it takes. Paths only the run knows keep and stage nothing, and
+// unstage everything.
 function keeps(git, dir, ctx, line) {
-  if (!['add', 'commit', 'stash'].includes(git.sub) || !existsSync(dir)) return;
+  if (!['add', 'commit', 'stash', 'reset', 'restore', 'rm'].includes(git.sub) || !existsSync(dir)) return;
   const sub = git.sub === 'stash' ? (git.args[0] && !git.args[0].startsWith('-') ? git.args[0] : 'push') : git.sub;
+  // A stash popped or applied puts its work back in the tree, where nothing keeps it any more.
+  if (git.sub === 'stash' && (sub === 'pop' || sub === 'apply')) {
+    const { st } = line(dir);
+    st.kept = { tracked: new Set(), untracked: new Set() };
+    return;
+  }
   if (git.sub === 'stash' && !['push', 'save'].includes(sub)) return;
   const a = git.sub === 'stash' && git.args[0] === sub ? git.args.slice(1) : git.args;
   const flag = (...names) => a.some((x) => names.includes(x));
   const short = (letter) => a.some((x) => /^-[a-zA-Z]+$/.test(x) && x.includes(letter));
   const { st } = line(dir);
   const listed = (paths) => {
+    if (paths.some(late)) return [];
     const s = treeStatus(dir, ctx, paths);
     return s.error ? [] : s.entries;
   };
   const trackedOf = (entries) => entries.filter((e) => e.kind === '1' || e.kind === '2').map((e) => e.path);
   const newOf = (entries) => entries.filter((e) => e.kind === '?').map((e) => e.path);
-  // What a commit of the index takes: what was staged before the line, where the work tree adds
-  // nothing to it, and what git add staged in it.
+  // What a commit of the index takes: each change whole in the index by now, staged in the line, or
+  // staged before it with nothing more in the work tree and not unstaged since.
   const keepStaged = () => {
-    st.kept.tracked = join2(join2(st.kept.tracked, listed([]).filter((e) => (e.kind === '1' || e.kind === '2') && e.x !== '.' && ['.', 'D'].includes(e.y)).map((e) => e.path)), st.staged.tracked);
-    st.kept.untracked = join2(st.kept.untracked, st.staged.untracked);
+    for (const e of listed([])) {
+      const was = staging(e.kind === '?' ? st.index.untracked : st.index.tracked, e.path);
+      if (e.kind === '?') {
+        if (was === 'staged') st.kept.untracked = join2(st.kept.untracked, [e.path]);
+      } else if ((e.kind === '1' || e.kind === '2') && (was === 'staged' || (was == null && e.x !== '.' && ['.', 'D'].includes(e.y)))) st.kept.tracked = join2(st.kept.tracked, [e.path]);
+    }
+  };
+  const unstage = (paths) => {
+    if (!paths.length || paths.some(late)) {
+      mark(st.index.tracked, 'all', 'unstaged');
+      mark(st.index.untracked, 'all', 'unstaged');
+      return;
+    }
+    const e = listed(paths);
+    mark(st.index.tracked, trackedOf(e), 'unstaged');
+    mark(st.index.untracked, newOf(e), 'unstaged');
   };
 
   if (sub === 'add') {
@@ -1002,14 +1106,32 @@ function keeps(git, dir, ctx, line) {
     const paths = [...before, ...(after ?? [])];
     const update = flag('-u', '--update') || short('u');
     if (!paths.length) {
-      if (flag('-A', '--all', '--no-ignore-removal') || short('A')) st.staged = { tracked: 'all', untracked: 'all' };
-      else if (update) st.staged.tracked = 'all';
+      if (flag('-A', '--all', '--no-ignore-removal') || short('A')) {
+        mark(st.index.tracked, 'all', 'staged');
+        mark(st.index.untracked, 'all', 'staged');
+      } else if (update) mark(st.index.tracked, 'all', 'staged');
       return;
     }
     const e = listed(paths);
-    st.staged.tracked = join2(st.staged.tracked, trackedOf(e));
-    if (!update) st.staged.untracked = join2(st.staged.untracked, newOf(e));
+    mark(st.index.tracked, trackedOf(e), 'staged');
+    if (!update) mark(st.index.untracked, newOf(e), 'staged');
     return;
+  }
+  if (sub === 'reset') {
+    if (flag('--soft', '--hard', '--keep', '--merge')) return;
+    const { before, after } = gitOperands(a, ['--pathspec-from-file']);
+    // git reset [<commit>] [--] [<paths>]: without "--", a first operand that names a commit is the commit.
+    return unstage(after ?? (before.length && ctx.git(['rev-parse', '--verify', '-q', `${before[0]}^{commit}`], dir).ok ? before.slice(1) : before));
+  }
+  if (sub === 'restore') {
+    if (!(flag('--staged') || short('S'))) return;
+    const { before, after } = gitOperands(a, ['-s', '--source', '--pathspec-from-file']);
+    return unstage([...before, ...(after ?? [])]);
+  }
+  if (sub === 'rm') {
+    if (!flag('--cached')) return;
+    const { before, after } = gitOperands(a, ['--pathspec-from-file']);
+    return unstage([...before, ...(after ?? [])]);
   }
   if (sub === 'commit') {
     if (flag('--dry-run', '-p', '--patch', '--interactive') || short('p')) return;
@@ -1030,12 +1152,12 @@ function keeps(git, dir, ctx, line) {
   const paths = [...before, ...(after ?? [])];
   if (!paths.length) {
     st.kept.tracked = 'all';
-    st.kept.untracked = untracked ? 'all' : join2(st.kept.untracked, st.staged.untracked);
+    st.kept.untracked = untracked ? 'all' : join2(st.kept.untracked, newOf(listed([])).filter((p) => staging(st.index.untracked, p) === 'staged'));
     return;
   }
   const e = listed(paths);
   st.kept.tracked = join2(st.kept.tracked, trackedOf(e));
-  st.kept.untracked = join2(st.kept.untracked, newOf(e).filter((p) => untracked || has(st.staged.untracked, p)));
+  st.kept.untracked = join2(st.kept.untracked, newOf(e).filter((p) => untracked || staging(st.index.untracked, p) === 'staged'));
 }
 
 // Would this git push change the base branch? A reason, or null.
