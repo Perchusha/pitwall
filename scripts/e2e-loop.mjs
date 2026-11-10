@@ -39,10 +39,12 @@ Facts you answer from:
 - Only you use it, on your own Windows and macOS laptops. No accounts, no server, no money, no personal data leaves the machine.
 - It shows a reminder every 45 minutes of active use, lets you snooze for 10 minutes, and pauses when the computer is idle or locked.
 - The GitHub repository exists and gh is signed in. It is private on GitHub Free, so pitwall's hook guards main (merge protection local-hook).
-- You want the plan built as the epics say. For a choice the epics and ADRs leave open, you take the assistant's recommendation.`;
-const OWNER_RULES = `Answer as this owner, in English, in one to three sentences, and only what was asked.
+- You want the plan built as the epics say. For a choice the epics and ADRs leave open, you take the assistant's recommendation.
+- Every manual QA scenario of a merged epic you are asked about (the test window in front of a full-screen video, the installer, the packaged app), you ran today on both laptops, and it passed: 20 of 20 rounds, or whatever count the scenario asks for. A manual QA scenario of the epic in progress you will run after its merge.`;
+// The owner's answer on merges without them differs by stage: no at e0; at e1 the harness ran merge-choice.mjs --allow for them.
+const OWNER_RULES = (stage) => `Answer as this owner, in English, in one to three sentences, and only what was asked.
 - When asked to set up or record merge protection, or to run protect.mjs: yes.
-- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.
+${stage === 'e0' ? '- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.' : '- When asked whether low and normal risk epics may merge without you: yes, you ran merge-choice.mjs --allow yourself; .claude/pitwall.json records it.'}
 - When asked whether to merge an epic or a fix now: yes.
 - When asked a question about an epic (clarification, a NEEDS_OWNER question, an option to pick): answer from the facts; when the facts do not say, accept the assistant's recommendation.
 - When asked to accept a risk: accept it with the fallback the assistant proposes.
@@ -241,7 +243,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
         unmet = promises[stage]();
         if (unmet.length === 0) break;
-        const ask = `${SCENARIO}\n\n${OWNER_RULES}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
+        const ask = `${SCENARIO}\n\n${OWNER_RULES(stage)}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
         const o = run('claude', ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands'], { cwd: ownerDir, input: ask, timeout: 5 * 60 * 1000 });
         const reply = JSON.parse(o.stdout);
         cost += reply.total_cost_usd ?? 0;
