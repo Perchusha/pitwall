@@ -2,6 +2,37 @@
 
 One entry per epic, newest first.
 
+## T4a - Guards and process follow-ups (2026-11-10)
+
+T4 was split in three at the owner's call: T4a, the guards and the loop's follow-ups, T4b, bugs and lessons, and T4c, releases and QA, each high risk and merged by the owner. In T4a the PreToolUse guard refuses a git command that would throw uncommitted work away (rule `uncommitted`, L-12), in the main conversation and in every agent, and only when it would: it reads the tree with `git status` before the command, follows `cd`, `git -C`, `$CLAUDE_PROJECT_DIR`, a variable the line sets to one plain path, and what earlier commands of the line stashed, committed, staged or unstaged, and its refusal names the files with the `git stash push` that keeps them, or a merge's `--abort`. `/pitwall:owner-calls` lists what waits for the owner from a read-only script, each item with what happens if they say nothing, asks one question at a time, commits the answers only on a branch with no open PR, and merges last. The conductor keeps the owner's choice of ADR-0010 in `.claude/pitwall.json` alone. A `--github` run restores the remote state of its snapshot after it checks the repository's id, and a scripted owner's answer that overrode a stop turns PASS into "PASS, stops overridden: N". The owner accepted the two-way list with edits: the refusal offers the safe way, `git checkout <path>` without `--` and Windows paths among the cases, owner-calls hands the owner's switches over as commands, the id check before anything is deleted, and GitHub's answers to a closed PR and a deleted branch recorded at the next run on real GitHub. What the guard cannot read before a command runs is R-3, which the owner accepted.
+
+**Numbers.** `scripts/check.mjs` grew from 24 to 25 steps: the owner-calls script on scratch projects with the fake `gh` (a risk class raised on the branch, wrapped and nested questions), the snapshot restore against the live fake GitHub (another repository's id, no snapshot, an unexpected answer, a deletion that did nothing, `main` moved), and the scripted owner's UNSCRIPTED and OVERRIDE markers. The hooks step gained 166 cases of the new guard, all written by hand on scratch projects: 86 refused as uncommitted work, 74 that pass, and 6 refused as unreadable or as a switch. The headless runs, at API prices:
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| hooks, plugin a20bf56 | 21 | 3.6 | $1.31 | pass: each guarded step refused by its rule, `uncommitted` among them |
+| hooks, plugin bfc4246, the reviewed guard | 21 | 3.3 | $1.07 | pass, the same |
+| e1, fake GitHub, plugin bfc4246 | 2 | 57.1 | $20.81 | pass: the conductor stopped once on a question that was the owner's (Electron 45 refuses a bare `--debug` before any app code runs) and the scripted owner took the recommended rename; 3 implementers (73 calls, 50 continuing after the answer, 31 closing the finding), 2 review rounds with one finding to fix (a start by the Windows installer set no data folder), merged without the owner through the allow rules; no unscripted question, no stop overridden, the ADR-0010 choice in no doc, and no hook refused any of the run's 329 calls |
+
+**What only the work showed:**
+- A guard that judges a line before it runs has to read it as the shell will: the folder after each `cd`, a variable's value, what an earlier stash or commit took and left, what a reset took out of the index, a folder a clone or `mkdir` makes. Each piece it learned to read was a new way to be wrong, in both directions. What it still cannot read is R-3, which an honest agent rarely writes.
+- A refusal is only as good as the way out it names: `git stash` refuses unmerged paths, so in a merge the refusal names `git merge --abort` first.
+- What the guard costs ordinary work was measured on the owner's local transcripts: about 95,000 distinct command lines from 4,251 transcripts, replayed through the guard before and after each fix, read where they lie and kept out of the repository. Against the round before it, the last fix changed two verdicts, both explained.
+- Of the five regressions the review found, two were false refusals of command lines agents really send, which the replay shows at once as changed verdicts, and three were misses, which show only on a variant that spells them. The conductor ran neither between rounds; the reviewers ran both (L-13).
+
+**What the review found.** Five full rounds and a verifying one (L-8). Round one found two blocking findings: any stash or commit earlier in a line turned the guard off for the rest of it, though a plain stash keeps no new file and a commit of some paths keeps only those; and owner-calls left the owner's answers uncommitted while a merge switched branches, so they landed on the branch just merged. Each blocking finding of rounds two to five was a regression of the conductor's own fix of the round before: after round one, unstaging and then restoring threw a staged change away, and a folder the guard could not resolve passed; after round two, every git command in such a folder was refused, read-only ones included (L-9); after round three, a PowerShell assignment's own name was expanded, so its value was judged as a program, and a variable of several paths was read as one path, so a rollback passed. The reviewers tried each fix on variants they wrote (52 for round five's, in bash and PowerShell, quoted and not) and on the replay of the transcripts. The verifying round found nothing blocking; what it found smaller went to R-3 and not into the code, since each small fix of the five rounds had opened a hole.
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | 2 | 186,748 | 46 | 9.3 |
+| 2 | 2 (both regressions of round 1's fixes) | 255,182 | 69 | 14.5 |
+| 3 | 1 (a regression of round 2's fix) | 224,691 | 54 | 15.9 |
+| 4 | 1 (a regression of round 3's fix) | 276,747 | 60 | 19.7 |
+| 5 | 1 (a regression of round 3's fix) | 239,477 | 58 | 17.5 |
+| 6, verification | none | 183,847 | 45 | 14.6 |
+
+**Next:** T4b, bugs and lessons.
+
 ## T3b - The epic loop (2026-11-10)
 
 `/pitwall:continue` is built: it takes a project with a merged plan through its changes, one at a time, an open bug's fix before the next epic. It asks the owner what is unclear, dispatches an `implementer` or `implementer-deep` by risk class at that class's effort, gates, opens the PR, runs a fresh `code-reviewer` each round under the plan's stopping rule, merges through `merge.mjs` by risk class, and records each merge in the first commit of the next branch. The code reviewer writes `docs/reviews/<change>.md` and sets `ai-review` only while nothing but that file changed after the commit it reviewed (ADR-0011, both of the owner's edits). Low and normal risk merge without the owner only when they chose that with `merge-choice.mjs`, a script no agent may run, whose two narrow allow rules the session-start hook keeps in step with the plugin's path (ADR-0010). The owner answered both one-way questions with edits, and accepted the two-way list with two: conventional merge commits, and any open bug first until T4, which now holds a changelog from `main`'s merge commits only, bugs with a severity and a risk class, `/pitwall:owner-calls` and the record of a plan's last change.
