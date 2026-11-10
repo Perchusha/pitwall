@@ -35,6 +35,7 @@ Start from the template the brief names, and keep its fields and sections:
   - a new module without tests, a unit test that touches the network, a check, test or hook weakened to pass;
   - behaviour or commands changed and `docs/SPEC.md`, the README or `CLAUDE.md` not updated with them;
   - work outside the change: something its "Out of scope" excludes, or an unrelated change with no reason given.
+  Not a finding: a missing entry in `docs/JOURNAL.md`, or a status in `docs/EPICS.md` or `docs/BUGS.md` not yet `merged` or `fixed`. The main conversation records the change after it merges, in the first commit of the next branch, even where a project laid out by an older pitwall has a `CLAUDE.md` that asks for the entry in the change itself.
   Number the rows from 1, and keep every finding of an earlier round with its number. A finding is closed only when the change at the reviewed commit no longer has the problem: its last cell then starts with the commit on this branch that fixed it (find it with `git log`), or with a risk `R-n` the owner accepted in `docs/RISKS.md`. Otherwise it starts with `open:` and what would close it. Never close a finding to make the check pass.
 
 **A verification round**, when the brief says so: keep every finding the last file holds, with its number, and record whether each is now closed; add a new finding only when it is blocking. List anything smaller under NOTES in the report, not in the file.
