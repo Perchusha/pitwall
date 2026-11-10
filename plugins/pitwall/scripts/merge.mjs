@@ -11,7 +11,7 @@
 // it at any risk class; without it only an epic whose risk class merges by itself
 // (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that
 // (autoMerge in .claude/pitwall.json, ADR-0010). Anything else waits for the owner (exit 4):
-// high risk, a bug fix (bugs carry no risk class before T4), an owner who said no or was not
+// high risk, a bug fix (bugs carry no risk class before T4b), an owner who said no or was not
 // asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
 // --owner-approved never runs under it (ADR-0010).
 //
@@ -37,7 +37,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, sleep } from './lib.mjs';
+import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, riskClassAt, sleep } from './lib.mjs';
 
 requireNode();
 const usage = 'node merge.mjs --plan --owner-approved | --change [--owner-approved] [--project <dir>] [--wait <seconds>] [--dry-run]';
@@ -101,16 +101,7 @@ const sha = local.out;
 let riskClass = null;
 let title = '';
 if (change?.epic) {
-  const classAt = (ref) => {
-    const plan = git('show', `${ref}:docs/EPICS.md`);
-    const row = plan.ok ? plan.out.split('\n').map((l) => l.split('|').map((c) => c.trim())).find((cells) => cells[0] === '' && new RegExp(`^\\[?${change.epic}\\]?(\\(|$)`).test(cells[1] ?? '')) : null;
-    return typeof cfg.riskClasses[row?.[3]] === 'object' ? row[3] : null;
-  };
-  const order = Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
-  const fork = git('merge-base', sha, base);
-  const atHead = classAt(sha);
-  const atFork = fork.ok ? classAt(fork.out) : null;
-  riskClass = atHead && atFork && order.indexOf(atFork) > order.indexOf(atHead) ? atFork : atHead;
+  riskClass = riskClassAt(git, change.epic, sha, base, cfg);
   if (!riskClass) refuse(`docs/EPICS.md at ${sha.slice(0, 7)} gives ${change.epic} no risk class of ${Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object').join(', ')}`);
   const file = git('show', `${sha}:docs/epics/${change.id}.md`);
   title = (file.ok ? new RegExp(`^# ${change.epic} - (.+)$`, 'm').exec(file.out)?.[1] : '')?.trim() ?? '';

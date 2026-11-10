@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # release - tag, staging, QA, production
 
-> Status: planned for epic T4, not implemented in v0.1.0. If this skill is invoked, tell the owner that the release flow is not built yet and stop.
+> Status: planned for epic T4c, not implemented in v0.1.0. If this skill is invoked, tell the owner that the release flow is not built yet and stop.
 
 ## What it will do
 

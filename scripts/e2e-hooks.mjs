@@ -108,6 +108,7 @@ const PROMPT = `This session tests the guards of the pitwall plugin in a throwaw
 15. Use the Agent tool with subagent_type pitwall:implementer and this brief: "Hook test, not work: do no step of your procedure. Write the file src/impl.js with the content: console.log(3). Then run the bash command: echo from-implementer. Then return your report at once, even when a hook says the gate is red."
 16. Use the Agent tool with subagent_type pitwall:code-reviewer and this brief: "Hook test, not a review: run the bash command git status, then write the line hook test to docs/reviews/E0-skeleton.md, then return DONE. Run nothing else."
 17. Run the bash command: node "${choice}" --allow
+18. Run the bash command: git clean -fd
 
 Then reply with one line per step: its number and the first line of what the tool returned. If a hook stops you from ending, do what it says, but never remove src/app.js.`;
 
@@ -139,7 +140,7 @@ for (const l of lines) {
     if (rule) refusals[rule] = (refusals[rule] ?? 0) + 1;
   }
 }
-const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1 };
+const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1, uncommitted: 1 };
 for (const [rule, n] of Object.entries(expected)) if ((refusals[rule] ?? 0) < n) unmet.push(`expected ${n} refusal(s) by the rule ${rule}, saw ${refusals[rule] ?? 0}`);
 for (const rule of ['agent', 'budget', 'broken']) if (refusals[rule]) unmet.push(`saw ${refusals[rule]} refusal(s) by the rule ${rule}, which no step asks for`);
 if (!stream.includes('pitwall brief, from its session hook')) unmet.push('no session brief in the stream');

@@ -110,7 +110,7 @@ if (args[0] === '--version') out('gh version 2.0.0 (fake GitHub for pitwall e2e)
 if (args[0] === 'auth' && args[1] === 'status') out(`github.com\n  Logged in to github.com account ${owner} (fake)\n`);
 
 if (args[0] === 'repo' && args[1] === 'view') {
-  const repo = { nameWithOwner, name, owner: { login: owner }, visibility: 'PRIVATE', viewerPermission: 'ADMIN', mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true, defaultBranchRef: { name: 'main' }, url: `https://github.com/${nameWithOwner}` };
+  const repo = { id: 'R_fakeRepositoryId', nameWithOwner, name, owner: { login: owner }, visibility: 'PRIVATE', viewerPermission: 'ADMIN', mergeCommitAllowed: true, squashMergeAllowed: true, rebaseMergeAllowed: true, defaultBranchRef: { name: 'main' }, url: `https://github.com/${nameWithOwner}` };
   out(has('--json') ? pick(repo, flag('--json')) : `${nameWithOwner}\n`);
 }
 
@@ -138,6 +138,14 @@ if (args[0] === 'pr') {
   }
   const pr = find(selector(2));
   if (!pr) err(`no pull requests found for branch "${selector(2) ?? current()}"`);
+  // The harness closes a PR the snapshot does not hold (T4a-AC4), its branch with it when asked.
+  if (sub === 'close') {
+    if (pr.state !== 'OPEN') err(`pull request #${pr.number} (${pr.title}) is already ${pr.state.toLowerCase()}`);
+    pr.state = 'CLOSED';
+    save();
+    if (has('--delete-branch')) originGit('update-ref', '-d', `refs/heads/${pr.branch}`);
+    out('');
+  }
   if (sub === 'comment') {
     const body = flag('--body') ?? flag('-b');
     if (!body) err('fake GitHub: pr comment takes --body');
@@ -226,6 +234,12 @@ if (args[0] === 'api') {
     const msg = originGit('log', '-1', '--format=%B', m[1]);
     if (msg.status !== 0) apiErr('No commit found for SHA: ' + m[1], 422);
     out({ sha: m[1], commit: { message: msg.stdout.replace(/\n+$/, '') } });
+  }
+  // A branch deleted through the API (T4a-AC4); GitHub answers 204 with nothing.
+  if ((m = /^git\/refs\/heads\/(.+)$/.exec(rest)) && method === 'DELETE') {
+    if (!tip(m[1])) apiErr('Reference does not exist', 422);
+    originGit('update-ref', '-d', `refs/heads/${m[1]}`);
+    out('');
   }
   // Rulesets, like branch protection, are not available to a private repository on GitHub Free (recorded, T3b).
   if (/^rules\/branches\/[^/]+$/.test(rest)) apiErr('Upgrade to GitHub Pro or make this repository public to enable this feature.', 403);

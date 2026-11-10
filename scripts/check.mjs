@@ -27,6 +27,8 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { captureRemote, restoreRemote } from './e2e-loop.mjs';
+import { readOwner, resultWord } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'plugins', 'pitwall');
@@ -1581,6 +1583,205 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
   });
 });
 
+// 6m. T4a-AC3, AC4, AC5: owner-calls.mjs on projects the way the loop leaves them, with the live fake
+// GitHub; the headless runs' restore of a snapshot on it; and the scripted owner's marks.
+step('owner calls, snapshots and unscripted stops', (report) => {
+  // The scripted owner's marks (T3b, T4a-AC5).
+  const ask = 'Status: E0 is merged.\n\nShould I hold E1 until you have run QA-E0-2?';
+  const cases = [
+    ['Yes, merge it now.', { text: 'Yes, merge it now.', question: null, override: false }],
+    ['UNSCRIPTED\nGo with your recommendation.', { text: 'Go with your recommendation.', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    ['UNSCRIPTED: yes, go on', { text: 'yes, go on', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    ['UNSCRIPTED OVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED OVERRIDE', { text: 'Do as you recommend.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    // Review round 1: the marker as a model may dress it still counts.
+    ['**UNSCRIPTED OVERRIDE**\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED (OVERRIDE): start E1 now.', { text: 'start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['unscripted override\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['**UNSCRIPTED**\nGo on.', { text: 'Go on.', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
+    // Review round 2: punctuation between the words, or OVERRIDE on a line of its own, and the word never leaks into the reply.
+    ['**UNSCRIPTED** **OVERRIDE**\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED - OVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED: OVERRIDE. Go on.', { text: 'Go on.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED, OVERRIDE: go', { text: 'go', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED\nOVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+  ];
+  for (const [reply, want] of cases) {
+    const got = readOwner(reply, ask);
+    if (JSON.stringify(got) !== JSON.stringify(want)) report(`readOwner(${JSON.stringify(reply)}): ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  }
+  for (const [passed, list, want] of [[true, [], 'PASS'], [true, [{ override: false }], 'PASS'], [true, [{ override: true }, { override: true }], 'PASS, stops overridden: 2'], [false, [{ override: true }], 'FAIL']]) {
+    if (resultWord(passed, list) !== want) report(`resultWord(${passed}, ${JSON.stringify(list)}): ${resultWord(passed, list)}, expected ${want}`);
+  }
+
+  scratch('pitwall-owner-calls-', (dir) => {
+    const { project: base } = makeChangeRepo(dir);
+    const origin = join(dir, 'origin.git');
+    gitIn(dir, 'init', '-q', '--bare', origin);
+    gitIn(base, 'remote', 'add', 'origin', origin);
+    gitIn(base, 'push', '-q', 'origin', 'main', 'epic/E1-reminder');
+    let n = 0;
+    const live = (p) => ({ ...process.env, ...identity, FAKE_GH_LIVE: join(`${p}-gh`), FAKE_GH_ORIGIN: `${p}-origin.git`, FAKE_GH_REPO: 'e2e/move-reminder', PITWALL_GH: JSON.stringify([process.execPath, fakeGh]) });
+    const fresh = (prepare) => {
+      const p = join(dir, `o${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      cpSync(origin, `${p}-origin.git`, { recursive: true });
+      gitIn(p, 'remote', 'set-url', 'origin', `${p}-origin.git`);
+      prepare?.(p);
+      return p;
+    };
+    const fake = (p, ...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env: live(p), encoding: 'utf8' });
+    // A green PR from a branch: the fake CI's gate (the template's stub, docs only) and ai-review on its head.
+    const greenPr = (p, branch) => {
+      gitIn(p, 'push', '-q', '-f', 'origin', branch);
+      fake(p, 'pr', 'create', '--base', 'main', '--head', branch, '--title', branch, '--body', 'x');
+      const head = gitIn(p, 'rev-parse', branch).stdout.trim();
+      fake(p, 'api', '-X', 'POST', `repos/e2e/move-reminder/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=approved');
+      for (let i = 0; i < 60 && json(fake(p, 'api', `repos/e2e/move-reminder/commits/${head}/check-runs`))?.check_runs?.[0]?.status !== 'completed'; i += 1) spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    };
+    const json = (r) => {
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return null;
+      }
+    };
+    const calls = (p, extra = []) => {
+      const r = runScript('owner-calls.mjs', ['--project', p, '--json', ...extra], { env: live(p) });
+      return { r, out: json(r) ?? { groups: [], notes: [`no JSON: ${r.stdout}${r.stderr}`] } };
+    };
+    const items = (out, group) => (out.groups.find((g) => g.name === group)?.items ?? []).map((i) => i.what);
+    const setSettings = (p, change) => {
+      const f = join(p, '.claude', 'pitwall.json');
+      writeFileSync(f, JSON.stringify(change(JSON.parse(readFileSync(f, 'utf8'))), null, 2) + '\n');
+    };
+
+    // Switches: protection pending, no choice of ADR-0010; each handed over as commands that run as written (L-6).
+    let p = fresh((q) => setSettings(q, (s) => ({ ...s, autoMerge: undefined })));
+    let { r, out } = calls(p, ['--no-github']);
+    if (r.status !== 0) report(`owner-calls: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    const sw = out.groups.find((g) => g.name === 'switches')?.items ?? [];
+    if (!sw.some((i) => /merge protection is pending/.test(i.what) && i.run?.length === 1 && /protect\.mjs" --project "/.test(i.run[0]))) report(`owner-calls: no handed-over protect.mjs for a pending protection: ${JSON.stringify(sw)}`);
+    if (!sw.some((i) => /ADR-0010/.test(i.what) && /merge-choice\.mjs" --allow --project/.test(i.run?.[0]) && /merge-choice\.mjs" --deny --project/.test(i.run?.[1]))) report(`owner-calls: no --allow and --deny commands for the choice not made: ${JSON.stringify(sw)}`);
+    for (const c of sw.flatMap((i) => i.run ?? [])) if (/[<>|]|\(or /.test(c)) report(`owner-calls hands over a command that does not run as written (L-6): ${c}`);
+    if (!out.notes.some((x) => /not read \(--no-github\)/.test(x))) report('owner-calls --no-github does not say GitHub was not read');
+    const text = runScript('owner-calls.mjs', ['--project', p, '--no-github'], { env: live(p) }).stdout;
+    checkHandoff(text, (msg) => report(`owner-calls: ${msg}`));
+    p = fresh((q) => setSettings(q, (s) => ({ ...s, mergeProtection: 'local-hook', autoMerge: false })));
+    if (calls(p, ['--no-github']).out.groups.some((g) => g.name === 'switches')) report('owner-calls lists switches in a project that has set both');
+
+    // Questions: an epic's open question, not its answers or its notes; the plan review's open items while the plan is made.
+    p = fresh((q) => {
+      const f = join(q, 'docs', 'epics', 'E2-release.md');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.\n- Should the tray icon\n  follow the dark mode?\n  - In both themes?'));
+    });
+    out = calls(p, ['--no-github']).out;
+    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?', 'E2: Should the tray icon follow the dark mode? In both themes?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the two open questions of E2, a wrapped and nested one whole`);
+    const planning = join(dir, 'planning');
+    makePlanRepo(join(dir, 'pl'), { spike: false });
+    cpSync(join(dir, 'pl', 'repo'), planning, { recursive: true });
+    const pr = join(planning, 'docs', 'PLAN-REVIEW.md');
+    writeFileSync(pr, readFileSync(pr, 'utf8').replace('| 2 | Full-screen games hide it | should fix | R-1 |', '| 2 | Full-screen games hide it | should fix | open: a fallback |'));
+    if (!items(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout ? JSON.parse(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout) : { groups: [] }, 'questions').some((q) => /^plan review: 2 \| Full-screen games hide it/.test(q))) report('owner-calls does not list an open item of the plan review while the plan is made');
+    if (items(out, 'questions').some((q) => /^plan review/.test(q))) report('owner-calls lists the plan review once the plan is merged');
+
+    // Bugs: open ones only.
+    p = fresh((q) => {
+      const f = join(q, 'docs', 'BUGS.md');
+      writeFileSync(f, readFileSync(f, 'utf8').replace(/(\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n)/, '$1| BUG-1 | QA | Open the app | A tray icon | Nothing | open | - |\n| BUG-2 | owner | Snooze | 10 minutes | 5 | fixed | #4 |\n'));
+    });
+    if (JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs')) !== JSON.stringify(['BUG-1 (open), found in QA: Nothing'])) report(`owner-calls: bugs ${JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs'))}, expected BUG-1 only`);
+
+    // Merges: a green PR waits for the owner when the epic is high risk, when it is a fix, or without the owner's yes to merges.
+    // The template's stub gate passes on docs only, so the green PR's branch holds docs alone.
+    p = fresh((q) => {
+      setSettings(q, (s) => ({ ...s, autoMerge: true }));
+      gitIn(q, 'switch', '-q', '-C', 'epic/E1-reminder', 'main');
+      gitIn(q, 'commit', '-q', '--allow-empty', '-m', 'docs: E1');
+    });
+    greenPr(p, 'epic/E1-reminder');
+    if (!items(calls(p).out, 'merges').length && !calls(p).out.notes.length) {
+      setSettings(p, (s) => ({ ...s, autoMerge: false }));
+      if (!items(calls(p).out, 'merges').length) report('owner-calls: the green PR of the test is not ready, so the cases below prove nothing');
+      setSettings(p, (s) => ({ ...s, autoMerge: true }));
+    }
+    if (items(calls(p).out, 'merges').length !== 0) report(`owner-calls lists a green normal-risk PR the owner allowed to merge by itself: ${JSON.stringify(items(calls(p).out, 'merges'))}`);
+    setSettings(p, (s) => ({ ...s, autoMerge: false }));
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*you have not allowed merges without you/.test(m))) report(`owner-calls does not list a green PR that waits for the owner's yes: ${JSON.stringify(calls(p).out)}`);
+    gitIn(p, 'switch', '-q', '-c', 'fix/BUG-1', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'fix: BUG-1');
+    greenPr(p, 'fix/BUG-1');
+    setSettings(p, (s) => ({ ...s, autoMerge: true }));
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #2 \(BUG-1\) is ready.*a bug fix/.test(m))) report(`owner-calls does not list a green fix PR: ${JSON.stringify(calls(p).out)}`);
+    gitIn(p, 'switch', '-q', '-c', 'epic/E2-release', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'feat: E2');
+    gitIn(p, 'push', '-q', 'origin', 'epic/E2-release');
+    fake(p, 'pr', 'create', '--base', 'main', '--head', 'epic/E2-release', '--title', 'E2', '--body', 'x');
+    if (items(calls(p).out, 'merges').some((m) => /E2-release/.test(m))) report('owner-calls lists a PR whose review is not done');
+    // A class raised on the branch holds, as merge.mjs reads it (review round 1), though main still says normal.
+    gitIn(p, 'switch', '-q', 'epic/E1-reminder');
+    const plan = join(p, 'docs', 'EPICS.md');
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('| The reminder | normal |', '| The reminder | high |'));
+    gitIn(p, 'commit', '-qm', 'docs: E1 is high risk', '--', 'docs/EPICS.md');
+    greenPr(p, 'epic/E1-reminder');
+    gitIn(p, 'switch', '-q', 'main');
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*\(high risk\)/.test(m))) report(`owner-calls misses a PR whose epic was raised to high on its branch: ${JSON.stringify(calls(p).out)}`);
+    const unread = runScript('owner-calls.mjs', ['--project', p, '--json'], { env: { ...live(p), PITWALL_GH: JSON.stringify([join(dir, 'no-such-gh')]) } });
+    if (!/GitHub could not be read/.test(unread.stdout)) report(`owner-calls with a gh that does not run must say GitHub was not read: ${unread.stdout}${unread.stderr}`);
+    if (runScript('owner-calls.mjs', ['--project', dir]).status !== 2) report('owner-calls outside a pitwall project: expected exit 2');
+
+    // The headless runs' snapshot (T4a-AC4): the same repository, main where it was, nothing left over.
+    p = fresh();
+    const gh = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env: live(p), encoding: 'utf8' });
+    const g = (...args) => spawnSync('git', args, { cwd: p, encoding: 'utf8' });
+    const repo = 'e2e/move-reminder';
+    const snap = captureRemote(gh, g, repo);
+    if (snap.id !== 'R_fakeRepositoryId' || !snap.main || !snap.branches.includes('epic/E1-reminder')) report(`captureRemote: ${JSON.stringify(snap)}`);
+    if (JSON.stringify(restoreRemote(gh, g, repo, snap)) !== '[]') report('restoreRemote changed a repository that holds the snapshot');
+    // Left over: a PR and its branch, and a branch alone.
+    gitIn(p, 'switch', '-q', '-c', 'epic/E2-release', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'feat: E2');
+    gitIn(p, 'push', '-q', 'origin', 'epic/E2-release', 'main:refs/heads/scratch');
+    gh('pr', 'create', '--base', 'main', '--head', 'epic/E2-release', '--title', 'E2', '--body', 'x');
+    const throws = (label, fn, pattern) => {
+      try {
+        fn();
+        report(`${label}: expected the run to stop`);
+      } catch (e) {
+        if (!pattern.test(e.message)) report(`${label}: stopped with "${e.message}"`);
+      }
+    };
+    // Another repository (a typo in --github): nothing is touched.
+    throws('restore into another repository', () => restoreRemote(gh, g, repo, { ...snap, id: 'R_another' }), /is not the repository the snapshot was saved from.*changes nothing/);
+    if (!g('ls-remote', '--heads', 'origin').stdout.includes('refs/heads/scratch') || json(gh('pr', 'view', 'epic/E2-release', '--json', 'state'))?.state !== 'OPEN') report('restore into another repository changed something');
+    throws('restore from a snapshot without a remote state', () => restoreRemote(gh, g, repo, {}), /holds no remote snapshot/);
+    // A gh that answers what it should not: the run stops.
+    const failing = (...args) => (args[0] === 'pr' && args[1] === 'close' ? { status: 1, stdout: '', stderr: 'GraphQL: something unexpected' } : gh(...args));
+    throws('restore when GitHub answers a close unexpectedly', () => restoreRemote(failing, g, repo, snap), /closing PR #1: GitHub answered 1.*stops/);
+    const done = restoreRemote(gh, g, repo, snap);
+    if (JSON.stringify(done) !== JSON.stringify(['closed PR #1 (epic/E2-release)', 'deleted the branch epic/E2-release', 'deleted the branch scratch'])) report(`restoreRemote: ${JSON.stringify(done)}`);
+    if (/epic\/E2-release|scratch/.test(g('ls-remote', '--heads', 'origin').stdout) || json(gh('pr', 'view', '1', '--json', 'state'))?.state !== 'CLOSED') report('restoreRemote left a branch or a PR the snapshot does not hold');
+    // A delete GitHub says it did but did not (review round 1): the restore reads the repository again and stops.
+    gitIn(p, 'push', '-q', 'origin', 'main:refs/heads/scratch');
+    const silent = (...args) => (args[0] === 'api' && args.includes('DELETE') ? { status: 0, stdout: '', stderr: '' } : gh(...args));
+    throws('restore when a delete did nothing', () => restoreRemote(silent, g, repo, snap), /still differs from the snapshot \(branch scratch\)/);
+    if (JSON.stringify(restoreRemote(gh, g, repo, snap)) !== JSON.stringify(['deleted the branch scratch'])) report('restoreRemote did not delete a branch left over');
+    // main moved past the snapshot: stop.
+    gitIn(p, 'switch', '-q', 'main');
+    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'later');
+    gitIn(p, 'push', '-q', 'origin', 'main');
+    throws('restore after main moved', () => restoreRemote(gh, g, repo, snap), /main on e2e\/move-reminder moved past the snapshot/);
+    // Let the fake CI finish before the folder goes (Windows keeps a folder a running process works in).
+    for (const d of readdirSync(dir).filter((x) => x.endsWith('-gh'))) {
+      for (let i = 0; i < 60; i += 1) {
+        const ci = join(dir, d, 'ci');
+        if (!existsSync(ci) || !readdirSync(ci).filter((f) => f.endsWith('.json')).some((f) => JSON.parse(readFileSync(join(ci, f), 'utf8')).status !== 'completed')) break;
+        spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+      }
+    }
+  });
+});
+
 // 6l. T3b-AC7: the fake GitHub of the headless loop runs (scripts/fake-github.mjs) answers like GitHub,
 // as `node scripts/e2e.mjs --github <owner/repo>` recorded GitHub's answers in scripts/github-responses/:
 // every field the fake gives, GitHub gave with the same type, and its refusals read the same.
@@ -1593,7 +1794,7 @@ step('fake GitHub against GitHub\'s answers', (report) => {
   // GitHub's encode the repository's numeric id, and no numeric id of a repository or an account.
   for (const [k, r] of Object.entries(recs)) {
     const text = JSON.stringify(r);
-    for (const m of text.matchAll(/"(\w*node_id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
+    for (const m of text.matchAll(/"(\w*node_id|id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
     if (/"(owner|repository|repo|creator|author|committer|user)":\{[^{}]*"id":[1-9]/.test(text)) report(`${k}: an account's or a repository's numeric id is in the recording`);
   }
   const missing = GITHUB_KINDS.filter((k) => !recs[k]);
@@ -2369,6 +2570,126 @@ step('hooks (recorded payloads)', (report) => {
     expect('implementer-pre-tool-use-bash', 'implementer runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     crBash('merge-choice.mjs', choice, 'deny:agent');
+
+    // T4a-AC1, L-12: no git command throws away uncommitted work; the same commands pass on a clean tree.
+    const w = makeProject('l12');
+    gitIn(w, 'branch', 'other');
+    mkdirSync(join(w, 'src'), { recursive: true });
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 1;\n');
+    gitIn(w, 'add', 'src');
+    gitIn(w, 'commit', '-qm', 'a file with a space in its name');
+    const W = (command, want, extra = {}) => bash(command, want, { projectDir: w, ...extra });
+    const onClean = ['git checkout -- CLAUDE.md', 'git checkout .', 'git restore CLAUDE.md', 'git reset --hard', 'git clean -fd', 'git stash drop', 'git checkout -f other'];
+    for (const c of onClean) W(c, 'allow');
+    writeFileSync(join(w, 'CLAUDE.md'), `${readFileSync(join(w, 'CLAUDE.md'), 'utf8')}\nchanged\n`);
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 2;\n');
+    writeFileSync(join(w, 'new.js'), 'console.log(1)\n');
+    mkdirSync(join(w, 'newdir'), { recursive: true });
+    writeFileSync(join(w, 'newdir', 'n2.js'), 'console.log(2)\n');
+    for (const c of [
+      'git checkout -- CLAUDE.md', 'git checkout CLAUDE.md', 'git checkout .', 'git checkout HEAD -- CLAUDE.md', 'git checkout -f other', 'git checkout -fq other', 'git switch -f other', 'git switch --discard-changes other',
+      'git restore CLAUDE.md', 'git restore .', 'git restore -SW CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git reset --hard', 'git reset --hard HEAD', 'git clean -fd', 'git clean -f', 'git clean -f new.js',
+      'git status; git checkout -- CLAUDE.md', 'git fetch origin && git reset --hard origin/main', `git -C "${w}" checkout -- CLAUDE.md`, `git -C "${fwd(w)}" reset --hard`,
+      `cd "${w}" && git checkout -- "${join(w, 'CLAUDE.md')}"`, `git checkout -- "${join(w, 'CLAUDE.md')}"`, 'cd src && git checkout -- "my file.js"',
+      // Review round 1: what a stash or a commit earlier in the line kept is all it kept (no new files without -u, the paths it named, the index).
+      'git stash && git clean -fd', 'git commit -am wip && git clean -fd', 'git add CLAUDE.md && git commit -m x && git checkout -- .', 'git stash push -- CLAUDE.md && git checkout -- "src/my file.js"',
+      'git commit -m x -- CLAUDE.md && git reset --hard', 'git add -A && git reset --hard', 'git stash && git stash drop',
+      // Review round 2: a folder Claude Code names; paths only the run knows stand for the whole tree; a stash popped is back in the tree.
+      'cd "$CLAUDE_PROJECT_DIR" && git checkout -- .', 'cd $CLAUDE_PROJECT_DIR/src && git checkout -- "my file.js"',
+      'git diff --name-only | xargs git checkout --', 'git diff --name-only | xargs git restore', 'git ls-files -m | xargs -I{} git checkout -- {}', 'git checkout -- $(git diff --name-only)',
+      'git restore $(git diff --name-only)', 'for f in CLAUDE.md; do git checkout -- "$f"; done', 'git ls-files --others --exclude-standard | xargs git clean -f --',
+      'git stash && git stash pop && git checkout -- .', 'git add -A && git reset && git clean -f', 'mkdir fresh && cd fresh && git reset --hard',
+    ]) W(c, 'deny:uncommitted');
+    for (const c of ['Set-Location $env:CLAUDE_PROJECT_DIR; git reset --hard', 'git diff --name-only | ForEach-Object { git checkout -- $_ }']) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    // A folder the guard follows: its repository's top, a variable the line sets to a plain path (review round 3).
+    for (const c of ['cd "$(git rev-parse --show-toplevel)" && git reset --hard', 'git -C "$(git rev-parse --show-toplevel)" reset --hard', 'ROOT=$(git rev-parse --show-toplevel); cd "$ROOT" && git clean -fd', `S=${fwd(w)}; cd $S/src && git checkout -- "my file.js"`]) W(c, 'deny:uncommitted');
+    W('$root = git rev-parse --show-toplevel; Set-Location $root; git reset --hard', 'deny:uncommitted', { tool: 'PowerShell' });
+    // A folder it cannot follow: a read that fails refuses (review round 2), for a command that can throw work away only (review round 3).
+    for (const c of ['cd "$(mktemp -d)" && git reset --hard', 'for d in src docs; do git -C "$d" checkout -- .; done']) W(c, 'deny:broken');
+    for (const c of [
+      'cd "$(git rev-parse --show-toplevel)" && git status', 'git -C "$(git rev-parse --show-toplevel)" status', 'cd "$(mktemp -d)" && git init -q && git commit --allow-empty -m x',
+      'git init newrepo && cd newrepo && git add . && git commit -m init', 'mkdir scratchx && cd scratchx && git init -q && git checkout -b main', 'for d in src docs; do git -C "$d" status; done',
+      'npm create vite@latest web -- --template react && cd web && git add . && git commit -m "feat: web"', 'git checkout other --', 'git checkout -q other --', 'git checkout -b feat/x --',
+      'mkdir -p ../rt-x && cd ../rt-x && git init -q && git checkout -- .', 'cd "$(mktemp -d)" && git init -q && git reset --hard',
+    ]) W(c, 'allow');
+    W('$root = git rev-parse --show-toplevel; Set-Location $root; git status', 'allow', { tool: 'PowerShell' });
+    // Review round 4: a PowerShell assignment keeps its name, so its value is never read as a program.
+    for (const c of ["$p = '.claude/pitwall.json'; (Get-Content $p | ConvertFrom-Json).autoMerge", '$s = "$env:USERPROFILE/.claude/settings.json"; Get-Content $s', "$e = '.env'; if (Test-Path $e) { 'present' }", `$m = '${P}/scripts/merge.mjs'; node $m --change`, "$f = 'CLAUDE.md'; $f = 'docs/IDEA.md'; git checkout -- $f"]) W(c, 'allow', { tool: 'PowerShell' });
+    for (const c of ["$f = 'CLAUDE.md'; git checkout -- $f", "$f='CLAUDE.md'; git checkout -- $f"]) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    W('S=.claude; echo x > $S/settings.json', 'deny:switch');
+    // Review round 5: a variable the shell splits, a list or a command's output holds paths only the run knows; so does a loop's.
+    for (const c of ['P="CLAUDE.md docs/IDEA.md"; git checkout -- $P', 'P="new.js docs/IDEA.md"; git clean -f $P', 'F=docs/IDEA.md; for F in $(git diff --name-only); do git checkout -- "$F"; done', 'git diff --name-only | while read f; do git checkout -- "$f"; done']) W(c, 'deny:uncommitted');
+    for (const c of ["$p = 'CLAUDE.md','docs/IDEA.md'; git checkout -- $p", "$p = @('CLAUDE.md','docs/IDEA.md'); git checkout -- $p", "$f = 'docs/IDEA.md'; $f = git diff --name-only; git checkout -- $f"]) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    for (const c of ['F=docs/IDEA.md; git checkout -- $F', 'cd "$WT" && git checkout -q --detach "$(git rev-parse HEAD)"']) W(c, 'allow');
+    // git rm --cached over paths only the run knows may take any file out of the index; "." is never a branch;
+    // a folder git init found there is no new repository; in a folder mkdir made, paths are read from there.
+    for (const c of ['git rm --cached $(git ls-files -i -c --exclude-standard) && git checkout -- .', 'git ls-files -i -c --exclude-standard | xargs git rm --cached && git checkout -- .', 'mkdir -p out && cd out && git checkout -- ../CLAUDE.md']) W(c, 'deny:uncommitted');
+    for (const c of ['cd "$UNKNOWN" && git checkout .', 'git init -q && cd "$UNKNOWN" && git reset --hard']) W(c, 'deny:broken');
+    for (const c of ['cd "$UNKNOWN" && git checkout feat/x', 'mkdir -p out && cd out && git clean -f', 'mkdir -p out && cd out && git checkout -- .']) W(c, 'allow');
+    for (const c of [
+      'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
+      'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',
+      'git checkout -- docs/IDEA.md', 'git clean -fd docs', 'git add -A && git stash && git clean -fd', 'git stash -u && git clean -fd', 'git commit -am wip && git checkout -- .',
+      'git stash push -- CLAUDE.md "src/my file.js" && git checkout -- .', 'git add . && git checkout -- .', 'git add new.js newdir && git clean -fd', 'git commit -m x -- CLAUDE.md "src/my file.js" && git reset --hard',
+      'cd src && git stash push -- "my file.js" && cd .. && git checkout -- "src/my file.js"', 'git -C src stash && git reset --hard', 'git stash save wip && git reset --hard',
+      // A repository the line makes holds no work yet.
+      'git worktree add ../wt-x other && cd ../wt-x && git checkout -- CLAUDE.md', 'git clone ../origin.git copy && cd copy && git checkout -- CLAUDE.md',
+      // A path Git Bash spells /c/... (review round 2).
+      ...(process.platform === 'win32' ? [`git stash push -- /${fwd(w)[0].toLowerCase()}${fwd(w).slice(2)}/CLAUDE.md && git checkout -- CLAUDE.md`] : []),
+    ]) W(c, 'allow');
+    if (process.platform === 'win32') W(`git checkout -- /${fwd(w)[0].toLowerCase()}${fwd(w).slice(2)}/CLAUDE.md`, 'deny:uncommitted');
+    W('git stash push -- CLAUDE.md; if ($?) { git checkout -- CLAUDE.md }', 'allow', { tool: 'PowerShell' });
+    const said = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/git stash push -- CLAUDE\.md/.test(said) || !/commit/.test(said) || !/L-12/.test(said)) report(`the refusal must name the files and offer git stash push -- <files> or a commit (owner's edit): ${said}`);
+    const saidNew = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git clean -fd' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/git stash push -u -- new\.js/.test(saidNew)) report(`the refusal of git clean must offer git stash push -u for the new files: ${saidNew}`);
+    W('git checkout -- CLAUDE.md', 'deny:uncommitted', { tool: 'PowerShell' });
+    expect('implementer-pre-tool-use-bash', 'implementer: git checkout -- CLAUDE.md on a dirty tree', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }, 'deny:uncommitted');
+    expect('implementer-pre-tool-use-bash', 'implementer: git stash push -- CLAUDE.md', { projectDir: w, input: { tool_input: { command: 'git stash push -- CLAUDE.md' } } }, 'allow');
+    // A stash holds uncommitted work too.
+    gitIn(w, 'stash', 'push', '-q', '-u', '--', 'CLAUDE.md', 'new.js');
+    for (const c of ['git stash drop', 'git stash clear', 'git stash drop stash@{0}', 'git stash drop -q', 'git stash drop 0']) W(c, 'deny:uncommitted');
+    for (const c of ['git stash pop', 'git stash apply', 'git stash drop stash@{3}', 'git stash drop 3', 'git checkout -- CLAUDE.md']) W(c, 'allow');
+    W('git reset --hard', 'deny:uncommitted');
+    gitIn(w, 'stash', 'pop', '-q');
+    // What a restore from the index leaves: a change already staged, a file only deleted.
+    gitIn(w, 'add', 'CLAUDE.md');
+    gitIn(w, 'stash', 'push', '-q', '-u', '--', 'src', 'new.js', 'newdir');
+    rmSync(join(w, 'docs', 'IDEA.md'));
+    for (const c of ['git checkout -- CLAUDE.md', 'git restore CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git checkout -- docs/IDEA.md', 'git restore docs/IDEA.md']) W(c, 'allow');
+    for (const c of ['git checkout HEAD -- CLAUDE.md', 'git restore -SW CLAUDE.md', 'git reset --hard']) W(c, 'deny:uncommitted');
+    // Unstaged first, the staged change is thrown away by a restore from the index (review round 2); unstaging alone keeps it.
+    for (const c of ['git reset HEAD CLAUDE.md && git checkout -- CLAUDE.md', 'git restore --staged CLAUDE.md && git restore CLAUDE.md', 'git reset -q && git checkout -- .', 'git reset && git restore .', 'git rm --cached -q CLAUDE.md && git clean -f']) W(c, 'deny:uncommitted');
+    W('git reset HEAD CLAUDE.md; git checkout -- CLAUDE.md', 'deny:uncommitted', { tool: 'PowerShell' });
+    // A path git rm --cached took out of the index is no longer one git checkout restores (review round 3).
+    for (const c of ['git reset HEAD CLAUDE.md', 'git restore --staged CLAUDE.md', 'git reset && git add -A && git checkout -- .', 'git rm --cached -q CLAUDE.md && git checkout -- CLAUDE.md']) W(c, 'allow');
+    // A file staged as new and unstaged is untracked again: git clean deletes it, a restore leaves it (review round 3).
+    writeFileSync(join(w, 'new2.js'), 'console.log(3)\n');
+    gitIn(w, 'add', 'new2.js');
+    for (const c of ['git reset && git clean -f', 'git restore --staged new2.js && git clean -f', 'git rm --cached new2.js && git clean -f', 'git reset -- new2.js && git stash && git clean -f']) W(c, 'deny:uncommitted');
+    for (const c of ['git clean -f', 'git reset -- new2.js && git checkout -- new2.js']) W(c, 'allow');
+    gitIn(w, 'rm', '-q', '-f', '--', 'new2.js');
+    gitIn(w, 'checkout', '--', 'docs/IDEA.md');
+    // A merge conflict resolved the usual way (review round 1): the conflicted path is the merge's, not uncommitted work.
+    gitIn(w, 'commit', '-qm', 'the staged change');
+    gitIn(w, 'switch', '-qc', 'side');
+    writeFileSync(join(w, 'CLAUDE.md'), 'side\n');
+    gitIn(w, 'commit', '-qam', 'side');
+    gitIn(w, 'switch', '-q', 'main');
+    writeFileSync(join(w, 'CLAUDE.md'), 'mainline\n');
+    gitIn(w, 'commit', '-qam', 'main');
+    gitIn(w, 'merge', 'side');
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 2;\n');
+    if (!/^UU CLAUDE\.md$/m.test(gitIn(w, 'status', '--short').stdout)) report(`the conflict case needs CLAUDE.md in conflict: ${gitIn(w, 'status', '--short').stdout}`);
+    for (const c of ['git checkout --theirs CLAUDE.md', 'git checkout --ours -- CLAUDE.md', 'git restore --theirs CLAUDE.md', 'git checkout -m CLAUDE.md', 'git merge --abort']) W(c, 'allow');
+    for (const c of ['git checkout --theirs -- "src/my file.js"', 'git reset --hard']) W(c, 'deny:uncommitted');
+    // In a merge, the refusal names its --abort (review round 2): git stash refuses unmerged paths.
+    const saidMerge = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git reset --hard' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/A merge is in progress: git merge --abort/.test(saidMerge)) report(`the refusal in a merge must name git merge --abort: ${saidMerge}`);
+    gitIn(w, 'merge', '--abort');
+    // A tree git cannot read refuses, as the other guards do.
+    rmSync(join(w, '.git'), { recursive: true, force: true });
+    W('git checkout -- CLAUDE.md', 'deny:broken');
 
     // AC7: the merge guard by mode.
     bash('gh pr merge 7 --merge', 'deny:merge');

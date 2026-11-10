@@ -124,6 +124,23 @@ export function changeOf(branch, cfg) {
   return { kind, branch, id: name, epic: epic?.[1] ?? null, bug: bug?.[0] ?? null, review: `${cfg.loop.reviews}/${name}.md` };
 }
 
+// The risk class of an epic as a merge reads it (T3b-AC5): the higher of the class docs/EPICS.md gives it
+// at the commit that merges and where that commit left the base branch, so a class raised on the branch
+// (the owner said so at the clarification) holds and one lowered there does not. Null when the plan at
+// the commit gives it none. git is a gitRunner.
+export function riskClassAt(git, epic, sha, base, cfg) {
+  const order = Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
+  const classAt = (ref) => {
+    const plan = git('show', `${ref}:docs/EPICS.md`);
+    const row = plan.ok ? plan.out.split('\n').map((l) => l.split('|').map((c) => c.trim())).find((cells) => cells[0] === '' && new RegExp(`^\\[?${epic}\\]?(\\(|$)`).test(cells[1] ?? '')) : null;
+    return order.includes(row?.[3]) ? row[3] : null;
+  };
+  const fork = git('merge-base', sha, base);
+  const atHead = classAt(sha);
+  const atFork = fork.ok ? classAt(fork.out) : null;
+  return atHead && atFork && order.indexOf(atFork) > order.indexOf(atHead) ? atFork : atHead;
+}
+
 export function gitRunner(cwd) {
   return (...args) => {
     const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
