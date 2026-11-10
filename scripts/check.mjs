@@ -2613,6 +2613,15 @@ step('hooks (recorded payloads)', (report) => {
       'mkdir -p ../rt-x && cd ../rt-x && git init -q && git checkout -- .', 'cd "$(mktemp -d)" && git init -q && git reset --hard',
     ]) W(c, 'allow');
     W('$root = git rev-parse --show-toplevel; Set-Location $root; git status', 'allow', { tool: 'PowerShell' });
+    // Review round 4: a PowerShell assignment keeps its name, so its value is never read as a program.
+    for (const c of ["$p = '.claude/pitwall.json'; (Get-Content $p | ConvertFrom-Json).autoMerge", '$s = "$env:USERPROFILE/.claude/settings.json"; Get-Content $s', "$e = '.env'; if (Test-Path $e) { 'present' }", `$m = '${P}/scripts/merge.mjs'; node $m --change`, "$f = 'CLAUDE.md'; $f = 'docs/IDEA.md'; git checkout -- $f"]) W(c, 'allow', { tool: 'PowerShell' });
+    for (const c of ["$f = 'CLAUDE.md'; git checkout -- $f", "$f='CLAUDE.md'; git checkout -- $f"]) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    W('S=.claude; echo x > $S/settings.json', 'deny:switch');
+    // git rm --cached over paths only the run knows may take any file out of the index; "." is never a branch;
+    // a folder git init found there is no new repository; in a folder mkdir made, paths are read from there.
+    for (const c of ['git rm --cached $(git ls-files -i -c --exclude-standard) && git checkout -- .', 'git ls-files -i -c --exclude-standard | xargs git rm --cached && git checkout -- .', 'mkdir -p out && cd out && git checkout -- ../CLAUDE.md']) W(c, 'deny:uncommitted');
+    for (const c of ['cd "$UNKNOWN" && git checkout .', 'git init -q && cd "$UNKNOWN" && git reset --hard']) W(c, 'deny:broken');
+    for (const c of ['cd "$UNKNOWN" && git checkout feat/x', 'mkdir -p out && cd out && git clean -f', 'mkdir -p out && cd out && git checkout -- .']) W(c, 'allow');
     for (const c of [
       'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
       'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',

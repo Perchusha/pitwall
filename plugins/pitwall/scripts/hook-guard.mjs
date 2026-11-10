@@ -375,7 +375,8 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
       if (dirname(x) === x) return null;
     }
   };
-  const TOP = /\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)|`\s*git\s+rev-parse\s+--show-toplevel\s*`/g;
+  // (The parser keeps no body of a backtick substitution, so only "$(...)" can be read here.)
+  const TOP = /\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)/g;
   const expand = (w) =>
     String(w)
       .replace(TOP, (m) => topOf(dir) ?? m)
@@ -411,7 +412,15 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
         if (top) vars.set(key(name), top);
       } else if (rest.length === 1) vars.set(key(name), expand(rest[0]));
     }
-    if (vars.size || argv.some((x) => /rev-parse/.test(x))) argv = argv.map(expand);
+    // The words take the variables' values; an assignment's own name never does ("$p = 'x'" stays one).
+    const expanding = vars.size > 0 || argv.some((x) => /rev-parse/.test(x));
+    if (expanding) {
+      argv = argv.map((x, i) => {
+        if (ps && argv[1] === '=' && i < 2) return x;
+        if (ps && i === 0) return x.slice(0, x.indexOf('=') + 1) + expand(x.slice(x.indexOf('=') + 1));
+        return expand(x);
+      });
+    }
     // xargs hands its command operands only the run knows.
     let xargs = false;
     for (;;) {
@@ -431,7 +440,7 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
         while (argv.length && argv[0].startsWith('-')) argv = argv.slice(1);
       } else break;
     }
-    out.push({ argv, redirects: cmd.redirects, inputs: cmd.inputs, cwd: dir, ...(xargs ? { xargs } : {}) });
+    out.push({ argv, redirects: expanding ? cmd.redirects.map(expand) : cmd.redirects, inputs: expanding ? cmd.inputs.map(expand) : cmd.inputs, cwd: dir, ...(xargs ? { xargs } : {}) });
     const p = program(argv[0]);
     if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(p)) {
       const target = argv.slice(1).find((a) => !a.startsWith('-'));
@@ -978,20 +987,22 @@ function keptInLine(ctx) {
 // git init's and git worktree add's are; mkdir's is an empty folder in the repository around it.
 function foldersMade(argv, git, dir, home) {
   const p = program(argv[0]);
+  // A folder there already ("git init" in the project, "git clone x .") is read as it is.
+  const made = (path) => (existsSync(path) ? [] : [{ path, repo: true }]);
   if (git?.sub === 'init') {
     // Without a folder, git init makes the one it runs in a repository.
     const target = gitOperands(git.args, ['--template', '--separate-git-dir', '-b', '--initial-branch', '--object-format', '--ref-format']).before[0] ?? '.';
-    return [{ path: norm(target, git.dir ? native(git.dir, dir, home) : dir, home), repo: true }];
+    return made(norm(target, git.dir ? native(git.dir, dir, home) : dir, home));
   }
   if (git?.sub === 'clone') {
     const { before } = gitOperands(git.args, ['-o', '--origin', '-b', '--branch', '-u', '--upload-pack', '--reference', '--reference-if-able', '--separate-git-dir', '--depth', '--shallow-since', '--shallow-exclude', '-c', '--config', '--filter', '-j', '--jobs', '--template', '--server-option', '--bundle-uri']);
     const url = String(before[0] ?? '').replace(/[\\/]+$/, '');
     const target = before[1] ?? url.split(/[\\/:]/).pop()?.replace(/\.git$/, '');
-    return target ? [{ path: norm(target, dir, home), repo: true }] : [];
+    return target ? made(norm(target, dir, home)) : [];
   }
   if (git?.sub === 'worktree' && git.args[0] === 'add') {
     const target = gitOperands(git.args.slice(1), ['-b', '-B', '--reason']).before[0];
-    return target ? [{ path: norm(target, dir, home), repo: true }] : [];
+    return target ? made(norm(target, dir, home)) : [];
   }
   if (['mkdir', 'md', 'new-item', 'ni'].includes(p)) {
     const valued = /^-(itemtype|type|name|value)$/i;
@@ -1017,8 +1028,8 @@ function discards(git, dir, ctx, line) {
   // The folder is read only for a form that can throw work away; any other command passes untouched.
   // A repository a command earlier in the line makes (git clone, git init, git worktree add) holds no
   // work yet. A folder mkdir makes sits in the repository around it, which git then works on: judged
-  // there, its paths standing for the whole tree. Any other missing folder is one the guard could not
-  // follow (a variable it does not know, a command's output), and a read that fails refuses.
+  // there, with the paths read from the new folder (base). Any other missing folder is one the guard
+  // could not follow (a variable it does not know, a command's output), and a read that fails refuses.
   const missing = !existsSync(dir);
   const absent = () => {
     const made = line.made.filter((m) => inside(norm(dir), m.path));
@@ -1026,25 +1037,33 @@ function discards(git, dir, ctx, line) {
     if (!made.length) return { error: `the folder ${dir} is not there as written: a folder named through a variable or a command's output is not followed, so name it plainly` };
     let up = dir;
     while (!existsSync(up) && dirname(up) !== up) up = dirname(up);
-    return discards({ ...git, whole: true }, up, ctx, line);
+    return discards({ ...git, base: dir }, up, ctx, line);
   };
+  const spec = (paths) => (git.base && paths ? paths.map((p) => native(p, git.base)) : paths);
   const isCommit = (x) => ctx.git(['rev-parse', '--verify', '-q', `${x}^{commit}`], dir).ok;
+  // What the line did to a path's place in the index: 'removed' (git rm --cached) and 'unstaged' (git
+  // reset, restore --staged) for sure, 'maybe-' either for paths only the run knew.
+  const outOfIndex = (was) => ['unstaged', 'removed', 'maybe-unstaged', 'maybe-removed'].includes(was);
+  // Untracked by now for sure: removed, or staged as new and unstaged.
+  const untrackedNow = (e, was) => was === 'removed' || (was === 'unstaged' && e.x === 'A');
   // fromIndex: the work tree is restored from the index, so what is staged stays there, unless the line
-  // took it out of the index first; a file staged as new and unstaged since is untracked, and left alone.
+  // took it out of the index first. A file untracked by now is left alone by a restore and by a reset.
   const tracked = (paths, fromIndex) => {
-    const s = treeStatus(dir, ctx, git.whole ? null : paths, 'no');
+    const s = treeStatus(dir, ctx, spec(paths), 'no');
     if (s.error) return s;
     const { st, show } = line(dir);
     const changed = (c) => !['.', 'D'].includes(c);
     const files = s.entries.filter((e) => {
       if ((e.kind !== '1' && e.kind !== '2') || has(st.kept.tracked, e.path)) return false;
       const was = staging(st.index.tracked, e.path);
-      if (!fromIndex) return changed(e.x) || changed(e.y);
-      if (was === 'removed' || (was === 'unstaged' && e.x === 'A')) return false;
-      return was !== 'staged' && (changed(e.y) || (was === 'unstaged' && changed(e.x)));
+      if (!fromIndex) return !(e.x === 'A' && untrackedNow(e, was)) && (changed(e.x) || changed(e.y));
+      if (untrackedNow(e, was)) return false;
+      return was !== 'staged' && (changed(e.y) || (outOfIndex(was) && changed(e.x)));
     });
     return { files: files.map((e) => show(e.path)) };
   };
+  // A name git could take for a branch: not ".", nothing a path or a pattern has and a ref cannot.
+  const branchLike = (x) => !/^[.-]|\.\.|[*?[:\\\s]|\/$|\.lock$/.test(x);
 
   if (git.sub === 'checkout') {
     if (flag('-p', '--patch')) return null;
@@ -1053,7 +1072,7 @@ function discards(git, dir, ctx, line) {
     // A branch switch or a new branch keeps the work: no operand, or ("main", "main --") a single one in a
     // folder the guard cannot read, where it is taken for the branch it usually is.
     const late2 = (after && runtime(after)) || (git.runtime && !after?.length && !before.length);
-    if (!force && !late2 && !after?.length && before.length <= (missing ? 1 : 0)) return null;
+    if (!force && !late2 && !after?.length && (!before.length || (missing && before.length === 1 && branchLike(before[0])))) return null;
     if (missing) return absent();
     // Without "--", a first operand that names a commit is the commit (or the branch); the rest are paths.
     const source = after ? (before[0] ?? null) : before.length && isCommit(before[0]) ? before[0] : null;
@@ -1086,20 +1105,22 @@ function discards(git, dir, ctx, line) {
     if (flag('-n', '--dry-run') || short('n') || !(flag('-f', '--force') || short('f'))) return null;
     if (missing) return absent();
     const { before, after } = gitOperands(a, ['-e', '--exclude']);
+    // In a folder mkdir made, git clean starts from there.
     const paths = [...before, ...(after ?? [])];
-    const unknown = runtime(paths) || Boolean(git.whole);
+    const unknown = runtime(paths);
+    const where = unknown ? [] : git.base && !paths.length ? [git.base] : spec(paths);
     // Without -d or a path, git clean leaves the new folders alone.
-    const s = treeStatus(dir, ctx, unknown ? [] : paths, unknown || paths.length || flag('-d') || short('d') ? 'all' : 'normal');
+    const s = treeStatus(dir, ctx, where, unknown || where.length || flag('-d') || short('d') ? 'all' : 'normal');
     if (s.error) return s;
     const { st, show } = line(dir);
-    // New files, and the files the line took out of the index so that they are untracked now: one staged
-    // as new and unstaged, or any removed with git rm --cached.
-    const untrackedNow = (e) => {
+    // New files, and the files the line took out of the index, or may have, so that they are untracked
+    // now: one staged as new and unstaged, or any removed with git rm --cached.
+    const cleaned = (e) => {
       if (e.kind === '?') return !e.path.endsWith('/') && staging(st.index.untracked, e.path) !== 'staged';
       const was = staging(st.index.tracked, e.path);
-      return (e.kind === '1' || e.kind === '2') && e.y !== 'D' && (was === 'removed' || (was === 'unstaged' && e.x === 'A'));
+      return (e.kind === '1' || e.kind === '2') && e.y !== 'D' && (was === 'removed' || was === 'maybe-removed' || ((was === 'unstaged' || was === 'maybe-unstaged') && e.x === 'A'));
     };
-    const files = s.entries.filter((e) => untrackedNow(e) && !has(st.kept.untracked, e.path));
+    const files = s.entries.filter((e) => cleaned(e) && !has(st.kept.untracked, e.path));
     return { untracked: true, files: files.map((e) => show(e.path)) };
   }
   if (git.sub === 'stash' && (a[0] === 'drop' || a[0] === 'clear')) {
@@ -1160,8 +1181,15 @@ function keeps(git, dir, ctx, line) {
       } else if ((e.kind === '1' || e.kind === '2') && (was === 'staged' || (was == null && e.x !== '.' && ['.', 'D'].includes(e.y)))) st.kept.tracked = join2(st.kept.tracked, [e.path]);
     }
   };
+  // Paths only the run knows ("git rm --cached $(...)", xargs) may name any path: each is marked as maybe
+  // out of the index, which a restore from the index and git clean both judge the losing way.
   const unstage = (paths, value = 'unstaged') => {
-    if (!paths.length || paths.some(late)) {
+    if (git.runtime || paths.some(late)) {
+      mark(st.index.tracked, 'all', `maybe-${value}`);
+      mark(st.index.untracked, 'all', 'maybe-unstaged');
+      return;
+    }
+    if (!paths.length) {
       mark(st.index.tracked, 'all', value);
       mark(st.index.untracked, 'all', 'unstaged');
       return;
