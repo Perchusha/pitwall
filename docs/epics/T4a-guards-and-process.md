@@ -18,6 +18,21 @@ ADR: ADR-0004, ADR-0010
 
 One-way (2026-11-10): T4 is split into T4a, the guards and the follow-ups of the loop, T4b, bugs and lessons, and T4c, releases and QA, in that order, all three high risk; the owner merges each (owner).
 
+Two-way, picked by the agent and accepted by the owner as a list on 2026-11-10, with the owner's edits (marked):
+
+| Area | Choice | Why, in one line |
+| --- | --- | --- |
+| Refuse or ask | The guard refuses (deny), and the refusal offers the safe way: `git stash push -- <files>`, which keeps the changes in a stash to restore, or a commit (owner's edit) | Headless, "ask" is a refusal anyway; with the safe way named, "put the file back" works without a terminal |
+| Which commands | `git checkout -- <path>`, `git checkout <path>` without `--` (a path, not a branch), `git checkout .`, `git checkout <commit> -- <path>`, `git checkout -f`, `git switch -f` or `--discard-changes`, `git restore` of the work tree, `git reset --hard`, `git clean` that deletes an untracked file, `git stash drop` and `git stash clear`; read through `git -C <dir>` and chains of `&&` and `;`, with Windows paths among the cases (owner's edit, L-9); decided by `git status --porcelain` on the command's paths; `git clean -n` passes, `-x` keeps T3a's switch rule; a failed read refuses | The same mistake in every spelling an agent uses, and nothing on a clean tree |
+| Who | The main conversation and every sub-agent alike | An implementer makes the same mistake (owner) |
+| Not covered | `rm` or `Remove-Item` of an untracked file | Not a git command: R-2's kind |
+| The owner's choice | `continue` never writes an answer about merges without the owner into the docs, an epic's open questions or a PR; it hands over `merge-choice.mjs`, points to `.claude/pitwall.json` and reads it before every merge | One record, which `merge.mjs` reads |
+| Owner calls | `scripts/owner-calls.mjs` gathers the list read-only (`.claude/pitwall.json`, the docs, PRs and statuses through `merge.mjs`'s readers); each item has its default if the owner says nothing (protection pending: nothing merges; no choice of ADR-0010: every merge waits; an open question: the epic waits; a ready PR: it stays open; an open bug: it goes first); the skill asks one at a time and records an answer where an agent may write it; the choice of ADR-0010 and merge protection it hands over as commands, as `continue` does (owner's edit); `disable-model-invocation` stays | Testable in the check; the owner's switches stay the owner's |
+| Snapshot restore | The saved stage keeps the repository's id and its branches and PRs; before deleting anything the harness checks the id and stops, changing nothing, when it differs (owner's edit); then it closes the PRs and deletes the branches the snapshot does not hold, and stops when `main` moved past the snapshot or GitHub answers anything unexpected; checked against the live fake GitHub; GitHub's answers to a PR closed and a branch deleted are recorded at the next run on real GitHub (owner's edit) | A typo in `--github` must never touch a live repository; the fake is not yet held to those two answers |
+| Overridden stops | The scripted owner writes `UNSCRIPTED OVERRIDE` when it took the way that goes on against a recommendation to stop; the result reads "E2E LOOP: PASS, stops overridden: N" with each text, the exit code stays 0, and the stage's numbers keep them | Not a plain PASS, and a person reads them before the run counts |
+| Runs before the PR | `node scripts/e2e.mjs --hooks` (no new payloads: the guard reads the recorded Bash payload) and E1 on the fake GitHub in the owner's terminal with `--log`; no run on real GitHub | What T4a changes is covered by the check and these two |
+| Version | 0.6.0 | A guard, a script and a skill are additions |
+
 ## Out of scope
 
 - Bugs and lessons (T4b); releases, staging and QA (T4c).
