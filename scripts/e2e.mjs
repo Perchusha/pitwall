@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Headless runs of pitwall's stage skills with a scripted owner (T1-AC7, T2-AC7, T3b-AC7).
 //
-//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>]
+//   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
 // Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0 and e1
@@ -29,7 +29,7 @@
 // wording of the model's replies. The scratch folder is kept and its path printed.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +39,38 @@ const plugin = join(root, 'plugins', 'pitwall');
 const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 
-const argv = process.argv.slice(2);
+let argv = process.argv.slice(2);
+// --log <file>: everything the run prints goes to that file too, so the owner can run it in a terminal of
+// their own, away from any Claude Code session that a restart could end, and the session reads the file.
+const logAt = argv.indexOf('--log');
+if (logAt >= 0) {
+  const file = resolve(argv[logAt + 1] ?? '');
+  if (!argv[logAt + 1] || argv[logAt + 1].startsWith('--')) {
+    console.error('usage: --log <file>');
+    process.exit(2);
+  }
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, '');
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write.bind(stream);
+    stream.write = (chunk, ...rest) => {
+      appendFileSync(file, chunk);
+      return write(chunk, ...rest);
+    };
+  }
+  argv = [...argv.slice(0, logAt), ...argv.slice(logAt + 2)];
+}
+// The first line of every run: which plugin its sessions load. Always this checkout through --plugin-dir,
+// never a copy installed from a marketplace, which the project's own settings would load beside it.
+const pluginCommit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+const dirty = spawnSync('git', ['status', '--porcelain', '--', 'plugins'], { cwd: root, encoding: 'utf8' }).stdout.trim() ? ', with uncommitted changes' : '';
+const cliVersion = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim().split(' ')[0] ?? '?';
+console.log(`e2e: pitwall ${version} from ${plugin.split('\\').join('/')} at ${pluginCommit}${dirty} (--plugin-dir), Claude Code ${cliVersion}`);
+const installed = spawnSync('claude', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '';
+if (/\bpitwall@/.test(installed)) {
+  console.error('e2e: pitwall is installed from a marketplace (claude plugin list), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.');
+  process.exit(2);
+}
 // The hooks have a run of their own (T3a-AC8): scripts/e2e-hooks.mjs, which exits when done.
 if (argv[0] === '--hooks') {
   if (argv.slice(1).some((a) => a !== '--record')) {
