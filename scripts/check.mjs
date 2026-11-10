@@ -2550,22 +2550,37 @@ step('hooks (recorded payloads)', (report) => {
     // T4a-AC1, L-12: no git command throws away uncommitted work; the same commands pass on a clean tree.
     const w = makeProject('l12');
     gitIn(w, 'branch', 'other');
+    mkdirSync(join(w, 'src'), { recursive: true });
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 1;\n');
+    gitIn(w, 'add', 'src');
+    gitIn(w, 'commit', '-qm', 'a file with a space in its name');
     const W = (command, want, extra = {}) => bash(command, want, { projectDir: w, ...extra });
     const onClean = ['git checkout -- CLAUDE.md', 'git checkout .', 'git restore CLAUDE.md', 'git reset --hard', 'git clean -fd', 'git stash drop', 'git checkout -f other'];
     for (const c of onClean) W(c, 'allow');
     writeFileSync(join(w, 'CLAUDE.md'), `${readFileSync(join(w, 'CLAUDE.md'), 'utf8')}\nchanged\n`);
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 2;\n');
     writeFileSync(join(w, 'new.js'), 'console.log(1)\n');
+    mkdirSync(join(w, 'newdir'), { recursive: true });
+    writeFileSync(join(w, 'newdir', 'n2.js'), 'console.log(2)\n');
     for (const c of [
-      'git checkout -- CLAUDE.md', 'git checkout CLAUDE.md', 'git checkout .', 'git checkout HEAD -- CLAUDE.md', 'git checkout -f other', 'git switch -f other', 'git switch --discard-changes other',
-      'git restore CLAUDE.md', 'git restore .', 'git restore -SW CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git reset --hard', 'git reset --hard HEAD', 'git clean -fd', 'git clean -f new.js',
+      'git checkout -- CLAUDE.md', 'git checkout CLAUDE.md', 'git checkout .', 'git checkout HEAD -- CLAUDE.md', 'git checkout -f other', 'git checkout -fq other', 'git switch -f other', 'git switch --discard-changes other',
+      'git restore CLAUDE.md', 'git restore .', 'git restore -SW CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git reset --hard', 'git reset --hard HEAD', 'git clean -fd', 'git clean -f', 'git clean -f new.js',
       'git status; git checkout -- CLAUDE.md', 'git fetch origin && git reset --hard origin/main', `git -C "${w}" checkout -- CLAUDE.md`, `git -C "${fwd(w)}" reset --hard`,
-      `cd "${w}" && git checkout -- "${join(w, 'CLAUDE.md')}"`, `git checkout -- "${join(w, 'CLAUDE.md')}"`,
+      `cd "${w}" && git checkout -- "${join(w, 'CLAUDE.md')}"`, `git checkout -- "${join(w, 'CLAUDE.md')}"`, 'cd src && git checkout -- "my file.js"',
+      // Review round 1: what a stash or a commit earlier in the line kept is all it kept (no new files without -u, the paths it named, the index).
+      'git stash && git clean -fd', 'git commit -am wip && git clean -fd', 'git add CLAUDE.md && git commit -m x && git checkout -- .', 'git stash push -- CLAUDE.md && git checkout -- "src/my file.js"',
+      'git commit -m x -- CLAUDE.md && git reset --hard', 'git add -A && git reset --hard', 'git stash && git stash drop',
     ]) W(c, 'deny:uncommitted');
     for (const c of [
       'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
       'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',
-      'git checkout -- docs/IDEA.md', 'git clean -fd docs',
+      'git checkout -- docs/IDEA.md', 'git clean -fd docs', 'git add -A && git stash && git clean -fd', 'git stash -u && git clean -fd', 'git commit -am wip && git checkout -- .',
+      'git stash push -- CLAUDE.md "src/my file.js" && git checkout -- .', 'git add . && git checkout -- .', 'git add new.js newdir && git clean -fd', 'git commit -m x -- CLAUDE.md "src/my file.js" && git reset --hard',
+      'cd src && git stash push -- "my file.js" && cd .. && git checkout -- "src/my file.js"', 'git -C src stash && git reset --hard', 'git stash save wip && git reset --hard',
+      // A folder the line makes holds no work yet.
+      'git worktree add ../wt-x other && cd ../wt-x && git checkout -- CLAUDE.md',
     ]) W(c, 'allow');
+    W('git stash push -- CLAUDE.md; if ($?) { git checkout -- CLAUDE.md }', 'allow', { tool: 'PowerShell' });
     const said = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
     if (!/git stash push -- CLAUDE\.md/.test(said) || !/commit/.test(said) || !/L-12/.test(said)) report(`the refusal must name the files and offer git stash push -- <files> or a commit (owner's edit): ${said}`);
     const saidNew = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git clean -fd' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
@@ -2575,9 +2590,31 @@ step('hooks (recorded payloads)', (report) => {
     expect('implementer-pre-tool-use-bash', 'implementer: git stash push -- CLAUDE.md', { projectDir: w, input: { tool_input: { command: 'git stash push -- CLAUDE.md' } } }, 'allow');
     // A stash holds uncommitted work too.
     gitIn(w, 'stash', 'push', '-q', '-u', '--', 'CLAUDE.md', 'new.js');
-    for (const c of ['git stash drop', 'git stash clear', 'git stash drop stash@{0}']) W(c, 'deny:uncommitted');
-    for (const c of ['git stash pop', 'git stash apply', 'git stash drop stash@{3}', 'git checkout -- CLAUDE.md', 'git reset --hard']) W(c, 'allow');
+    for (const c of ['git stash drop', 'git stash clear', 'git stash drop stash@{0}', 'git stash drop -q', 'git stash drop 0']) W(c, 'deny:uncommitted');
+    for (const c of ['git stash pop', 'git stash apply', 'git stash drop stash@{3}', 'git stash drop 3', 'git checkout -- CLAUDE.md']) W(c, 'allow');
+    W('git reset --hard', 'deny:uncommitted');
     gitIn(w, 'stash', 'pop', '-q');
+    // What a restore from the index leaves: a change already staged, a file only deleted.
+    gitIn(w, 'add', 'CLAUDE.md');
+    gitIn(w, 'stash', 'push', '-q', '-u', '--', 'src', 'new.js', 'newdir');
+    rmSync(join(w, 'docs', 'IDEA.md'));
+    for (const c of ['git checkout -- CLAUDE.md', 'git restore CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git checkout -- docs/IDEA.md', 'git restore docs/IDEA.md']) W(c, 'allow');
+    for (const c of ['git checkout HEAD -- CLAUDE.md', 'git restore -SW CLAUDE.md', 'git reset --hard']) W(c, 'deny:uncommitted');
+    gitIn(w, 'checkout', '--', 'docs/IDEA.md');
+    // A merge conflict resolved the usual way (review round 1): the conflicted path is the merge's, not uncommitted work.
+    gitIn(w, 'commit', '-qm', 'the staged change');
+    gitIn(w, 'switch', '-qc', 'side');
+    writeFileSync(join(w, 'CLAUDE.md'), 'side\n');
+    gitIn(w, 'commit', '-qam', 'side');
+    gitIn(w, 'switch', '-q', 'main');
+    writeFileSync(join(w, 'CLAUDE.md'), 'mainline\n');
+    gitIn(w, 'commit', '-qam', 'main');
+    gitIn(w, 'merge', 'side');
+    writeFileSync(join(w, 'src', 'my file.js'), 'export const a = 2;\n');
+    if (!/^UU CLAUDE\.md$/m.test(gitIn(w, 'status', '--short').stdout)) report(`the conflict case needs CLAUDE.md in conflict: ${gitIn(w, 'status', '--short').stdout}`);
+    for (const c of ['git checkout --theirs CLAUDE.md', 'git checkout --ours -- CLAUDE.md', 'git restore --theirs CLAUDE.md', 'git checkout -m CLAUDE.md', 'git merge --abort']) W(c, 'allow');
+    for (const c of ['git checkout --theirs -- "src/my file.js"', 'git reset --hard']) W(c, 'deny:uncommitted');
+    gitIn(w, 'merge', '--abort');
     // A tree git cannot read refuses, as the other guards do.
     rmSync(join(w, '.git'), { recursive: true, force: true });
     W('git checkout -- CLAUDE.md', 'deny:broken');
