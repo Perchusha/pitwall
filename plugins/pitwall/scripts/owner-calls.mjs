@@ -14,12 +14,14 @@
 // GitHub is read through gh, as merge.mjs reads it; --no-github, or a gh that cannot read, leaves
 // the merges out and says why. --json prints { groups: [{ name, title, items: [{ what, default, run? }] }], notes },
 // run being the commands for the owner, each on a line of its own in the text output. An open question
-// is a line of "## Open questions" that asks one; "Answered (<date>): ..." and notes are not.
+// is an item of "## Open questions" (a bullet with its wrapped lines, or a paragraph) that asks one;
+// "Answered (<date>): ..." and notes are not. A PR's risk class is read as merge.mjs reads it, at its
+// head and where it left main.
 // Exit 0, or 2 on a usage error or outside a pitwall project.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode } from './lib.mjs';
+import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
 
 requireNode();
 const usage = 'node owner-calls.mjs [--project <dir>] [--json] [--no-github]';
@@ -39,6 +41,20 @@ const section = (text, name) => {
   const m = new RegExp(`^## ${name}[ \\t]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm').exec(text ?? '');
   return m ? m[1].trim() : '';
 };
+// The items of a list: a bullet with the lines wrapped under it, or a paragraph.
+const items = (text) => {
+  const out = [];
+  let open = false;
+  for (const l of text.split('\n')) {
+    const bullet = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(l);
+    if (!l.trim()) open = false;
+    else if (bullet || !open) {
+      out.push((bullet ? bullet[1] : l).trim());
+      open = true;
+    } else out[out.length - 1] += ` ${l.trim()}`;
+  }
+  return out;
+};
 const groups = { switches: [], questions: [], merges: [], bugs: [] };
 const notes = [];
 
@@ -53,14 +69,14 @@ if (typeof choice !== 'boolean') {
 
 // The open questions of every epic not merged yet.
 const plan = rows(read('docs/EPICS.md')).slice(1);
-const epics = plan.map((c) => ({ id: /^\[?(E\d+)\]?/.exec(c[0] ?? '')?.[1], link: /\]\(([^)]+)\)/.exec(c[0] ?? '')?.[1], risk: c[2], status: c[4] ?? '' })).filter((e) => e.id);
+const epics = plan.map((c) => ({ id: /^\[?(E\d+)\]?/.exec(c[0] ?? '')?.[1], link: /\]\(([^)]+)\)/.exec(c[0] ?? '')?.[1], status: c[4] ?? '' })).filter((e) => e.id);
 for (const e of epics.filter((x) => !/^(merged|released)\b/i.test(x.status))) {
   const text = e.link ? read(join('docs', e.link)) : null;
   const open = section(text, 'Open questions');
   if (!open || /^none\.?$/i.test(open)) continue;
   // An open question asks something; an answer is recorded as "Answered (<date>): ..." (the continue skill),
   // and a note that asks nothing waits for nobody.
-  for (const q of open.split('\n').map((l) => l.replace(/^[-*]\s+/, '').trim()).filter(Boolean)) {
+  for (const q of items(open)) {
     if (/^(answered|closed)\b/i.test(q) || !q.includes('?')) continue;
     groups.questions.push({ what: `${e.id}: ${q}`, default: `${e.id} waits for the answer before any code` });
   }
@@ -100,8 +116,14 @@ else {
       continue;
     }
     if (r.review?.state !== 'success' || g.gate?.conclusion !== 'success') continue;
-    const risk = c.epic ? epics.find((e) => e.id === c.epic)?.risk : null;
-    const waits = !c.epic ? 'a bug fix' : cfg.riskClasses[risk]?.merge !== 'auto' ? `${risk} risk` : choice !== true ? 'you have not allowed merges without you' : null;
+    // The class merge.mjs will read: at the PR's head, here or as fetched, and where it left main.
+    const head = c.epic ? [pr.headRefOid, `refs/remotes/origin/${pr.headRefName}`].find((x) => git('rev-parse', '--verify', '-q', `${x}^{commit}`).ok) : null;
+    const risk = head ? riskClassAt(git, c.epic, head, cfg.mergeProtection.branch, cfg) : null;
+    const waits = !c.epic
+      ? 'a bug fix'
+      : !risk
+        ? head ? `docs/EPICS.md at its head gives ${c.epic} no risk class` : 'its head is not in this clone, so its risk class is unknown: git fetch'
+        : cfg.riskClasses[risk].merge !== 'auto' ? `${risk} risk` : choice !== true ? 'you have not allowed merges without you' : null;
     if (waits) groups.merges.push({ what: `PR #${pr.number} (${c.id}) is ready: gate and ai-review are green; it waits for your yes (${waits})`, default: 'it stays open' });
   }
 }

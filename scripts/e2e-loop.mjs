@@ -345,16 +345,24 @@ export function restoreRemote(gh, git, repo, snap) {
   const gone = snap.prs.filter((p) => p.state === 'OPEN' && now.prs.find((q) => q.number === p.number)?.state !== 'OPEN');
   if (gone.length) throw new Error(`PRs open in the snapshot are no longer open: ${gone.map((p) => `#${p.number}`).join(', ')}; recreate the repository empty and run from e0`);
   const done = [];
+  // A PR is closed with its branch left in place: the branches are judged on their own below, so a branch
+  // the snapshot holds stays even when a later PR came from it.
   for (const p of now.prs.filter((q) => q.state === 'OPEN' && !snap.prs.some((s) => s.number === q.number))) {
-    const r = gh('pr', 'close', String(p.number), '--repo', repo, '--delete-branch');
+    const r = gh('pr', 'close', String(p.number), '--repo', repo);
     if (r.status !== 0) throw new Error(`closing PR #${p.number}: GitHub answered ${r.status}: ${r.stderr.trim().split('\n').pop()}; the run stops here`);
-    done.push(`closed PR #${p.number} and deleted its branch ${p.headRefName}`);
+    done.push(`closed PR #${p.number} (${p.headRefName})`);
   }
-  const left = remoteNow(gh, git, repo).branches;
-  for (const b of Object.keys(left).filter((x) => !snap.branches.includes(x))) {
+  for (const b of Object.keys(now.branches).filter((x) => !snap.branches.includes(x))) {
     const r = gh('api', '-X', 'DELETE', `repos/${repo}/git/refs/heads/${b}`);
     if (r.status !== 0) throw new Error(`deleting the branch ${b}: GitHub answered ${r.status}: ${r.stderr.trim().split('\n').pop()}; the run stops here`);
     done.push(`deleted the branch ${b}`);
+  }
+  // Read again: the repository now holds the snapshot's branches and open PRs, and nothing more.
+  if (done.length) {
+    const after = remoteNow(gh, git, repo);
+    const extraBranches = Object.keys(after.branches).filter((x) => !snap.branches.includes(x));
+    const extraPrs = after.prs.filter((q) => q.state === 'OPEN' && !snap.prs.some((s) => s.number === q.number));
+    if (after.branches.main !== snap.main || extraBranches.length || extraPrs.length) throw new Error(`after the restore ${repo} still differs from the snapshot (${[...extraBranches.map((b) => `branch ${b}`), ...extraPrs.map((q) => `PR #${q.number}`), ...(after.branches.main !== snap.main ? ['main moved'] : [])].join(', ')}): the run stops here`);
   }
   return done;
 }
@@ -411,6 +419,9 @@ export function saveResponses(file, repo) {
     // The first answer of each kind; a failed call counts only where failure is the answer: protection and rulesets
     // on GitHub Free, and the checks of a PR with a red one.
     if (!kind || written.includes(kind) || (c.status !== 0 && !/^(api-protection|api-rules|pr-checks)$/.test(kind))) continue;
+    // The harness's reads of the snapshot ask other fields than the loop does (the repository's id): only
+    // its closing and deleting are recorded (T4a-AC4).
+    if (c.caller === 'harness' && !/^(pr-close|api-ref-delete)$/.test(kind)) continue;
     let body = c.stdout;
     try {
       body = JSON.parse(c.stdout);
@@ -425,8 +436,9 @@ export function saveResponses(file, repo) {
       if ('email' in o && typeof o.name === 'string') o.name = '<name>';
       // A repository's numeric identity, beside the name already scrubbed.
       if ('full_name' in o || /\/repos\/[^/]+\/[^/]+$/.test(String(o.url ?? ''))) for (const k of ['id', 'node_id']) if (k in o) o[k] = typeof o[k] === 'number' ? 0 : `<${k}>`;
-      // Every node id: GitHub's encode the repository's numeric id (base64url msgpack), whatever object holds them.
-      for (const k of Object.keys(o)) if (/node_id$/.test(k) && typeof o[k] === 'string') o[k] = `<${k}>`;
+      // Every node id: GitHub's encode the repository's numeric id (base64url msgpack), whatever object holds them;
+      // gh's --json gives them as a string "id" (a repository's "R_...", a PR's "PR_...").
+      for (const k of Object.keys(o)) if ((/node_id$/.test(k) || k === 'id') && typeof o[k] === 'string') o[k] = `<${k}>`;
       // A commit's signature check repeats the raw commit, author's name included.
       for (const k of ['payload', 'signature']) if ('verified' in o && typeof o[k] === 'string') o[k] = `<${k}>`;
       return o;

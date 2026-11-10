@@ -23,13 +23,18 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs`, and `merge.m
 
 1. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs"`. It reads `.claude/pitwall.json`, the docs and, through gh, the open PRs and their checks, and writes nothing.
 2. Show its list in one message, as it printed it: each group, each line with what happens if the owner says nothing, the commands for the switches, and its notes (GitHub not read, for instance). When it says nothing waits, say so and stop.
-3. Go through the questions and the ready merges, one per message, in the list's order:
+3. Go through the questions first, one per message, in the list's order:
    - an open question of an epic: ask it; record the answer in that epic's "## Open questions" as a line `Answered (<date>): <the question>: <the answer>`, in place of the question; a new one-way decision goes through `/pitwall:decide <area>` instead;
    - an open item of the plan review: it is closed in the plan, not here: say so and point to `/pitwall:plan`;
-   - a PR ready and waiting for the owner's yes: ask whether to merge it now; on yes, `git switch <its branch>` and `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --change --owner-approved`, and act on its exit as `/pitwall:continue` step 9 says; on no, it stays open;
    - an open bug: nothing to ask; its fix goes first in the next `/pitwall:continue`.
-4. Commit what you recorded on the branch the project is on, naming each path (`git commit -m "docs: the owner's answers" -- <paths>`); on `main`, which is protected, leave it for the first commit of the next branch and say so.
-5. Tell the owner in a few lines what is answered, what they still have to run, and what still waits.
+4. Before any merge, put the answers where they stay (`git branch --show-current` tells where the project is):
+   - on the branch of a change with no PR open yet (`gh pr list --head <branch> --state open` lists nothing): commit them there, naming each path, `git commit -m "docs: the owner's answers" -- <paths>`;
+   - on `main`, which is protected, or on a branch whose PR is open: never commit them, since a commit there can move a reviewed head and ask for another review round. They stay in the tree, and the first commit of the next branch `/pitwall:continue` starts records them (its step 1); say so.
+5. Then the ready merges, last, one per message: ask whether to merge it now. On no, it stays open. On yes:
+   - `git switch <its branch>`, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --change --owner-approved`, and act on its exit as `/pitwall:continue` step 9 says;
+   - after a merge, with a remote, `git switch main` and `git pull --ff-only origin main`, as `/pitwall:continue` step 10 does, before the next merge or the end;
+   - answers left in the tree move with these switches; when git refuses a switch or the pull over them, keep them with `git stash push -- <their paths>`, run the step again, then `git stash pop`.
+6. Tell the owner in a few lines what is answered, what they still have to run, and what still waits.
 
 ## Output
 

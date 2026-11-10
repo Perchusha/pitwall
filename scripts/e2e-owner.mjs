@@ -10,7 +10,8 @@ export const UNSCRIPTED_RULE = `- When a question is covered by neither the fact
 // whether it overrode a recommendation to stop.
 export function readOwner(reply, assistant) {
   const text = String(reply ?? '').trim();
-  const mark = /^UNSCRIPTED(\s+OVERRIDE)?\b/.exec(text);
+  // The marker as the rule writes it, or as a model dresses it: bold, in any case, "(OVERRIDE)".
+  const mark = /^[*_`#>\s]*UNSCRIPTED\b[*_`]*(?:[ \t]*\(?[ \t]*(OVERRIDE)\b[ \t]*\)?)?[*_`]*/i.exec(text);
   if (!mark) return { text, question: null, override: false };
   // The question: the last paragraph of the assistant's message that asks one, or the end of the message.
   const paragraphs = String(assistant ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);

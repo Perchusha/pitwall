@@ -1594,6 +1594,11 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     ['UNSCRIPTED: yes, go on', { text: 'yes, go on', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
     ['UNSCRIPTED OVERRIDE\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
     ['UNSCRIPTED OVERRIDE', { text: 'Do as you recommend.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    // Review round 1: the marker as a model may dress it still counts.
+    ['**UNSCRIPTED OVERRIDE**\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['UNSCRIPTED (OVERRIDE): start E1 now.', { text: 'start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['unscripted override\nStart E1 now.', { text: 'Start E1 now.', question: 'Should I hold E1 until you have run QA-E0-2?', override: true }],
+    ['**UNSCRIPTED**\nGo on.', { text: 'Go on.', question: 'Should I hold E1 until you have run QA-E0-2?', override: false }],
   ];
   for (const [reply, want] of cases) {
     const got = readOwner(reply, ask);
@@ -1662,10 +1667,10 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     // Questions: an epic's open question, not its answers or its notes; the plan review's open items while the plan is made.
     p = fresh((q) => {
       const f = join(q, 'docs', 'epics', 'E2-release.md');
-      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.'));
+      writeFileSync(f, readFileSync(f, 'utf8').replace('## Open questions\n\nNone.', '## Open questions\n\n- Which installer format for macOS?\n- Answered (2026-11-10): Which icon? The tray one.\n- If the build fails, the owner runs /pitwall:decide CI/CD.\n- Should the tray icon\n  follow the dark mode?'));
     });
     out = calls(p, ['--no-github']).out;
-    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the one open question of E2`);
+    if (JSON.stringify(items(out, 'questions')) !== JSON.stringify(['E2: Which installer format for macOS?', 'E2: Should the tray icon follow the dark mode?'])) report(`owner-calls: questions ${JSON.stringify(items(out, 'questions'))}, expected the two open questions of E2, a wrapped one whole`);
     const planning = join(dir, 'planning');
     makePlanRepo(join(dir, 'pl'), { spike: false });
     cpSync(join(dir, 'pl', 'repo'), planning, { recursive: true });
@@ -1707,6 +1712,14 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     gitIn(p, 'push', '-q', 'origin', 'epic/E2-release');
     fake(p, 'pr', 'create', '--base', 'main', '--head', 'epic/E2-release', '--title', 'E2', '--body', 'x');
     if (items(calls(p).out, 'merges').some((m) => /E2-release/.test(m))) report('owner-calls lists a PR whose review is not done');
+    // A class raised on the branch holds, as merge.mjs reads it (review round 1), though main still says normal.
+    gitIn(p, 'switch', '-q', 'epic/E1-reminder');
+    const plan = join(p, 'docs', 'EPICS.md');
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('| The reminder | normal |', '| The reminder | high |'));
+    gitIn(p, 'commit', '-qm', 'docs: E1 is high risk', '--', 'docs/EPICS.md');
+    greenPr(p, 'epic/E1-reminder');
+    gitIn(p, 'switch', '-q', 'main');
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*\(high risk\)/.test(m))) report(`owner-calls misses a PR whose epic was raised to high on its branch: ${JSON.stringify(calls(p).out)}`);
     const unread = runScript('owner-calls.mjs', ['--project', p, '--json'], { env: { ...live(p), PITWALL_GH: JSON.stringify([join(dir, 'no-such-gh')]) } });
     if (!/GitHub could not be read/.test(unread.stdout)) report(`owner-calls with a gh that does not run must say GitHub was not read: ${unread.stdout}${unread.stderr}`);
     if (runScript('owner-calls.mjs', ['--project', dir]).status !== 2) report('owner-calls outside a pitwall project: expected exit 2');
@@ -1740,8 +1753,13 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     const failing = (...args) => (args[0] === 'pr' && args[1] === 'close' ? { status: 1, stdout: '', stderr: 'GraphQL: something unexpected' } : gh(...args));
     throws('restore when GitHub answers a close unexpectedly', () => restoreRemote(failing, g, repo, snap), /closing PR #1: GitHub answered 1.*stops/);
     const done = restoreRemote(gh, g, repo, snap);
-    if (JSON.stringify(done) !== JSON.stringify(['closed PR #1 and deleted its branch epic/E2-release', 'deleted the branch scratch'])) report(`restoreRemote: ${JSON.stringify(done)}`);
+    if (JSON.stringify(done) !== JSON.stringify(['closed PR #1 (epic/E2-release)', 'deleted the branch epic/E2-release', 'deleted the branch scratch'])) report(`restoreRemote: ${JSON.stringify(done)}`);
     if (/epic\/E2-release|scratch/.test(g('ls-remote', '--heads', 'origin').stdout) || json(gh('pr', 'view', '1', '--json', 'state'))?.state !== 'CLOSED') report('restoreRemote left a branch or a PR the snapshot does not hold');
+    // A delete GitHub says it did but did not (review round 1): the restore reads the repository again and stops.
+    gitIn(p, 'push', '-q', 'origin', 'main:refs/heads/scratch');
+    const silent = (...args) => (args[0] === 'api' && args.includes('DELETE') ? { status: 0, stdout: '', stderr: '' } : gh(...args));
+    throws('restore when a delete did nothing', () => restoreRemote(silent, g, repo, snap), /still differs from the snapshot \(branch scratch\)/);
+    if (JSON.stringify(restoreRemote(gh, g, repo, snap)) !== JSON.stringify(['deleted the branch scratch'])) report('restoreRemote did not delete a branch left over');
     // main moved past the snapshot: stop.
     gitIn(p, 'switch', '-q', 'main');
     gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'later');
@@ -1770,7 +1788,7 @@ step('fake GitHub against GitHub\'s answers', (report) => {
   // GitHub's encode the repository's numeric id, and no numeric id of a repository or an account.
   for (const [k, r] of Object.entries(recs)) {
     const text = JSON.stringify(r);
-    for (const m of text.matchAll(/"(\w*node_id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
+    for (const m of text.matchAll(/"(\w*node_id|id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
     if (/"(owner|repository|repo|creator|author|committer|user)":\{[^{}]*"id":[1-9]/.test(text)) report(`${k}: an account's or a repository's numeric id is in the recording`);
   }
   const missing = GITHUB_KINDS.filter((k) => !recs[k]);
