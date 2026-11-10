@@ -23,6 +23,8 @@ The first bugs (owner, 2026-11-11): once `/pitwall:bug` is built, it files four 
 - `git reset --merge` is not judged (R-3);
 - a PowerShell assignment of a single word is read as running its value: `$r = 'review-status.mjs'` is refused as `review` (T3a).
 
+Once they are filed, R-3 names the three of them it describes by their BUG-n instead, and so does this list, so that a gap lives in one file: R-3 keeps only what was accepted and will not be fixed (owner, 2026-11-11).
+
 They are not T4b's criteria. They are fixed after T4b, when the script of T4b-AC4 checks each change of the guard against the corpus, `git rm -f` first, since it throws work away more readily than the others.
 
 ## Out of scope
