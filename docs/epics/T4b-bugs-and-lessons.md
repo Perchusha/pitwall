@@ -17,9 +17,18 @@ ADR: ADR-0006, ADR-0010
 
 One-way (2026-11-10): split out of T4 (see T4a-guards-and-process.md), high risk because a fix merging by its own class changes the rules of merges (owner).
 
+The first bugs (owner, 2026-11-11): once `/pitwall:bug` is built, it files four gaps of the hooks' guard as the first bugs in pitwall's own `docs/BUGS.md`, in the new format, which is the skill's first run on real data. Each is not blocking, and each fix is high risk, since it changes a guard:
+- `git rm -f` over a changed file passes (R-3);
+- `git worktree remove --force` over a work tree with changes passes (R-3);
+- `git reset --merge` is not judged (R-3);
+- a PowerShell assignment of a single word is read as running its value: `$r = 'review-status.mjs'` is refused as `review` (T3a).
+
+They are not T4b's criteria. They are fixed after T4b, when the script of T4b-AC4 checks each change of the guard against the corpus, `git rm -f` first, since it throws work away more readily than the others.
+
 ## Out of scope
 
 - Releases, staging and QA (T4c), whose qa agent files bugs in this epic's format.
+- Fixing the four first bugs: after T4b (see Decisions).
 
 ## Open questions
 
