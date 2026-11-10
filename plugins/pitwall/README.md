@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.5.0, stages 0 to 5, the hooks and the epic loop.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue` and `/pitwall:gate` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4c: until then each lap of the loop ends at the merge, and `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:owner-calls` say they are not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.6.0, stages 0 to 5, the hooks and the epic loop.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue`, `/pitwall:gate` and `/pitwall:owner-calls` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4c: until then each lap of the loop ends at the merge, and `/pitwall:release`, `/pitwall:bug` and `/pitwall:lesson` say they are not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -31,7 +31,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 | 5. Plan review | (the `plan-reviewer` agent, from `plan`) | `docs/PLAN-REVIEW.md`: pre-mortem, requirements, launch, sizing, findings; `ai-review` on the plan PR, which merges after your yes |
 | 6. Epic loop | `/pitwall:continue` | One merged change per lap: an open bug's fix or the next epic, implemented, gated, reviewed into `docs/reviews/`, merged by risk class (tags and QA in T4c) |
 
-Helpers: `/pitwall:gate`, `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`, `/pitwall:owner-calls`.
+Helpers: `/pitwall:gate`, `/pitwall:owner-calls` (everything that waits for you, in one list, with what happens if you say nothing), `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`.
 
 ## Process levels
 
@@ -73,6 +73,7 @@ The plan PR merges once you say yes, with a merge commit (the repository must al
 In a pitwall project, a folder with `.claude/pitwall.json`, the plugin's hooks (`hooks/hooks.json`, `scripts/hook.mjs`) do this; anywhere else they do nothing:
 
 - **A brief at session start**: the process level, the merge protection mode, the branch, the current epic with its unchecked criteria, the call budget, and a self-test of the guards that warns you at once when it fails.
+- **Uncommitted work**: a git command that would throw it away (`checkout` or `restore` over changed files, `reset --hard`, `clean -f`, `stash drop` or `clear`, a forced switch) is refused, for every agent, and the refusal offers `git stash push -- <files>` or a commit; on a clean tree the same command passes.
 - **Guards** on every tool call, commands included: secret files and key formats, files git ignores, a push that changes `main`, `gh pr merge --admin` and writes to branch protection or rulesets, and the guards' own switch, which only you change: any command that names `.claude/pitwall.json`, the project's or your Claude Code settings, or the plugin's folder is refused unless it only reads (`cat`, `grep`, `git diff`) or is one of pitwall's own scripts, and so is `claude plugin disable`.
 - **The review status**: only the plan reviewer and the code reviewer run `review-status.mjs`, and no commit status is written any other way. The plan reviewer writes only `docs/PLAN-REVIEW.md` and runs only its two scripts; the code reviewer writes only `docs/reviews/*.md` and runs only those two, read-only git and `scripts/gate`. `merge-choice.mjs` is yours alone: the guard refuses it to every agent.
 - **Call budgets** (`budgets` in the config): a sub-agent is told to wrap up at `warn` and refused past `stop`; the main conversation is told, and refused past `stop` only when nobody attends it (`claude -p`).
