@@ -42,7 +42,7 @@ const file = join(project, '.claude', 'pitwall.json');
 if (!existsSync(file)) refuse(`${project} is not a pitwall project: there is no .claude/pitwall.json. Run it from the project folder, or pass --project.`);
 let settings;
 try {
-  settings = JSON.parse(readFileSync(file, 'utf8'));
+  settings = JSON.parse(readFileSync(file, 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
 } catch (e) {
   refuse(`.claude/pitwall.json does not parse: ${String(e.message).split('\n')[0]}`);
 }

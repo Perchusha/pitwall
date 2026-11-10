@@ -304,7 +304,8 @@ function mergeRules({ cfg, settings, root }) {
   const dir = process.env.CLAUDE_PLUGIN_ROOT || pluginRoot;
   try {
     const broken = choice === true ? guardWorks(root, dir, cfg, settings) : null;
-    const r = syncRules(root, dir, choice === true && !broken);
+    // The session's spelling, and the same path with forward slashes, which a model may write instead.
+    const r = syncRules(root, [dir, dir.split('\\').join('/')], choice === true && !broken);
     const rules = r.error
       ? `; .claude/settings.local.json ${r.error}, so its allow rules were not checked`
       : broken

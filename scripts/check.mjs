@@ -2277,6 +2277,10 @@ step('hooks (recorded payloads)', (report) => {
       'git diff main...HEAD -- docs/JOURNAL.md docs/SPEC.md docs/EPICS.md docs/PLAN-REVIEW.md CLAUDE.md .claude/pitwall.json .gitignore',
       'git log --stat --format="%h %s" 238dc5e..HEAD',
       'git ls-files -s scripts/gate',
+      // And from the E1 run.
+      'cd "{root}" && bash scripts/gate --full',
+      'git -C "{root}" log --format=%H%n%B%n----',
+      'git -C "{root}" log --format="%h %ad %s" --date=iso -- docs/JOURNAL.md',
       `node "${P}/scripts/docs-check.mjs" --root "{root}" --stage code-review`,
       `node "${P}/scripts/review-status.mjs" --review code --state failure --description "code review: 2 open" --project "{root}"`,
       `node "${P}/scripts/review-status.mjs" --review code --state success --project "{root}"`,
@@ -2522,7 +2526,8 @@ step('hooks (recorded payloads)', (report) => {
     };
     const rulesNow = () => (existsSync(local) ? JSON.parse(readFileSync(local, 'utf8')).permissions?.allow ?? [] : []);
     const briefWith = (opts = {}) => hook('main-session-start', opts).out?.hookSpecificOutput?.additionalContext ?? '';
-    const rulesFor = (d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`];
+    // The session's spelling of the plugin's folder and the same with forward slashes (one on POSIX).
+    const rulesFor = (d) => [...new Set([d, d.split('\\').join('/')])].flatMap((x) => [`Bash(node "${x}/scripts/review-status.mjs" *)`, `Bash(node "${x}/scripts/merge.mjs" --change)`]);
     rmSync(local, { force: true });
     setChoice(undefined);
     if (!/has not chosen yet/.test(briefWith())) report('the brief of a project without autoMerge does not say the owner has not chosen yet');

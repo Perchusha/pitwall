@@ -55,4 +55,4 @@ NEEDS_OWNER: <questions only the owner can answer, each with its options; or "no
 HANDOFF: <PARTIAL only: what is done, the exact next step, the paths in progress>
 ```
 
-DONE only when the task is complete, `scripts/gate --full` passes and the tree is clean. A QA scenario written for the owner to run counts as done; what only the owner can do (run it on their laptops, watch a window, sign an installer) goes under SHORT OF, and the report is still DONE. PARTIAL is for work an implementer can still do.
+DONE only when the task is complete, `scripts/gate --full` passes and the tree is clean, but for a file in `docs/reviews/` the reviewer left uncommitted: leave that one as it is. A QA scenario written for the owner to run counts as done; what only the owner can do (run it on their laptops, watch a window, sign an installer) goes under SHORT OF, and the report is still DONE. PARTIAL is for work an implementer can still do.
