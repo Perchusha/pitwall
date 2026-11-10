@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # owner-calls - what waits for the owner
 
-> Status: planned for epic T4, not implemented yet. If this skill is invoked, tell the owner that this skill is not built yet and stop.
+> Status: planned for epic T4a, not implemented yet. If this skill is invoked, tell the owner that this skill is not built yet and stop.
 
 ## What it will do
 

@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # continue - the epic loop
 
-> Status: built in T3b. Releases and QA (step 8 of SPEC 6) come in T4: until then the loop ends each lap at the merge.
+> Status: built in T3b. Releases and QA (step 8 of SPEC 6) come in T4c: until then the loop ends each lap at the merge.
 
 ```
 ORIENT -> SELECT -> CLARIFY -> BRANCH -> IMPLEMENT -> GATE -> PR -> REVIEW -> MERGE -> RECORD -> loop
@@ -38,7 +38,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`riskClasses`, 
    - With `gh`, `gh run list --branch main --limit 1 --json conclusion,displayTitle,url`: a last run on `main` that failed stops the loop. Tell the owner what failed; it becomes a bug for them to file.
    - A change is merged when its branch's last commit is the second parent of a merge commit on `main`: pitwall merges with a merge commit (`git log --merges --format=%P origin/main`, or `main` without a remote, lists the parents). A branch with no commit of its own is not merged. Note every merged change whose status in the docs is not yet `merged` or `fixed`: step 4 records it.
    - Then by precedence: an open bug (a row of `docs/BUGS.md` whose status is not fixed, and whose fix this step did not find merged), the oldest first; else the change in flight, an `in progress` or `in review` one that is not merged, resumed at its step (its PR, its review round, its merge); else the next `planned` epic whose dependencies are all merged.
-   - Nothing left: tell the owner the plan is done, and stop. Changes merged but not recorded yet stay so on `main` until a next branch records them: name them to the owner; the release flow of T4 records them.
+   - Nothing left: tell the owner the plan is done, and stop. Changes merged but not recorded yet stay so on `main` until a next branch records them: name them to the owner; the release flow of T4c records them.
    - Tell the owner in a few lines what you picked and why.
 3. **Clarify.** Reread the change: the epic and its acceptance criteria (or the bug's row), every ADR it cites, `docs/LESSONS.md` and `CLAUDE.md`. Ask the owner what is unclear or decides something, one question at a time, before any code. Record each answer in the epic's "Open questions" section (for a bug, in the brief and the PR); a new one-way decision goes through `/pitwall:decide <area>` first.
 4. **Branch.** With a remote, `git switch main` and `git pull --ff-only origin main`. Then `git switch -c <branch>` (a change in flight: `git switch <branch>` and go to its step). The first commit of the branch records, in `docs/`:

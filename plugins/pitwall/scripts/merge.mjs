@@ -11,7 +11,7 @@
 // it at any risk class; without it only an epic whose risk class merges by itself
 // (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that
 // (autoMerge in .claude/pitwall.json, ADR-0010). Anything else waits for the owner (exit 4):
-// high risk, a bug fix (bugs carry no risk class before T4), an owner who said no or was not
+// high risk, a bug fix (bugs carry no risk class before T4b), an owner who said no or was not
 // asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
 // --owner-approved never runs under it (ADR-0010).
 //

@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.5.0, stages 0 to 5, the hooks and the epic loop.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue` and `/pitwall:gate` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4: until then each lap of the loop ends at the merge, and `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:owner-calls` say they are not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.5.0, stages 0 to 5, the hooks and the epic loop.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue` and `/pitwall:gate` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4c: until then each lap of the loop ends at the merge, and `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:owner-calls` say they are not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -29,7 +29,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 | 3. Spike | `/pitwall:spike` | `docs/spikes/<topic>.md` with a measured result, the prototype on `spike/<topic>` |
 | 4. Plan | `/pitwall:plan` | `docs/SPEC.md`, `docs/EPICS.md` and one file per epic with acceptance criteria |
 | 5. Plan review | (the `plan-reviewer` agent, from `plan`) | `docs/PLAN-REVIEW.md`: pre-mortem, requirements, launch, sizing, findings; `ai-review` on the plan PR, which merges after your yes |
-| 6. Epic loop | `/pitwall:continue` | One merged change per lap: an open bug's fix or the next epic, implemented, gated, reviewed into `docs/reviews/`, merged by risk class (tags and QA in T4) |
+| 6. Epic loop | `/pitwall:continue` | One merged change per lap: an open bug's fix or the next epic, implemented, gated, reviewed into `docs/reviews/`, merged by risk class (tags and QA in T4c) |
 
 Helpers: `/pitwall:gate`, `/pitwall:release`, `/pitwall:bug`, `/pitwall:lesson`, `/pitwall:owner-calls`.
 

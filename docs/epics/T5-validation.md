@@ -1,7 +1,7 @@
 # T5 - Validation on three systems
 
 Goal: three systems of rising complexity walk the whole path, and the plugin changes after each run.
-Depends on: T4
+Depends on: T4c
 Risk class: normal
 
 ## Acceptance criteria (draft, refined when T5 starts)
