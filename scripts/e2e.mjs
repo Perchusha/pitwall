@@ -96,7 +96,7 @@ const github = opt('github', '');
 const stateDir = resolve(opt('state', join(homedir(), '.cache', 'pitwall-e2e')));
 const maxTurns = Number(opt('max-turns', '30'));
 const flags = ['--from', '--until', '--max-turns', '--state', '--seed', '--github'];
-const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages or loop stages)';
+const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages or loop stages)';
 const loop = LOOP.includes(from) && LOOP.includes(until);
 const span = ALL.slice(ALL.indexOf(from), ALL.indexOf(until) + 1);
 const bad = !ALL.includes(from) || !ALL.includes(until) || span.length === 0 || (!loop && span.some((x) => LOOP.includes(x))) || (loop && seedArg) || (!loop && github) || (github && !/^[\w.-]+\/[\w.-]+$/.test(github));
