@@ -104,11 +104,38 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       run('git', ['init', '-q', '--bare', originDir]);
       git('remote', 'add', 'origin', originDir);
     }
-    const spikes = git('for-each-ref', '--format=%(refname:short)', 'refs/heads/spike/').stdout.split('\n').filter(Boolean);
-    const push = git('push', '-q', 'origin', 'main', 'plan/initial', ...spikes);
-    if (push.status !== 0) throw new Error(`push failed: ${push.stderr}`);
+    // L-11: main first, and on GitHub only once Actions shows its workflow; then each branch on its own;
+    // then the PR, and on GitHub a check suite from GitHub Actions on its head. One push of every branch into
+    // an empty repository, with the PR two seconds later, left GitHub without a workflow and the PR without a
+    // gate for 25 minutes (T3b, owner).
+    const pushOne = (ref) => {
+      const p = git('push', '-q', 'origin', ref);
+      if (p.status !== 0) throw new Error(`push of ${ref} failed: ${p.stderr}`);
+    };
+    // Waits up to `seconds` for test() to hold, polling every few seconds; a FAIL that says what to look at when it never does.
+    const waitFor = (seconds, test, what) => {
+      const deadline = Date.now() + seconds * 1000;
+      while (Date.now() < deadline) {
+        if (test()) return;
+        run(process.execPath, ['-e', 'setTimeout(() => {}, 5000)']);
+      }
+      throw new Error(`${what} within ${seconds} seconds. Look at the Actions tab of ${github}: a workflow GitHub has not registered, or Actions turned off for the repository; the run stops here, before any Claude session.`);
+    };
+    const api = (path) => {
+      const r = run(realGh, ['api', `repos/${github}/${path}`], { env });
+      try {
+        return r.status === 0 ? JSON.parse(r.stdout) : null;
+      } catch {
+        return null;
+      }
+    };
+    pushOne('main');
+    if (github) waitFor(180, () => (api('actions/workflows')?.workflows ?? []).some((w) => /\/ci\.ya?ml$/.test(w.path)), 'GitHub Actions did not register .github/workflows/ci.yml after the push of main');
+    for (const ref of ['plan/initial', ...git('for-each-ref', '--format=%(refname:short)', 'refs/heads/spike/').stdout.split('\n').filter(Boolean)]) pushOne(ref);
     // The world before the epic loop: the plan PR, reviewed, its gate green, merged after the owner's yes.
     gh('pr', 'create', '--base', 'main', '--head', 'plan/initial', '--title', 'Plan: move-reminder', '--body', 'Stages 1 to 5, from the headless planning run.');
+    const planHead = git('rev-parse', 'plan/initial').stdout.trim();
+    if (github) waitFor(180, () => (api(`commits/${planHead}/check-suites`)?.check_suites ?? []).some((s) => s.app?.slug === 'github-actions'), `GitHub Actions started no check suite on the plan PR's head ${planHead.slice(0, 7)}`);
     git('switch', '-q', 'plan/initial');
     const status = script('review-status.mjs', ['--review', 'plan', '--state', 'success', '--project', project], ownerEnv);
     if (status.status !== 0) throw new Error(`review-status.mjs for the plan: ${status.stdout}${status.stderr}`);
