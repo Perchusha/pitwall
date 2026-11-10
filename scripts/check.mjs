@@ -2370,6 +2370,41 @@ step('hooks (recorded payloads)', (report) => {
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     crBash('merge-choice.mjs', choice, 'deny:agent');
 
+    // T4a-AC1, L-12: no git command throws away uncommitted work; the same commands pass on a clean tree.
+    const w = makeProject('l12');
+    gitIn(w, 'branch', 'other');
+    const W = (command, want, extra = {}) => bash(command, want, { projectDir: w, ...extra });
+    const onClean = ['git checkout -- CLAUDE.md', 'git checkout .', 'git restore CLAUDE.md', 'git reset --hard', 'git clean -fd', 'git stash drop', 'git checkout -f other'];
+    for (const c of onClean) W(c, 'allow');
+    writeFileSync(join(w, 'CLAUDE.md'), `${readFileSync(join(w, 'CLAUDE.md'), 'utf8')}\nchanged\n`);
+    writeFileSync(join(w, 'new.js'), 'console.log(1)\n');
+    for (const c of [
+      'git checkout -- CLAUDE.md', 'git checkout CLAUDE.md', 'git checkout .', 'git checkout HEAD -- CLAUDE.md', 'git checkout -f other', 'git switch -f other', 'git switch --discard-changes other',
+      'git restore CLAUDE.md', 'git restore .', 'git restore -SW CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git reset --hard', 'git reset --hard HEAD', 'git clean -fd', 'git clean -f new.js',
+      'git status; git checkout -- CLAUDE.md', 'git fetch origin && git reset --hard origin/main', `git -C "${w}" checkout -- CLAUDE.md`, `git -C "${fwd(w)}" reset --hard`,
+      `cd "${w}" && git checkout -- "${join(w, 'CLAUDE.md')}"`, `git checkout -- "${join(w, 'CLAUDE.md')}"`,
+    ]) W(c, 'deny:uncommitted');
+    for (const c of [
+      'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
+      'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',
+      'git checkout -- docs/IDEA.md', 'git clean -fd docs',
+    ]) W(c, 'allow');
+    const said = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/git stash push -- CLAUDE\.md/.test(said) || !/commit/.test(said) || !/L-12/.test(said)) report(`the refusal must name the files and offer git stash push -- <files> or a commit (owner's edit): ${said}`);
+    const saidNew = hook('main-pre-tool-use-bash', { projectDir: w, input: { tool_input: { command: 'git clean -fd' } } }).out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+    if (!/git stash push -u -- new\.js/.test(saidNew)) report(`the refusal of git clean must offer git stash push -u for the new files: ${saidNew}`);
+    W('git checkout -- CLAUDE.md', 'deny:uncommitted', { tool: 'PowerShell' });
+    expect('implementer-pre-tool-use-bash', 'implementer: git checkout -- CLAUDE.md on a dirty tree', { projectDir: w, input: { tool_input: { command: 'git checkout -- CLAUDE.md' } } }, 'deny:uncommitted');
+    expect('implementer-pre-tool-use-bash', 'implementer: git stash push -- CLAUDE.md', { projectDir: w, input: { tool_input: { command: 'git stash push -- CLAUDE.md' } } }, 'allow');
+    // A stash holds uncommitted work too.
+    gitIn(w, 'stash', 'push', '-q', '-u', '--', 'CLAUDE.md', 'new.js');
+    for (const c of ['git stash drop', 'git stash clear', 'git stash drop stash@{0}']) W(c, 'deny:uncommitted');
+    for (const c of ['git stash pop', 'git stash apply', 'git stash drop stash@{3}', 'git checkout -- CLAUDE.md', 'git reset --hard']) W(c, 'allow');
+    gitIn(w, 'stash', 'pop', '-q');
+    // A tree git cannot read refuses, as the other guards do.
+    rmSync(join(w, '.git'), { recursive: true, force: true });
+    W('git checkout -- CLAUDE.md', 'deny:broken');
+
     // AC7: the merge guard by mode.
     bash('gh pr merge 7 --merge', 'deny:merge');
     const pr = { number: 7, head, branch: 'epic/E1-x' };

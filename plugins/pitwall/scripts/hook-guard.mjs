@@ -601,6 +601,8 @@ export function guard(call, ctx) {
   const base = ctx.cfg.mergeProtection.branch;
   // The branch a command switched to earlier in the same line ("git switch -c x && git push -u origin HEAD").
   let switchedTo = null;
+  // Whether a stash or a commit earlier in the line has already kept the uncommitted work (T4a-AC1).
+  let keptEarlier = false;
 
   for (const { argv, redirects, inputs, cwd: dir } of cmds) {
     const p = program(argv[0]);
@@ -693,6 +695,22 @@ export function guard(call, ctx) {
       const reason = pushChangesMain(git, base, dir, home, ctx, switchedTo);
       if (reason) return refuse('push', reason);
     }
+
+    // T4a-AC1, L-12: a git command that would throw away uncommitted work. A stash or a commit earlier in
+    // the same line changes the tree first ("git stash push -- a.js && git checkout -- a.js"), so after
+    // one the rest of the line is not judged on the tree as it is now.
+    if (git && !keptEarlier) {
+      const lost = discards(git, git.dir ? native(git.dir, dir, home) : dir, ctx);
+      if (lost?.error) return refuse('broken', `git status could not read the tree before "git ${git.sub}": ${lost.error}.`);
+      if (lost?.files.length) {
+        const shown = lost.files.slice(0, 8).join(' ');
+        const more = lost.files.length > 8 ? ` and ${lost.files.length - 8} more` : '';
+        return refuse('uncommitted', lost.stash
+          ? `git stash ${git.args[0]} would throw away ${shown}${more}, uncommitted work kept in the stash (L-12). Apply it first (git stash pop), or leave the stash; the owner drops it in a terminal if it should go.`
+          : `git ${git.sub} would throw away uncommitted ${lost.untracked ? 'new files' : 'changes in'} ${shown}${more} (L-12). Keep them first: git stash push${lost.untracked ? ' -u' : ''} -- ${lost.files.slice(0, 8).join(' ')} keeps them in a stash to restore with git stash pop, or commit them; then run it again.`);
+      }
+    }
+    if (git && (git.sub === 'commit' || (git.sub === 'stash' && !['drop', 'clear', 'list', 'show', 'pop', 'apply'].includes(git.args[0] ?? '')))) keptEarlier = true;
     if (git && (git.sub === 'checkout' || git.sub === 'switch')) {
       const flag = git.args.findIndex((a) => /^(-[bBcC]|--create|--force-create|--orphan)$/.test(a));
       if (flag >= 0 && git.args[flag + 1]) switchedTo = git.args[flag + 1];
@@ -817,6 +835,79 @@ function secretFilesSearched(argv, dir, home, ctx, isSecretName) {
 }
 
 // Would this git push change the base branch? A reason, or null.
+// T4a-AC1, L-12: what a git command would throw away of the uncommitted work in dir: { files }, with
+// stash: true for the entries of the stash, { error } when git cannot read the tree, or null.
+// Only these lose work: checkout over paths (with or without "--", "." included) or with -f, switch -f
+// or --discard-changes, restore of the work tree, reset --hard, clean -f, stash drop and clear. A
+// branch switch without -f, restore --staged alone, clean -n, reset --soft or --mixed keep it.
+function discards(git, dir, ctx) {
+  const a = git.args;
+  const flag = (...names) => a.some((x) => names.includes(x));
+  const short = (letter) => a.some((x) => /^-[a-zA-Z]+$/.test(x) && x.includes(letter));
+  // The arguments that are not options; for the options that take a value, the value is skipped too.
+  const operands = (valued = []) => {
+    const out = [];
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] === '--') return { before: out, after: a.slice(i + 1) };
+      if (a[i].startsWith('-')) {
+        if (valued.includes(a[i])) i += 1;
+        continue;
+      }
+      out.push(a[i]);
+    }
+    return { before: out, after: null };
+  };
+  const status = (paths) => {
+    // Porcelain v2, whose lines never start with a space, so a trimmed output still reads right:
+    // "1 XY ... <path>", "2 XY ... <path>\t<old>", "u XY ... <path>", "? <path>".
+    const r = ctx.git(['-c', 'core.quotePath=false', 'status', '--porcelain=v2', '--untracked-files=all', ...(paths?.length ? ['--', ...paths] : [])], dir);
+    if (!r.ok) return { error: r.err || `exit ${r.status}` };
+    const lines = r.out.split('\n').filter(Boolean);
+    const field = (l, n) => l.split(' ').slice(n).join(' ').split('\t')[0];
+    return {
+      tracked: lines.flatMap((l) => (l.startsWith('1 ') ? [field(l, 8)] : l.startsWith('2 ') ? [field(l, 9)] : l.startsWith('u ') ? [field(l, 10)] : [])),
+      untracked: lines.filter((l) => l.startsWith('? ')).map((l) => l.slice(2)),
+    };
+  };
+  const tracked = (paths) => {
+    const s = status(paths);
+    return s.error ? s : { files: s.tracked };
+  };
+  const isCommit = (x) => ctx.git(['rev-parse', '--verify', '-q', `${x}^{commit}`], dir).ok;
+
+  if (git.sub === 'checkout') {
+    if (flag('-f', '--force')) return tracked();
+    if (flag('-b', '-B', '--orphan', '-p', '--patch')) return null;
+    const { before, after } = operands(['-b', '-B', '--orphan', '--conflict', '--pathspec-from-file']);
+    // Without "--", a first operand that names a commit is the commit (or the branch); the rest are paths.
+    const paths = after ?? (before.length && isCommit(before[0]) ? before.slice(1) : before);
+    return paths.length ? tracked(paths) : null;
+  }
+  if (git.sub === 'switch') return flag('-f', '--force', '--discard-changes') ? tracked() : null;
+  if (git.sub === 'restore') {
+    const staged = flag('--staged') || short('S');
+    const worktree = flag('--worktree') || short('W');
+    if (staged && !worktree) return null;
+    const { before, after } = operands(['-s', '--source', '--pathspec-from-file']);
+    const paths = [...before, ...(after ?? [])];
+    return paths.length ? tracked(paths) : null;
+  }
+  if (git.sub === 'reset') return flag('--hard') ? tracked() : null;
+  if (git.sub === 'clean') {
+    if (flag('-n', '--dry-run') || short('n') || !(flag('-f', '--force') || short('f'))) return null;
+    const { before, after } = operands(['-e', '--exclude']);
+    const s = status([...before, ...(after ?? [])]);
+    return s.error ? s : { files: s.untracked, untracked: true };
+  }
+  if (git.sub === 'stash' && (a[0] === 'drop' || a[0] === 'clear')) {
+    const list = ctx.git(['stash', 'list'], dir);
+    if (!list.ok) return { error: list.err || `exit ${list.status}` };
+    const entries = list.out.split('\n').filter(Boolean).map((l) => l.split(':')[0]);
+    return { stash: true, files: a[0] === 'clear' ? entries : entries.filter((e) => e === (a[1] ?? 'stash@{0}')) };
+  }
+  return null;
+}
+
 function pushChangesMain(git, base, dir, home, ctx, switchedTo) {
   const where = git.dir ? native(git.dir, dir, home) : dir;
   const valued = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
