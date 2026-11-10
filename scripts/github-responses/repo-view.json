@@ -1,0 +1,16 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "repo",
+    "view",
+    "--json",
+    "nameWithOwner,viewerPermission"
+  ],
+  "status": 0,
+  "stdout": {
+    "nameWithOwner": "<owner>/<repo>",
+    "viewerPermission": "ADMIN"
+  },
+  "stderr": ""
+}

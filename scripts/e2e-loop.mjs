@@ -24,6 +24,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readOwner, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // The copy e2e.mjs made at the start of the run (PITWALL_E2E_PLUGIN), never the checkout itself.
@@ -50,6 +51,7 @@ ${stage === 'e0' ? '- When asked whether low and normal risk epics may merge wit
 - When asked to accept a risk: accept it with the fallback the assistant proposes.
 - When asked whether to go on after the implementer limit or after a review round: yes.
 - When the assistant hands you a command to run yourself in a terminal: say you will run it later, and ask it to go on.
+${UNSCRIPTED_RULE}
 - When the assistant asks nothing and reports that it stopped or that the change is merged, reply exactly: DONE`;
 
 function run(cmd, args, opts = {}) {
@@ -208,6 +210,8 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   const ownerAnswers = [`Bash(node "${P}/scripts/review-status.mjs" *)`, `Bash(node "${P}/scripts/merge.mjs" *)`];
 
   const results = [];
+  // Questions the scripted owner had no answer for (readOwner): printed at the end, and kept with the numbers.
+  const unscripted = [];
   for (const stage of stages) {
     if (stage === 'e1') {
       const choice = script('merge-choice.mjs', ['--allow', '--project', project], ownerEnv);
@@ -247,7 +251,11 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         const o = run('claude', ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands'], { cwd: ownerDir, input: ask, timeout: 5 * 60 * 1000 });
         const reply = JSON.parse(o.stdout);
         cost += reply.total_cost_usd ?? 0;
-        const text = String(reply.result ?? '').trim();
+        const { text, question } = readOwner(reply.result, history[history.length - 1].text);
+        if (question) {
+          unscripted.push({ stage, turn: turns, question });
+          console.log(`  UNSCRIPTED QUESTION: ${question.slice(0, 160)}`);
+        }
         if (/^DONE.?$/i.test(text)) {
           error = 'the conductor stopped, but the stage does not pass its check';
           break;
@@ -273,7 +281,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         cpSync(ghState, join(dest, 'github'), { recursive: true, filter: (src) => !/[\\/](merge-|work-)[^\\/]*$/.test(src) });
       }
       const pluginCommit = process.env.PITWALL_E2E_COMMIT;
-      writeFileSync(join(stateDir, `${tag}${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, github: github || null, turns, minutes, cost }) + '\n');
+      writeFileSync(join(stateDir, `${tag}${stage}.json`), JSON.stringify({ saved: new Date().toISOString(), plugin: version, pluginCommit, github: github || null, turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question) }) + '\n');
       console.log(`  saved: ${turns} turns, ${minutes.toFixed(1)} min, $${cost.toFixed(2)}, plugin at ${pluginCommit}`);
     } else {
       console.log(`  failed after ${turns} turns, ${minutes.toFixed(1)} min, $${cost.toFixed(2)}`);
@@ -291,6 +299,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       for (const u of r.unmet) console.log(`  - ${u}`);
     }
   }
+  for (const u of unscripted) console.log(`UNSCRIPTED QUESTION (${u.stage}, turn ${u.turn}): ${u.question}`);
   const passed = results.length === stages.length && results.every((r) => r.pass);
   console.log(`\nE2E LOOP: ${passed ? 'PASS' : 'FAIL'}   scratch folder: ${scratch}   saved state: ${stateDir}`);
   return passed ? 0 : 1;
@@ -299,11 +308,16 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
 // The kind of request a gh call makes, as scripts/check.mjs compares the fake with GitHub, or null.
 export function kindOf(args) {
   const a = args.join(' ');
+  // An answer filtered by gh's own --jq or --template is the session's shape, not GitHub's.
+  // (-t is gh pr create's --title, not --template.)
+  if (args.some((x) => x === '--jq' || x === '-q' || x === '--template')) return null;
   if (/^repo view\b/.test(a) && args.includes('--json')) return 'repo-view';
   if (/^pr create\b/.test(a)) return 'pr-create';
-  if (/^pr list\b/.test(a) && args.includes('--json')) return 'pr-list';
+  if (/^pr list\b/.test(a)) return args.includes('--json') ? 'pr-list' : 'pr-list-text';
   if (/^pr view\b/.test(a) && args.includes('--json')) return 'pr-view';
   if (/^pr merge\b/.test(a)) return 'pr-merge';
+  if (/^pr checks\b/.test(a) && !args.includes('--watch')) return 'pr-checks';
+  if (/^pr comment\b/.test(a)) return 'pr-comment';
   if (/^run list\b/.test(a) && args.includes('--json')) return 'run-list';
   if (args[0] !== 'api') return null;
   const path = args.find((x) => /^\/?repos\//.test(x)) ?? '';
@@ -319,7 +333,7 @@ export function kindOf(args) {
 }
 
 // One answer per kind, scrubbed of the account, the repository, emails and paths.
-function saveResponses(file, repo) {
+export function saveResponses(file, repo) {
   if (!existsSync(file)) return;
   const [owner, name] = repo.split('/');
   const scrub = (text) =>
@@ -338,8 +352,9 @@ function saveResponses(file, repo) {
   const written = [];
   for (const c of calls) {
     const kind = kindOf(c.args);
-    // The first answer of each kind; a failed call counts only where failure is the answer (protection on GitHub Free).
-    if (!kind || written.includes(kind) || (c.status !== 0 && !/^api-protection/.test(kind))) continue;
+    // The first answer of each kind; a failed call counts only where failure is the answer: protection and rulesets
+    // on GitHub Free, and the checks of a PR with a red one.
+    if (!kind || written.includes(kind) || (c.status !== 0 && !/^(api-protection|api-rules|pr-checks)$/.test(kind))) continue;
     let body = c.stdout;
     try {
       body = JSON.parse(c.stdout);
@@ -350,6 +365,14 @@ function saveResponses(file, repo) {
       if (!v || typeof v !== 'object') return v;
       const o = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, anonymous(x)]));
       if ('login' in o) for (const k of Object.keys(o)) if (k !== 'login' && k !== 'type') o[k] = typeof o[k] === 'number' ? 0 : typeof o[k] === 'string' ? `<${k}>` : o[k];
+      // A commit's author or committer: a person's name beside the email.
+      if ('email' in o && typeof o.name === 'string') o.name = '<name>';
+      // A repository's numeric identity, beside the name already scrubbed.
+      if ('full_name' in o || /\/repos\/[^/]+\/[^/]+$/.test(String(o.url ?? ''))) for (const k of ['id', 'node_id']) if (k in o) o[k] = typeof o[k] === 'number' ? 0 : `<${k}>`;
+      // Every node id: GitHub's encode the repository's numeric id (base64url msgpack), whatever object holds them.
+      for (const k of Object.keys(o)) if (/node_id$/.test(k) && typeof o[k] === 'string') o[k] = `<${k}>`;
+      // A commit's signature check repeats the raw commit, author's name included.
+      for (const k of ['payload', 'signature']) if ('verified' in o && typeof o[k] === 'string') o[k] = `<${k}>`;
       return o;
     };
     body = anonymous(body);

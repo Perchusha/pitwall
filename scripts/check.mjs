@@ -1584,10 +1584,18 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
 // 6l. T3b-AC7: the fake GitHub of the headless loop runs (scripts/fake-github.mjs) answers like GitHub,
 // as `node scripts/e2e.mjs --github <owner/repo>` recorded GitHub's answers in scripts/github-responses/:
 // every field the fake gives, GitHub gave with the same type, and its refusals read the same.
-const GITHUB_KINDS = ['repo-view', 'pr-create', 'pr-list', 'pr-view', 'pr-merge', 'api-status-post', 'api-statuses', 'api-check-runs', 'api-commit', 'api-rules', 'api-protection', 'api-branch'];
+// The kinds a run of the loop makes; a recording of others (pr-list as JSON, a commit) is compared too.
+const GITHUB_KINDS = ['repo-view', 'pr-create', 'pr-list-text', 'pr-view', 'pr-checks', 'pr-comment', 'pr-merge', 'run-list', 'api-status-post', 'api-statuses', 'api-check-runs', 'api-rules', 'api-protection', 'api-branch'];
 step('fake GitHub against GitHub\'s answers', (report) => {
   const recDir = join(root, 'scripts', 'github-responses');
   const recs = Object.fromEntries((existsSync(recDir) ? readdirSync(recDir).filter((f) => f.endsWith('.json')) : []).map((f) => [f.slice(0, -5), JSON.parse(readFileSync(join(recDir, f), 'utf8'))]));
+  // The recordings came from the owner's private repository into a public one: no node id may stay, since
+  // GitHub's encode the repository's numeric id, and no numeric id of a repository or an account.
+  for (const [k, r] of Object.entries(recs)) {
+    const text = JSON.stringify(r);
+    for (const m of text.matchAll(/"(\w*node_id)":"([^"]*)"/g)) if (!/^<\w+>$/.test(m[2])) report(`${k}: ${m[1]} "${m[2]}" is GitHub's own and names the repository: e2e-loop.mjs scrubs it`);
+    if (/"(owner|repository|repo|creator|author|committer|user)":\{[^{}]*"id":[1-9]/.test(text)) report(`${k}: an account's or a repository's numeric id is in the recording`);
+  }
   const missing = GITHUB_KINDS.filter((k) => !recs[k]);
   if (missing.length) return report(`no recorded answer of GitHub for ${missing.join(', ')}: run node scripts/e2e.mjs --from e0 --github <owner/repo> against an empty private repository`);
   // The type of every field, by its path; the items of a list as "[]".
@@ -1624,11 +1632,14 @@ step('fake GitHub against GitHub\'s answers', (report) => {
     const fieldsOf = (k) => recs[k].args[recs[k].args.indexOf('--json') + 1];
     const repo = 'repos/e2e/move-reminder';
     const answers = {};
+    // The same requests the recorded run made, in the same states: a PR whose review asked for changes when
+    // its checks were read (so gh exits 1), then approved, merged, and main read afterwards.
     answers['repo-view'] = fake('repo', 'view', '--json', fieldsOf('repo-view'));
+    answers['pr-list-text'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open');
     answers['pr-create'] = fake('pr', 'create', '--base', 'main', '--head', 'epic/E0-skeleton', '--title', 'E0 - Walking skeleton', '--body', 'x');
-    answers['pr-list'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open', '--json', fieldsOf('pr-list'));
+    if (recs['pr-list']) answers['pr-list'] = fake('pr', 'list', '--head', 'epic/E0-skeleton', '--state', 'open', '--json', fieldsOf('pr-list'));
     answers['pr-view'] = fake('pr', 'view', 'epic/E0-skeleton', '--json', fieldsOf('pr-view'));
-    answers['api-status-post'] = fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=code review: approved');
+    answers['api-status-post'] = fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=failure', '-f', 'context=ai-review', '-f', 'description=code review: 3 open');
     answers['api-statuses'] = fake('api', `${repo}/commits/${head}/statuses`);
     // The CI runs the template's gate in the background: wait for it, at most a minute.
     let runs;
@@ -1639,30 +1650,54 @@ step('fake GitHub against GitHub\'s answers', (report) => {
     }
     answers['api-check-runs'] = runs;
     if (json(runs)?.check_runs?.[0]?.conclusion !== 'success') report(`the fake CI did not pass the template's gate on a docs-only commit: ${runs.stdout}`);
-    answers['api-commit'] = fake('api', `${repo}/commits/${head}`);
+    answers['pr-checks'] = fake('pr', 'checks', '1');
+    fake('api', '-X', 'POST', `${repo}/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=code review: approved');
+    answers['pr-comment'] = fake('pr', 'comment', '1', '--body', 'pitwall numbers: implementers 1');
+    if (recs['api-commit']) answers['api-commit'] = fake('api', `${repo}/commits/${head}`);
     answers['api-rules'] = fake('api', `${repo}/rules/branches/main`);
     answers['api-protection'] = fake('api', `${repo}/branches/main/protection`);
-    answers['api-branch'] = fake('api', `${repo}/branches/main`);
     answers['pr-merge'] = fake('pr', 'merge', '1', '--merge', '--match-head-commit', head, '--subject', 'feat(E0): Walking skeleton (#1)', '--body', 'Risk class: normal.');
-    for (const kind of GITHUB_KINDS) {
+    answers['api-branch'] = fake('api', `${repo}/branches/main`);
+    answers['run-list'] = fake('run', 'list', '--branch', 'main', '--limit', '1', '--json', fieldsOf('run-list'));
+    // Reading main's runs started the CI on the merge commit in the background: let it finish, so the
+    // scratch folder can go (Windows keeps a folder a running process works in).
+    for (let i = 0; i < 90; i += 1) {
+      const pendingRuns = readdirSync(join(state, 'ci')).filter((f) => f.endsWith('.json')).some((f) => JSON.parse(readFileSync(join(state, 'ci', f), 'utf8')).status !== 'completed');
+      if (!pendingRuns) break;
+      spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+    }
+    // A text answer, as gh prints it without a terminal: the same form, line by line.
+    const TEXT = {
+      'pr-create': (t) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\n$/.test(t),
+      'pr-comment': (t) => /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+#issuecomment-\d+\n$/.test(t),
+      'pr-merge': (t) => t === '',
+      'pr-list-text': (t) => t === '' || t.split('\n').filter(Boolean).every((l) => /^\d+\t/.test(l)),
+      // name, state, elapsed, link, description; one line per check, ai-review and gate among them.
+      'pr-checks': (t) => {
+        const rows = t.split('\n').filter(Boolean).map((l) => l.split('\t'));
+        return rows.every((r) => r.length === 5 && /^(pass|fail|pending|skipping)$/.test(r[1])) && ['ai-review', 'gate'].every((n) => rows.some((r) => r[0] === n));
+      },
+    };
+    for (const kind of Object.keys(answers)) {
       const rec = recs[kind];
       const got = answers[kind];
+      if (!rec) continue;
       if ((got.status === 0) !== (rec.status === 0)) report(`${kind}: the fake exits ${got.status}, GitHub exited ${rec.status}\n${got.stdout}${got.stderr}`);
+      if (TEXT[kind]) {
+        if (!TEXT[kind](String(rec.stdout))) report(`${kind}: GitHub's recorded answer no longer has the form the check expects: ${JSON.stringify(rec.stdout)}`);
+        if (!TEXT[kind](got.stdout)) report(`${kind}: the fake prints ${JSON.stringify(got.stdout)}, and GitHub printed ${JSON.stringify(rec.stdout)}`);
+        continue;
+      }
       if (rec.status !== 0) {
         // A refusal reads the same: its last line names the same reason.
-        const reason = (s) => String(s).replace(/\(HTTP \d+\)/, '').replace(/^gh: /, '').trim();
+        const reason = (x) => String(x).replace(/\(HTTP \d+\)/, '').replace(/^gh: /, '').trim();
         if (!reason(got.stderr.trim().split('\n').pop()).startsWith(reason(rec.stderr).slice(0, 40))) report(`${kind}: the fake refuses with "${got.stderr.trim()}", GitHub with "${rec.stderr}"`);
         continue;
       }
       const real = typeof rec.stdout === 'string' ? undefined : rec.stdout;
       const mine = json(got);
-      if (real === undefined) {
-        // Text: a PR's address, a line saying it merged.
-        if (kind === 'pr-create' && !(/\/pull\/\d+\s*$/.test(got.stdout) && /\/pull\/\d+\s*$/.test(rec.stdout))) report(`pr-create: the fake prints "${got.stdout.trim()}", GitHub printed "${String(rec.stdout).trim()}"`);
-        continue;
-      }
-      if (mine === undefined) {
-        report(`${kind}: GitHub answered JSON, the fake "${got.stdout.slice(0, 200)}"`);
+      if (real === undefined || mine === undefined) {
+        report(`${kind}: GitHub answered ${real === undefined ? 'text' : 'JSON'}, the fake "${got.stdout.slice(0, 200)}"`);
         continue;
       }
       const theirs = shape(real);

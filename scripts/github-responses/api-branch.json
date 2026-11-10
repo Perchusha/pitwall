@@ -1,0 +1,114 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "api",
+    "repos/<owner>/<repo>/branches/main"
+  ],
+  "status": 0,
+  "stdout": {
+    "name": "main",
+    "commit": {
+      "sha": "29975243ca23d7099f1b33d32330b7d17a331bfd",
+      "node_id": "<node_id>",
+      "commit": {
+        "author": {
+          "name": "<name>",
+          "email": "<email>",
+          "date": "2026-11-10T11:53:19Z"
+        },
+        "committer": {
+          "name": "<name>",
+          "email": "<email>",
+          "date": "2026-11-10T11:53:19Z"
+        },
+        "message": "Merge the plan from plan/initial (#1)\n\nPlan approved by the owner, 2026-11-10, at 2664a5b7b33c5487074e5568f52cbe3e390f164b",
+        "tree": {
+          "sha": "69530bd45b7d7b5cf821d0d56ebe5f61ec533c9e",
+          "url": "https://api.github.com/repos/<owner>/<repo>/git/trees/69530bd45b7d7b5cf821d0d56ebe5f61ec533c9e"
+        },
+        "url": "https://api.github.com/repos/<owner>/<repo>/git/commits/29975243ca23d7099f1b33d32330b7d17a331bfd",
+        "comment_count": 0,
+        "verification": {
+          "verified": true,
+          "reason": "valid",
+          "signature": "<signature>",
+          "payload": "<payload>",
+          "verified_at": "2026-11-10T11:53:19Z"
+        }
+      },
+      "url": "https://api.github.com/repos/<owner>/<repo>/commits/29975243ca23d7099f1b33d32330b7d17a331bfd",
+      "html_url": "https://github.com/<owner>/<repo>/commit/29975243ca23d7099f1b33d32330b7d17a331bfd",
+      "comments_url": "https://api.github.com/repos/<owner>/<repo>/commits/29975243ca23d7099f1b33d32330b7d17a331bfd/comments",
+      "author": {
+        "login": "<owner>",
+        "id": 0,
+        "node_id": "<node_id>",
+        "avatar_url": "<avatar_url>",
+        "gravatar_id": "<gravatar_id>",
+        "url": "<url>",
+        "html_url": "<html_url>",
+        "followers_url": "<followers_url>",
+        "following_url": "<following_url>",
+        "gists_url": "<gists_url>",
+        "starred_url": "<starred_url>",
+        "subscriptions_url": "<subscriptions_url>",
+        "organizations_url": "<organizations_url>",
+        "repos_url": "<repos_url>",
+        "events_url": "<events_url>",
+        "received_events_url": "<received_events_url>",
+        "type": "User",
+        "user_view_type": "<user_view_type>",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "web-flow",
+        "id": 0,
+        "node_id": "<node_id>",
+        "avatar_url": "<avatar_url>",
+        "gravatar_id": "<gravatar_id>",
+        "url": "<url>",
+        "html_url": "<html_url>",
+        "followers_url": "<followers_url>",
+        "following_url": "<following_url>",
+        "gists_url": "<gists_url>",
+        "starred_url": "<starred_url>",
+        "subscriptions_url": "<subscriptions_url>",
+        "organizations_url": "<organizations_url>",
+        "repos_url": "<repos_url>",
+        "events_url": "<events_url>",
+        "received_events_url": "<received_events_url>",
+        "type": "User",
+        "user_view_type": "<user_view_type>",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "ea1d14ee1d093222c330074af43dab8b818f9774",
+          "url": "https://api.github.com/repos/<owner>/<repo>/commits/ea1d14ee1d093222c330074af43dab8b818f9774",
+          "html_url": "https://github.com/<owner>/<repo>/commit/ea1d14ee1d093222c330074af43dab8b818f9774"
+        },
+        {
+          "sha": "2664a5b7b33c5487074e5568f52cbe3e390f164b",
+          "url": "https://api.github.com/repos/<owner>/<repo>/commits/2664a5b7b33c5487074e5568f52cbe3e390f164b",
+          "html_url": "https://github.com/<owner>/<repo>/commit/2664a5b7b33c5487074e5568f52cbe3e390f164b"
+        }
+      ]
+    },
+    "_links": {
+      "self": "https://api.github.com/repos/<owner>/<repo>/branches/main",
+      "html": "https://github.com/<owner>/<repo>/tree/main"
+    },
+    "protected": false,
+    "protection": {
+      "enabled": false,
+      "required_status_checks": {
+        "enforcement_level": "off",
+        "contexts": [],
+        "checks": []
+      }
+    },
+    "protection_url": "https://api.github.com/repos/<owner>/<repo>/branches/main/protection"
+  },
+  "stderr": ""
+}

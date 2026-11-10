@@ -1,0 +1,45 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "api",
+    "repos/<owner>/<repo>/commits/22bcb5529d459c4bad1c3464ac5d75c271fa08ad/statuses"
+  ],
+  "status": 0,
+  "stdout": [
+    {
+      "url": "https://api.github.com/repos/<owner>/<repo>/statuses/22bcb5529d459c4bad1c3464ac5d75c271fa08ad",
+      "avatar_url": "https://avatars.githubusercontent.com/oa/1157143?v=4",
+      "id": 58526545709,
+      "node_id": "<node_id>",
+      "state": "failure",
+      "description": "code review: 4 open",
+      "target_url": null,
+      "context": "ai-review",
+      "created_at": "2026-11-10T13:22:45Z",
+      "updated_at": "2026-11-10T13:22:45Z",
+      "creator": {
+        "login": "<owner>",
+        "id": 0,
+        "node_id": "<node_id>",
+        "avatar_url": "<avatar_url>",
+        "gravatar_id": "<gravatar_id>",
+        "url": "<url>",
+        "html_url": "<html_url>",
+        "followers_url": "<followers_url>",
+        "following_url": "<following_url>",
+        "gists_url": "<gists_url>",
+        "starred_url": "<starred_url>",
+        "subscriptions_url": "<subscriptions_url>",
+        "organizations_url": "<organizations_url>",
+        "repos_url": "<repos_url>",
+        "events_url": "<events_url>",
+        "received_events_url": "<received_events_url>",
+        "type": "User",
+        "user_view_type": "<user_view_type>",
+        "site_admin": false
+      }
+    }
+  ],
+  "stderr": ""
+}

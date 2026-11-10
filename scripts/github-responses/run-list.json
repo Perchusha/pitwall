@@ -1,0 +1,23 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "run",
+    "list",
+    "--branch",
+    "main",
+    "--limit",
+    "1",
+    "--json",
+    "conclusion,displayTitle,url"
+  ],
+  "status": 0,
+  "stdout": [
+    {
+      "conclusion": "success",
+      "displayTitle": "feat(E0): Walking skeleton (#2)",
+      "url": "https://github.com/<owner>/<repo>/actions/runs/42816521425"
+    }
+  ],
+  "stderr": ""
+}

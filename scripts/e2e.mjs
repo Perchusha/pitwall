@@ -33,6 +33,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readOwner, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -146,6 +147,7 @@ const OWNER_RULES = `Answer as this owner, in English, in one to three sentences
 - When asked whether low and normal risk epics may merge without you, say no: every merge waits for you.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
 - When the assistant has run a command that you are told to run yourself, say you will do it later, and ask it to go on.
+${UNSCRIPTED_RULE}
 - When the assistant asks nothing and reports that the stage is done, reply exactly: DONE`;
 
 function run(cmd, args, opts = {}) {
@@ -318,6 +320,8 @@ function save(stage, numbers) {
 }
 
 const results = [];
+// Questions the scripted owner had no answer for (scripts/e2e-owner.mjs): printed at the end.
+const unscripted = [];
 for (const stage of stages) {
   const started = Date.now();
   const history = [];
@@ -340,6 +344,12 @@ for (const stage of stages) {
       if (verdict.done) break;
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
+      const read = readOwner(reply.text, history[history.length - 1].text);
+      reply.text = read.text;
+      if (read.question) {
+        unscripted.push({ stage, turn: turns, question: read.question });
+        console.log(`  UNSCRIPTED QUESTION: ${read.question.slice(0, 160)}`);
+      }
       if (/^DONE.?$/i.test(reply.text)) {
         error = 'the skill reported done, but the stage does not pass its check';
         break;
@@ -353,7 +363,7 @@ for (const stage of stages) {
   }
   if (!verdict.done) verdict = status(stage);
   const minutes = (Date.now() - started) / 60000;
-  if (verdict.done) save(stage, { turns, minutes, cost });
+  if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question) });
   results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
   if (!verdict.done) break;
 }
@@ -367,6 +377,7 @@ for (const r of results) {
     for (const u of r.unmet ?? []) console.log(`  - ${u}`);
   }
 }
+for (const u of unscripted) console.log(`UNSCRIPTED QUESTION (${u.stage}, turn ${u.turn}): ${u.question}`);
 const passed = results.length === stages.length && results.every((r) => r.pass);
 console.log(`\nE2E: ${passed ? 'PASS' : 'FAIL'}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

@@ -22,6 +22,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`riskClasses`, 
 - Run each command as written, from the project root, one command per call.
 - One question per message, then wait. Never answer for the owner, never accept a risk for them, and never pass `--owner-approved` without their yes to that merge in this conversation.
 - This conversation writes docs only: the change's own file, `docs/EPICS.md`, `docs/BUGS.md`, `docs/RISKS.md`, `docs/JOURNAL.md` and the Approval section of `docs/PLAN-REVIEW.md`. Code is the implementers'. Never edit a file in `docs/reviews/` and never set `ai-review`: both belong to the reviewer.
+- Wait for every agent you dispatch: run it in the foreground and read its report before you go on or end your turn. A turn that ends while an implementer or a reviewer runs in the background can end that agent with it, as a headless session showed.
 - One change in flight at a time, on its own branch: `epic/E<n>-<slug>`, the epic's file name, or `fix/BUG-<n>` (`loop.branches`).
 - When a script hands a step over, show the owner its HANDOFF lines verbatim. Never retry a refused write another way, and never work around a hook.
 - Keep the template's headings and table columns, and write the plain Markdown the docs check reads, as `/pitwall:plan` does.

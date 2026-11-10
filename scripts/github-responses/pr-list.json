@@ -1,0 +1,28 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "list",
+    "--state",
+    "all",
+    "--json",
+    "number,title,headRefName,state"
+  ],
+  "status": 0,
+  "stdout": [
+    {
+      "headRefName": "epic/E0-skeleton",
+      "number": 2,
+      "state": "MERGED",
+      "title": "E0 - Walking skeleton: gate, CI, merge protection, local build"
+    },
+    {
+      "headRefName": "plan/initial",
+      "number": 1,
+      "state": "MERGED",
+      "title": "Plan: move-reminder"
+    }
+  ],
+  "stderr": ""
+}

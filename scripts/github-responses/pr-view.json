@@ -1,0 +1,20 @@
+{
+  "gh": "gh version 2.98.0 (2026-08-20)",
+  "recorded": "2026-11-10",
+  "args": [
+    "pr",
+    "view",
+    "epic/E1-count-and-pause",
+    "--json",
+    "number,state,headRefOid,baseRefName,url"
+  ],
+  "status": 0,
+  "stdout": {
+    "baseRefName": "main",
+    "headRefOid": "d5bacb9b9bf187fbd63cf0b28f2299c8381e9f15",
+    "number": 3,
+    "state": "OPEN",
+    "url": "https://github.com/<owner>/<repo>/pull/3"
+  },
+  "stderr": ""
+}

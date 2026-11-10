@@ -156,7 +156,8 @@ if (args[0] === 'pr') {
     const review = (st.statuses[head] ?? []).find((s) => s.context === 'ai-review');
     const gate = run.status !== 'completed' ? 'pending' : run.conclusion === 'success' ? 'pass' : 'fail';
     const ai = !review ? 'pending' : review.state === 'success' ? 'pass' : review.state === 'pending' ? 'pending' : 'fail';
-    process.stdout.write(`gate\t${gate}\t0\thttps://github.com/${nameWithOwner}/actions\nai-review\t${ai}\t0\t\n`);
+    // As gh prints them without a terminal: name, state, elapsed, link, description (recorded from GitHub, T3b).
+    process.stdout.write(`ai-review\t${ai}\t0\t\t${review?.description ?? ''}\ngate\t${gate}\t${run.status === 'completed' ? '20s' : '0'}\thttps://github.com/${nameWithOwner}/actions/runs/${run.id}/job/${run.id}\t\n`);
     process.exit(gate === 'fail' || ai === 'fail' ? 1 : gate === 'pending' || ai === 'pending' ? 8 : 0);
   }
   if (sub === 'merge') {
@@ -187,7 +188,8 @@ if (args[0] === 'pr') {
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
-    out(`Merged pull request #${pr.number}\n`);
+    // gh prints nothing on a merge without a terminal (recorded from GitHub, T3b).
+    out('');
   }
   err(`fake GitHub: unexpected call gh ${args.join(' ')}`);
 }
@@ -225,7 +227,8 @@ if (args[0] === 'api') {
     if (msg.status !== 0) apiErr('No commit found for SHA: ' + m[1], 422);
     out({ sha: m[1], commit: { message: msg.stdout.replace(/\n+$/, '') } });
   }
-  if (/^rules\/branches\/[^/]+$/.test(rest)) out([]);
+  // Rulesets, like branch protection, are not available to a private repository on GitHub Free (recorded, T3b).
+  if (/^rules\/branches\/[^/]+$/.test(rest)) apiErr('Upgrade to GitHub Pro or make this repository public to enable this feature.', 403);
   if (/^branches\/[^/]+\/protection$/.test(rest)) apiErr('Upgrade to GitHub Pro or make this repository public to enable this feature.', 403);
   if ((m = /^branches\/([^/]+)$/.exec(rest))) {
     if (!tip(m[1])) apiErr('Branch not found', 404);

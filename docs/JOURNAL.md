@@ -2,6 +2,44 @@
 
 One entry per epic, newest first.
 
+## T3b - The epic loop (2026-11-10)
+
+`/pitwall:continue` is built: it takes a project with a merged plan through its changes, one at a time, an open bug's fix before the next epic. It asks the owner what is unclear, dispatches an `implementer` or `implementer-deep` by risk class at that class's effort, gates, opens the PR, runs a fresh `code-reviewer` each round under the plan's stopping rule, merges through `merge.mjs` by risk class, and records each merge in the first commit of the next branch. The code reviewer writes `docs/reviews/<change>.md` and sets `ai-review` only while nothing but that file changed after the commit it reviewed (ADR-0011, both of the owner's edits). Low and normal risk merge without the owner only when they chose that with `merge-choice.mjs`, a script no agent may run, whose two narrow allow rules the session-start hook keeps in step with the plugin's path (ADR-0010). The owner answered both one-way questions with edits, and accepted the two-way list with two: conventional merge commits, and any open bug first until T4, which now holds a changelog from `main`'s merge commits only, bugs with a severity and a risk class, `/pitwall:owner-calls` and the record of a plan's last change.
+
+**Numbers.** `scripts/check.mjs` grew from 21 to 24 steps: the code-review stage on about 30 reviews, `review-status --review code`, `merge.mjs --change` by risk class and the owner's choice, `merge-choice.mjs`, the code reviewer's limits and the owner-only script on 34 payloads recorded from 2.1.318 (8 new ones from the code reviewer and an implementer), the code reviewers' own commands from the headless runs, and the fake GitHub against GitHub's recorded answers. The headless runs, at API prices:
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| probes: allow rules, skill preload | 5 sessions | about 8 | $1.20 | the rule a session-start hook writes works in that session; a Windows path with backslashes matches as written; the exact rule refuses `--owner-approved`; a skill with `disable-model-invocation: true` is not preloaded (L-10) |
+| hooks, recording with the code reviewer and an implementer | 20 | 2.9 | $1.00 | pass: each guarded step refused by its rule, the owner's script refused as `owner` |
+| hooks, on the run's copy of the plugin | 20 | 2.7 | $1.01 | pass, the same |
+| e0, fake GitHub, plugin 8d7f72a | 5 | 56.2 | $59.88 | pass: 4 implementers, 4 review rounds, 8 findings (3 blocking, one a test that only passed on Windows), merged after the owner's yes; no hook refused a call of the 401 the run made |
+| e1, fake GitHub, plugin c986a7a | 1 | 38.8 | $10.26 | pass: 2 implementers (72 and 25 calls), 2 review rounds, 2 findings, merged without the owner through the allow rules alone; E0 recorded by E1's first commit |
+| e0, real GitHub (a private repository the owner made), plugin a3d4da5 | 2 | 39.2 | $20.37 | pass: CI green on Ubuntu in GitHub Actions, the merge after the owner's yes in the mode `local-hook`, `gate` from github-actions and `ai-review` on the merged head |
+| e1, real GitHub, plugin a3d4da5 | 2 | 3.8 | $2.03 | fail: the conductor rightly asked whether E0's manual QA of the window had run, and the scripted owner, with no fact for it, took the recommendation to hold E1 |
+| e1, real GitHub, plugin 931f9c5 | 3 | 39.5 | $14.86 | pass: merged without the owner through the allow rules on GitHub, `gate` from github-actions and `ai-review` green on the merged head |
+
+**What only the work showed:**
+- Claude Code does not preload a skill marked `disable-model-invocation: true` into an agent through `skills:`, and says nothing: the first implementers had no procedure (L-10).
+- An allow rule the session-start hook writes into `.claude/settings.local.json` applies in that same session, so a plugin update needs nothing from the owner; Claude Code sets `CLAUDECODE` in every command it runs, which keeps `merge-choice.mjs` to the owner's own terminal.
+- A project laid out by an older pitwall keeps an older `CLAUDE.md`: its definition of done made an implementer and then a reviewer ask for a journal entry inside the change. The epic skill and the reviewer now say the journal is the conductor's.
+- The scripted owner improvises facts it was not given ("the window showed one sentence"), as it did in T2.
+- GitHub Actions never registered the workflow of the owner's empty private repository after one push of every branch and a PR two seconds later; reopening the PR and turning Actions off and on did not wake it. On a fresh repository, `main` pushed alone, the workflow registered and every run started (L-11, now checked on GitHub).
+- The recorded answers caught the fake out three times: rulesets on a private repository on GitHub Free refuse with 403, `gh pr checks` prints five fields, `gh pr merge` prints nothing. Agents also filter `gh` output with `--jq`, which the fake does not do; such answers are not recorded as GitHub's.
+- The conductor ran implementers in the background and ended its turn, which in a headless session can end the agent; it now waits for every agent it dispatches. It also asked, before E1, whether E0's manual QA had run, the check the project's riskiest assumption depends on: a question the scripted owner had no answer for, so the harness now answers any unscripted question with the way that goes on and prints it as an UNSCRIPTED QUESTION.
+- A restart of the session ended two headless runs it had started in the background. The owner now runs long runs in a terminal of their own with `--log`, on a copy of the plugin made at the start of the run, whose commit the first line names.
+
+**What the review found.** Four fresh-context rounds. Round one (changes): one blocking finding, a test named in a code span read as no cover at all, and four to fix: a merged bug fix picked again, the last change of a plan never recorded (now T4-AC6), the owner's changed `.claude/pitwall.json` that a stash could undo, and no handover for a project that says no. Round two read the transcripts of the E0 run and approved with six to fix, all fixed: the journal's numbers lost between sessions (now a PR comment), a weak e1 check, PARTIAL for steps only the owner can take, a refused failure status, the run's own commands as hook cases (L-9), and the spelling of the allow rules. Round three, a verification round, found all six fixed and nothing blocking. Round four, a verification round of what came after it, found one blocking finding before anything was pushed: the private repository of the GitHub run was named in two commit messages, and its numeric id was in the recordings, outright and inside every `node_id`, which encodes it. The scrub now clears every node id, the check fails on one, and the commits that carried them were folded into one before the first push.
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | 250,372 | 56 | 13.0 |
+| 2 | none (6 to fix) | 269,424 | 57 | 13.2 |
+| 3, verification | none | 145,309 | 37 | 6.1 |
+| 4, verification | 1 (the private repository identifiable in the recordings and two commit messages) | 118,235 | 31 | 4.8 |
+
+**Next:** T4, release and QA.
+
 ## T3a - Hooks (2026-11-09)
 
 T3 was split in two at the owner's call: T3a, the hooks, and T3b, the epic loop, both high risk, both merged by the owner. ADR-0010 records the owner's other one-way decision: merges without the owner are each project's owner's choice, with the allow rules written only once this epic's review guard is installed, and pitwall itself says no for now. The plugin now has hooks (`hooks/hooks.json`, `scripts/hook.mjs` with `hook-events.mjs` and `hook-guard.mjs`) that act in pitwall projects only: a brief at session start, with a self-test of the guards; guards on secrets, files git ignores, pushes that change `main`, writes to merge protection, commit statuses outside `review-status.mjs`, the plan reviewer's files and commands, and the guards' own switch; call budgets per agent; and the gate after edits and before stopping. The owner accepted the two-way list with five edits: the guards protect their own switch, `--admin` and protection writes are refused, a broken guard says how to turn pitwall off and the self-test warns at once, an unattended main conversation stops at its budget, and the plan reviewer's command takes no backtick or line break.
