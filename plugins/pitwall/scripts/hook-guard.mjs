@@ -394,10 +394,20 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     let argv = cmd.argv;
     // A line of assignments alone ("S=/x", "export S=/x") sets shell variables; before a command they are
     // its environment only, which the shell does not put in its words.
+    // A value the shell splits ("P='a b'; git checkout -- $P") or a list is several paths only the run
+    // knows: the name is forgotten, so its words stand for the whole tree, as a loop variable's do.
     const assigns = argv[0] === 'export' ? argv.slice(1) : argv;
     if (assigns.length && assigns.every((x) => /^[A-Za-z_]\w*=/.test(x))) {
-      for (const x of assigns) vars.set(key(x.slice(0, x.indexOf('='))), expand(x.slice(x.indexOf('=') + 1)));
+      for (const x of assigns) {
+        const [name, raw] = [x.slice(0, x.indexOf('=')), x.slice(x.indexOf('=') + 1)];
+        if (/\s/.test(raw.replace(TOP, ''))) vars.delete(key(name));
+        else vars.set(key(name), expand(raw));
+      }
     }
+    // A loop or a read sets its variable at run time ("for f in $(git diff --name-only)", "while read f").
+    if (argv[0] === 'for' && /^\w+$/.test(argv[1] ?? '')) vars.delete(key(argv[1]));
+    if (/^foreach$/i.test(argv[0] ?? '') && /^\(?\$\w+$/.test(argv[1] ?? '')) vars.delete(key(argv[1].replace(/^\(?\$/, '')));
+    if (program(argv[0]) === 'read') for (const x of argv.slice(1).filter((w) => /^\w+$/.test(w))) vars.delete(key(x));
     let ps = null;
     if (kind === 'powershell') {
       const spaced = /^\$(\w+)$/.exec(argv[0] ?? '');
@@ -407,10 +417,11 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
     }
     if (ps) {
       const [name, rest] = ps;
-      if (rest.join(' ') === 'git rev-parse --show-toplevel') {
-        const top = topOf(dir);
-        if (top) vars.set(key(name), top);
-      } else if (rest.length === 1) vars.set(key(name), expand(rest[0]));
+      const top = rest.join(' ') === 'git rev-parse --show-toplevel' ? topOf(dir) : null;
+      if (top) vars.set(key(name), top);
+      else if (rest.length === 1 && !/,|^@?\(/.test(rest[0])) vars.set(key(name), expand(rest[0]));
+      // A command's output or a list ("$f = git diff --name-only", "'a','b'"): only the run knows it.
+      else vars.delete(key(name));
     }
     // The words take the variables' values; an assignment's own name never does ("$p = 'x'" stays one).
     const expanding = vars.size > 0 || argv.some((x) => /rev-parse/.test(x));
@@ -1072,7 +1083,7 @@ function discards(git, dir, ctx, line) {
     // A branch switch or a new branch keeps the work: no operand, or ("main", "main --") a single one in a
     // folder the guard cannot read, where it is taken for the branch it usually is.
     const late2 = (after && runtime(after)) || (git.runtime && !after?.length && !before.length);
-    if (!force && !late2 && !after?.length && (!before.length || (missing && before.length === 1 && branchLike(before[0])))) return null;
+    if (!force && !late2 && !after?.length && (!before.length || (missing && before.length === 1 && (branchLike(before[0]) || late(before[0]))))) return null;
     if (missing) return absent();
     // Without "--", a first operand that names a commit is the commit (or the branch); the rest are paths.
     const source = after ? (before[0] ?? null) : before.length && isCommit(before[0]) ? before[0] : null;

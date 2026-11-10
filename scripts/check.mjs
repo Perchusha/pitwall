@@ -2617,6 +2617,10 @@ step('hooks (recorded payloads)', (report) => {
     for (const c of ["$p = '.claude/pitwall.json'; (Get-Content $p | ConvertFrom-Json).autoMerge", '$s = "$env:USERPROFILE/.claude/settings.json"; Get-Content $s', "$e = '.env'; if (Test-Path $e) { 'present' }", `$m = '${P}/scripts/merge.mjs'; node $m --change`, "$f = 'CLAUDE.md'; $f = 'docs/IDEA.md'; git checkout -- $f"]) W(c, 'allow', { tool: 'PowerShell' });
     for (const c of ["$f = 'CLAUDE.md'; git checkout -- $f", "$f='CLAUDE.md'; git checkout -- $f"]) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
     W('S=.claude; echo x > $S/settings.json', 'deny:switch');
+    // Review round 5: a variable the shell splits, a list or a command's output holds paths only the run knows; so does a loop's.
+    for (const c of ['P="CLAUDE.md docs/IDEA.md"; git checkout -- $P', 'P="new.js docs/IDEA.md"; git clean -f $P', 'F=docs/IDEA.md; for F in $(git diff --name-only); do git checkout -- "$F"; done', 'git diff --name-only | while read f; do git checkout -- "$f"; done']) W(c, 'deny:uncommitted');
+    for (const c of ["$p = 'CLAUDE.md','docs/IDEA.md'; git checkout -- $p", "$p = @('CLAUDE.md','docs/IDEA.md'); git checkout -- $p", "$f = 'docs/IDEA.md'; $f = git diff --name-only; git checkout -- $f"]) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
+    for (const c of ['F=docs/IDEA.md; git checkout -- $F', 'cd "$WT" && git checkout -q --detach "$(git rev-parse HEAD)"']) W(c, 'allow');
     // git rm --cached over paths only the run knows may take any file out of the index; "." is never a branch;
     // a folder git init found there is no new repository; in a folder mkdir made, paths are read from there.
     for (const c of ['git rm --cached $(git ls-files -i -c --exclude-standard) && git checkout -- .', 'git ls-files -i -c --exclude-standard | xargs git rm --cached && git checkout -- .', 'mkdir -p out && cd out && git checkout -- ../CLAUDE.md']) W(c, 'deny:uncommitted');
