@@ -2601,8 +2601,18 @@ step('hooks (recorded payloads)', (report) => {
       'git stash && git stash pop && git checkout -- .', 'git add -A && git reset && git clean -f', 'mkdir fresh && cd fresh && git reset --hard',
     ]) W(c, 'deny:uncommitted');
     for (const c of ['Set-Location $env:CLAUDE_PROJECT_DIR; git reset --hard', 'git diff --name-only | ForEach-Object { git checkout -- $_ }']) W(c, 'deny:uncommitted', { tool: 'PowerShell' });
-    // A folder the guard cannot follow: a read that fails refuses (review round 2).
-    for (const c of ['cd "$(git rev-parse --show-toplevel)" && git reset --hard', 'git -C "$(git rev-parse --show-toplevel)" reset --hard', 'ROOT=$(git rev-parse --show-toplevel); cd "$ROOT" && git clean -fd']) W(c, 'deny:broken');
+    // A folder the guard follows: its repository's top, a variable the line sets to a plain path (review round 3).
+    for (const c of ['cd "$(git rev-parse --show-toplevel)" && git reset --hard', 'git -C "$(git rev-parse --show-toplevel)" reset --hard', 'ROOT=$(git rev-parse --show-toplevel); cd "$ROOT" && git clean -fd', `S=${fwd(w)}; cd $S/src && git checkout -- "my file.js"`]) W(c, 'deny:uncommitted');
+    W('$root = git rev-parse --show-toplevel; Set-Location $root; git reset --hard', 'deny:uncommitted', { tool: 'PowerShell' });
+    // A folder it cannot follow: a read that fails refuses (review round 2), for a command that can throw work away only (review round 3).
+    for (const c of ['cd "$(mktemp -d)" && git reset --hard', 'for d in src docs; do git -C "$d" checkout -- .; done']) W(c, 'deny:broken');
+    for (const c of [
+      'cd "$(git rev-parse --show-toplevel)" && git status', 'git -C "$(git rev-parse --show-toplevel)" status', 'cd "$(mktemp -d)" && git init -q && git commit --allow-empty -m x',
+      'git init newrepo && cd newrepo && git add . && git commit -m init', 'mkdir scratchx && cd scratchx && git init -q && git checkout -b main', 'for d in src docs; do git -C "$d" status; done',
+      'npm create vite@latest web -- --template react && cd web && git add . && git commit -m "feat: web"', 'git checkout other --', 'git checkout -q other --', 'git checkout -b feat/x --',
+      'mkdir -p ../rt-x && cd ../rt-x && git init -q && git checkout -- .', 'cd "$(mktemp -d)" && git init -q && git reset --hard',
+    ]) W(c, 'allow');
+    W('$root = git rev-parse --show-toplevel; Set-Location $root; git status', 'allow', { tool: 'PowerShell' });
     for (const c of [
       'git checkout other', 'git checkout -b feature', 'git switch other', 'git restore --staged CLAUDE.md', 'git clean -n', 'git clean -nd', 'git reset --soft HEAD', 'git reset HEAD CLAUDE.md',
       'git diff', 'git status', 'git stash list', 'git stash push -- CLAUDE.md && git checkout -- CLAUDE.md', 'git stash push -u -- new.js', 'git add -A && git commit -m "wip" && git reset --hard HEAD~1',
@@ -2636,9 +2646,16 @@ step('hooks (recorded payloads)', (report) => {
     for (const c of ['git checkout -- CLAUDE.md', 'git restore CLAUDE.md', 'git restore --source=HEAD CLAUDE.md', 'git checkout -- docs/IDEA.md', 'git restore docs/IDEA.md']) W(c, 'allow');
     for (const c of ['git checkout HEAD -- CLAUDE.md', 'git restore -SW CLAUDE.md', 'git reset --hard']) W(c, 'deny:uncommitted');
     // Unstaged first, the staged change is thrown away by a restore from the index (review round 2); unstaging alone keeps it.
-    for (const c of ['git reset HEAD CLAUDE.md && git checkout -- CLAUDE.md', 'git restore --staged CLAUDE.md && git restore CLAUDE.md', 'git reset -q && git checkout -- .', 'git reset && git restore .', 'git rm --cached -q CLAUDE.md && git checkout -- CLAUDE.md']) W(c, 'deny:uncommitted');
+    for (const c of ['git reset HEAD CLAUDE.md && git checkout -- CLAUDE.md', 'git restore --staged CLAUDE.md && git restore CLAUDE.md', 'git reset -q && git checkout -- .', 'git reset && git restore .', 'git rm --cached -q CLAUDE.md && git clean -f']) W(c, 'deny:uncommitted');
     W('git reset HEAD CLAUDE.md; git checkout -- CLAUDE.md', 'deny:uncommitted', { tool: 'PowerShell' });
-    for (const c of ['git reset HEAD CLAUDE.md', 'git restore --staged CLAUDE.md', 'git reset && git add -A && git checkout -- .']) W(c, 'allow');
+    // A path git rm --cached took out of the index is no longer one git checkout restores (review round 3).
+    for (const c of ['git reset HEAD CLAUDE.md', 'git restore --staged CLAUDE.md', 'git reset && git add -A && git checkout -- .', 'git rm --cached -q CLAUDE.md && git checkout -- CLAUDE.md']) W(c, 'allow');
+    // A file staged as new and unstaged is untracked again: git clean deletes it, a restore leaves it (review round 3).
+    writeFileSync(join(w, 'new2.js'), 'console.log(3)\n');
+    gitIn(w, 'add', 'new2.js');
+    for (const c of ['git reset && git clean -f', 'git restore --staged new2.js && git clean -f', 'git rm --cached new2.js && git clean -f', 'git reset -- new2.js && git stash && git clean -f']) W(c, 'deny:uncommitted');
+    for (const c of ['git clean -f', 'git reset -- new2.js && git checkout -- new2.js']) W(c, 'allow');
+    gitIn(w, 'rm', '-q', '-f', '--', 'new2.js');
     gitIn(w, 'checkout', '--', 'docs/IDEA.md');
     // A merge conflict resolved the usual way (review round 1): the conflicted path is the merge's, not uncommitted work.
     gitIn(w, 'commit', '-qm', 'the staged change');
