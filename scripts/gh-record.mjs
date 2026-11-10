@@ -19,7 +19,7 @@ const a = args.join(' ');
 const apiMethod = args[0] === 'api' ? (args.includes('-X') ? args[args.indexOf('-X') + 1] : args.some((x) => ['-f', '-F', '--field', '--raw-field', '--input'].includes(x)) ? 'POST' : 'GET') : null;
 const apiPath = args.find((x) => /^\/?repos\//.test(x)) ?? '';
 const allowed =
-  /^(--version|auth status\b|repo view\b|pr (create|list|view|checks|diff|merge)\b|run (list|view)\b)/.test(a) ||
+  /^(--version|auth status\b|repo view\b|pr (create|list|view|checks|diff|merge|comment)\b|run (list|view)\b)/.test(a) ||
   (apiMethod === 'GET' && /^\/?repos\//.test(apiPath)) ||
   (apiMethod === 'POST' && /\/statuses\/[0-9a-f]{40}$/.test(apiPath)) ||
   // protect.mjs tries to protect main; on GitHub Free the probe refuses before this, and on a paid plan it is what kickoff does.

@@ -1512,11 +1512,19 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     merge('normal risk, the owner said yes to this merge', { autoMerge: false, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: byOwner('normal') });
     const high = (p) => {
       const f = join(p, 'docs', 'EPICS.md');
-      writeFileSync(f, readFileSync(f, 'utf8').replace('| The reminder | normal | E0 | in progress |', '| The reminder | high | E0 | in progress |'));
-      gitIn(p, 'commit', '-qam', 'docs: E1 is high risk');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('| The reminder | normal | E0 |', '| The reminder | high | E0 |'));
+      gitIn(p, 'commit', '-qm', 'docs: E1 is high risk', '--', 'docs/EPICS.md');
     };
     merge('high risk, the owner allowed low and normal', { prepare: high, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
     merge('high risk, the owner said yes', { prepare: high, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, body: byOwner('high') });
+    // T3b review: the plan on main says high, the branch says normal: the higher class holds.
+    const lowered = (p) => {
+      gitIn(p, 'switch', '-q', 'main');
+      high(p);
+      gitIn(p, 'switch', '-q', branch);
+      gitIn(p, 'merge', '-q', '-s', 'ours', 'main', '-m', 'merge main, keeping the branch\'s EPICS.md');
+    };
+    merge('high on main, lowered on the branch', { prepare: lowered, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
     merge('a class read from the commit, not the tree', { prepare: (p) => writeFileSync(join(p, 'docs', 'EPICS.md'), readFileSync(join(p, 'docs', 'EPICS.md'), 'utf8').replace('| The reminder | normal | E0 | in progress |', '| The reminder | high | E0 | in progress |')), code: 0, result: 'merged', merges: 1, body: without });
     const toFix = (p) => gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
     const fixPr = { ...green, pr: { head: 'local', branch: 'fix/BUG-1', title: 'BUG-1: no tray icon after login' } };
@@ -1539,7 +1547,8 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     const local = (p) => join(p, '.claude', 'settings.local.json');
     const rules = (p) => (existsSync(local(p)) ? JSON.parse(readFileSync(local(p), 'utf8')).permissions?.allow ?? [] : []);
     const choiceOf = (p) => JSON.parse(readFileSync(join(p, '.claude', 'pitwall.json'), 'utf8')).autoMerge;
-    const expectRules = [`Bash(node "${plugin}/scripts/review-status.mjs" *)`, `Bash(node "${plugin}/scripts/merge.mjs" --change)`];
+    // Both spellings of the plugin's folder (Windows has two), until a session start keeps the session's own.
+    const expectRules = [...new Set([plugin, plugin.split('\\').join('/')])].flatMap((d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`]);
     let p = fresh();
     let r = choiceRun(p, ['--allow'], { ...owner, CLAUDECODE: '1' });
     if (r.status !== 1 || !/not inside Claude Code/.test(r.stdout) || existsSync(local(p)) || choiceOf(p) !== false) report(`merge-choice under Claude Code must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
@@ -2252,6 +2261,27 @@ step('hooks (recorded payloads)', (report) => {
     crBash('git commit', 'git commit -am x', 'deny:agent');
     crBash('git push', 'git push origin HEAD', 'deny:agent');
     crBash('git checkout', 'git checkout main', 'deny:agent');
+    // L-9: what the code reviewers of the headless E0 run sent, verbatim, with the project's own (Windows) path.
+    const ran = [
+      'bash "{root}\\scripts\\gate" --full',
+      'git -C "{root}" diff --stat 92651f8 HEAD',
+      'git -C "{root}" diff main...HEAD -- .claude .github .gitignore .prettierignore .prettierrc.json CLAUDE.md docs package.json scripts forge.config.mjs tsconfig.base.json tsconfig.build.json tsconfig.json vitest.config.mts',
+      'git -C "{root}" diff main...HEAD --stat',
+      'git -C "{root}" log --oneline main..HEAD',
+      'git -C "{root}" ls-files src tsconfig.json tsconfig.renderer.json tsconfig.tests.json package.json',
+      'git -C "{root}" rev-parse HEAD',
+      'git -C "{root}" show 244dd07 --stat',
+      'git -C "{root}" status',
+      'git diff 238dc5e..HEAD -- . ":(exclude)package-lock.json"',
+      'git diff main...HEAD -- . ":(exclude)package-lock.json" ":(exclude).oxlintrc.json"',
+      'git diff main...HEAD -- docs/JOURNAL.md docs/SPEC.md docs/EPICS.md docs/PLAN-REVIEW.md CLAUDE.md .claude/pitwall.json .gitignore',
+      'git log --stat --format="%h %s" 238dc5e..HEAD',
+      'git ls-files -s scripts/gate',
+      `node "${P}/scripts/docs-check.mjs" --root "{root}" --stage code-review`,
+      `node "${P}/scripts/review-status.mjs" --review code --state failure --description "code review: 2 open" --project "{root}"`,
+      `node "${P}/scripts/review-status.mjs" --review code --state success --project "{root}"`,
+    ];
+    for (const c of ran) crBash(`as the E0 run sent it: ${c.slice(0, 60)}`, c.split('{root}').join(project), 'allow');
     // T3b review: what a reviewer runs by habit.
     crBash('git branch --show-current', 'git branch --show-current', 'allow');
     crBash('git merge-base', 'git merge-base main HEAD', 'allow');

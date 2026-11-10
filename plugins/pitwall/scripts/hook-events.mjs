@@ -340,6 +340,8 @@ function sessionStart(s) {
   } catch (e) {
     lines.push(`- Stage: the brief could not read the docs (${String(e.message).split(/\r?\n/)[0]}).`);
   }
+  // Before the budget and the hooks, so the brief's size limit cuts those first.
+  lines.push(mergeRules(s));
   const b = cfg.budgets.sessionToolCalls;
   const attended = process.env.CLAUDE_CODE_SESSION_ATTENDED;
   lines.push(
@@ -351,7 +353,6 @@ function sessionStart(s) {
   );
   const failed = selfTest(s);
   lines.push(failed ? `- Hooks: the self-test FAILED: ${failed}.` : '- Hooks: the guards are on (secrets, ignored files, pushes to main, their own switch, merge protection, ai-review, the call budget), and the self-test passed.');
-  lines.push(mergeRules(s));
   const brief = lines.join('\n').slice(0, cfg.hooks.briefMaxChars);
   const out = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: brief } };
   if (failed) out.systemMessage = `pitwall: the self-test of its guards failed: ${failed}. To turn pitwall off in this project, run this yourself in a terminal, not through an agent (the guard stops an agent that tries): claude plugin disable pitwall@pitwall --scope local`;

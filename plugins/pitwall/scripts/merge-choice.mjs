@@ -53,7 +53,9 @@ if (allow) {
   const broken = guardWorks(project, pluginRoot, cfg, settings);
   if (broken) refuse(`the review guard does not work here (${broken}), and the allow rules are written only while it does (pitwall ADR-0010). Nothing was recorded.`);
 }
-const rules = syncRules(project, pluginRoot, allow);
+// The session spells the plugin's folder its own way (CLAUDE_PLUGIN_ROOT): the rules go in for both spellings
+// of this one, and the next session start keeps only the session's.
+const rules = syncRules(project, [pluginRoot, pluginRoot.split('\\').join('/')], allow);
 if (rules.error) refuse(`.claude/settings.local.json ${rules.error}: fix it by hand, then run this again. Nothing was recorded.`);
 const was = settings[key];
 settings[key] = allow;
@@ -62,7 +64,7 @@ writeJson(file, settings);
 console.log(`merge-choice: .claude/pitwall.json records ${key}: ${allow}${was === allow ? ' (as before)' : ''}`);
 console.log(
   allow
-    ? `merge-choice: low and normal risk epics now merge without you once gate and ai-review are green; high risk and bug fixes still wait for you. .claude/settings.local.json ${rules.changed ? 'now allows' : 'already allowed'} review-status.mjs and "merge.mjs --change" from ${pluginRoot}, and each session start writes them again for the plugin's path.`
+    ? `merge-choice: low and normal risk epics now merge without you once gate and ai-review are green; high risk and bug fixes still wait for you. .claude/settings.local.json ${rules.changed ? 'now allows' : 'already allowed'} review-status.mjs and "merge.mjs --change" from ${pluginRoot}; each session start writes them again for the plugin's path as that session spells it.`
     : `merge-choice: every merge waits for your yes. ${rules.changed ? 'The allow rules were removed from .claude/settings.local.json.' : '.claude/settings.local.json holds no allow rules of pitwall.'}`,
 );
 console.log('merge-choice: the session commits .claude/pitwall.json with its next change.');

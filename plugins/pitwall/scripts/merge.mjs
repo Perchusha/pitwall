@@ -95,21 +95,30 @@ const local = git('rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`
 if (!local.ok) refuse(`there is no local branch ${branch} in ${project}`);
 const sha = local.out;
 
-// 2. A change: who may merge it. Read from the commit that merges, so the class is the one the reviewer saw.
+// 2. A change: who may merge it. The class is read from the commit that merges, the one the reviewer saw,
+// and from the plan where the branch left main: the higher of the two counts, so a class raised on the
+// branch (the owner said so at the clarification) holds, and one lowered there does not.
 let riskClass = null;
 let title = '';
 if (change?.epic) {
-  const plan = git('show', `${sha}:docs/EPICS.md`);
-  const row = plan.ok ? plan.out.split('\n').map((l) => l.split('|').map((c) => c.trim())).find((cells) => cells[0] === '' && new RegExp(`^\\[?${change.epic}\\]?(\\(|$)`).test(cells[1] ?? '')) : null;
-  riskClass = row?.[3] ?? null;
-  if (!riskClass || typeof cfg.riskClasses[riskClass] !== 'object') refuse(`docs/EPICS.md at ${sha.slice(0, 7)} gives ${change.epic} no risk class of ${Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object').join(', ')}`);
+  const classAt = (ref) => {
+    const plan = git('show', `${ref}:docs/EPICS.md`);
+    const row = plan.ok ? plan.out.split('\n').map((l) => l.split('|').map((c) => c.trim())).find((cells) => cells[0] === '' && new RegExp(`^\\[?${change.epic}\\]?(\\(|$)`).test(cells[1] ?? '')) : null;
+    return typeof cfg.riskClasses[row?.[3]] === 'object' ? row[3] : null;
+  };
+  const order = Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
+  const fork = git('merge-base', sha, base);
+  const atHead = classAt(sha);
+  const atFork = fork.ok ? classAt(fork.out) : null;
+  riskClass = atHead && atFork && order.indexOf(atFork) > order.indexOf(atHead) ? atFork : atHead;
+  if (!riskClass) refuse(`docs/EPICS.md at ${sha.slice(0, 7)} gives ${change.epic} no risk class of ${Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object').join(', ')}`);
   const file = git('show', `${sha}:docs/epics/${change.id}.md`);
   title = (file.ok ? new RegExp(`^# ${change.epic} - (.+)$`, 'm').exec(file.out)?.[1] : '')?.trim() ?? '';
 }
 if (change && !approved) {
   let settings = null;
   try {
-    settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8'));
+    settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
   } catch {}
   const choice = settings?.[cfg.loop.ownerChoice];
   if (!change.epic) owners(`${change.bug} is a bug fix: a fix merges after the owner's yes until bugs carry a risk class`);

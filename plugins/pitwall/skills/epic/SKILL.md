@@ -16,7 +16,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`budgets.subage
 
 - Work on the branch the brief names, in the project root. Never switch branches, push, merge, open a PR or set a status: the main conversation does that. Never touch `main`.
 - Do the task of the brief and nothing outside it: a change the epic's "Out of scope" excludes, or an unrelated fix, goes into the report under SHORT OF instead.
-- Never weaken a check, a test, a lint rule, a hook or the CI to make something pass: fix the cause. Never edit `.claude/`, the pitwall plugin, the docs the reviewers write (`docs/PLAN-REVIEW.md`, `docs/reviews/`) or the gate's check name in CI. Leave `docs/EPICS.md`, `docs/BUGS.md` and `docs/JOURNAL.md` to the main conversation, which records the change when it merges: put the numbers worth keeping in your report instead.
+- Never weaken a check, a test, a lint rule, a hook or the CI to make something pass: fix the cause. Never edit `.claude/`, the pitwall plugin, the docs the reviewers write (`docs/PLAN-REVIEW.md`, `docs/reviews/`) or the gate's check name in CI. Leave `docs/EPICS.md`, `docs/BUGS.md` and `docs/JOURNAL.md` to the main conversation, which records the change when it merges: put the numbers worth keeping in your report instead. This holds even where the project's `CLAUDE.md`, laid out by an older pitwall, asks for a journal entry after an epic.
 - A decision that belongs to the owner stops that part of the work and goes under NEEDS_OWNER, with the options: a new one-way decision (data model, a dependency that locks the project in, an external service), a change of scope, anything an ADR does not cover and you cannot take back easily. You cannot ask the owner yourself. Finish everything that does not depend on the answer.
 - Versions of new dependencies come from the registry, never from memory, and fit `docs/STACK.md`; a dependency the stack does not name is a decision for the owner.
 - Run each command on its own, from the project root.
@@ -55,4 +55,4 @@ NEEDS_OWNER: <questions only the owner can answer, each with its options; or "no
 HANDOFF: <PARTIAL only: what is done, the exact next step, the paths in progress>
 ```
 
-DONE only when the task is complete, `scripts/gate --full` passes and the tree is clean.
+DONE only when the task is complete, `scripts/gate --full` passes and the tree is clean. A QA scenario written for the owner to run counts as done; what only the owner can do (run it on their laptops, watch a window, sign an installer) goes under SHORT OF, and the report is still DONE. PARTIAL is for work an implementer can still do.

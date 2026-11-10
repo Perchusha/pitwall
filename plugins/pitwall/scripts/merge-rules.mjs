@@ -21,10 +21,11 @@ import { guard } from './hook-guard.mjs';
 // A byte order mark (Windows PowerShell 5.1 writes one) is not part of the JSON; built from its code point (L-3).
 const BOM = new RegExp(`^${String.fromCodePoint(0xfeff)}`);
 
-// The plugin's folder as the session spells it: CLAUDE_PLUGIN_ROOT, with its own separators.
-export function allowRules(pluginDir) {
-  const at = (script) => `${String(pluginDir).replace(/[\\/]+$/, '')}/scripts/${script}`;
-  return [`Bash(node "${at('review-status.mjs')}" *)`, `Bash(node "${at('merge.mjs')}" --change)`];
+// The plugin's folder as the session spells it: CLAUDE_PLUGIN_ROOT, with its own separators. Given several
+// spellings (merge-choice.mjs does not know the session's), the rules are written for each.
+export function allowRules(pluginDirs) {
+  const dirs = [...new Set([].concat(pluginDirs).map((d) => String(d).replace(/[\\/]+$/, '')))];
+  return dirs.flatMap((d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`]);
 }
 
 // A rule this file writes, for any plugin path: the ones to replace when the path changes.

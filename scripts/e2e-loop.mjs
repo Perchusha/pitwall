@@ -161,7 +161,8 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (!m) return ['E1 is not merged into origin main with a "feat(E1): ..." merge commit'];
       if (!/Merged without the owner/.test(m[2] ?? '')) unmet.push(`E1's merge commit does not say it merged by its risk class without the owner: "${m[2]}"`);
       if (!/\| \[E0\]\([^)]*\) \|.*\| merged \(#\d+\) \|/.test(shown('docs/EPICS.md').stdout)) unmet.push('docs/EPICS.md on main does not record E0 as merged (#n)');
-      if (!/\bE0\b/.test(shown('docs/JOURNAL.md').stdout)) unmet.push('docs/JOURNAL.md on main has no entry for E0');
+      // The conductor's record, not an entry E0's own implementer may have left: E1's first commit touches the journal.
+      if (!remote('log', '--format=%s', 'origin/main', '--', 'docs/JOURNAL.md').stdout.split('\n').some((s) => /^docs: start E1\b/.test(s))) unmet.push('docs/JOURNAL.md is not recorded by the first commit of E1\'s branch ("docs: start E1...")');
       if (!remote('ls-tree', '--name-only', 'origin/main', 'docs/reviews/').stdout.split('\n').some((f) => /^docs\/reviews\/E1-.+\.md$/.test(f))) unmet.push('no review file of E1 on main');
       return unmet;
     },

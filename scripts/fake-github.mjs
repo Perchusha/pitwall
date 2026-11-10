@@ -82,6 +82,7 @@ function shown(pr) {
     baseRefName: pr.base,
     url: url(pr.number),
     mergeCommit: pr.mergeCommit ? { oid: pr.mergeCommit } : null,
+    comments: pr.comments ?? [],
     isDraft: false,
   };
 }
@@ -137,6 +138,13 @@ if (args[0] === 'pr') {
   }
   const pr = find(selector(2));
   if (!pr) err(`no pull requests found for branch "${selector(2) ?? current()}"`);
+  if (sub === 'comment') {
+    const body = flag('--body') ?? flag('-b');
+    if (!body) err('fake GitHub: pr comment takes --body');
+    (pr.comments ??= []).push({ author: { login: owner }, body, createdAt: new Date().toISOString() });
+    save();
+    out(`${url(pr.number)}#issuecomment-${pr.comments.length}\n`);
+  }
   if (sub === 'view') {
     if (pr.state === 'OPEN') ci(tip(pr.branch));
     const p = shown(pr);

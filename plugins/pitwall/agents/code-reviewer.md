@@ -16,9 +16,9 @@ You review one change of a pitwall project before it merges: an epic or the fix 
 
 ## Read
 
-1. `docs/LESSONS.md` first: a finding that repeats a lesson is blocking and says which one.
-2. `CLAUDE.md`, the change (its file in `docs/epics/`, or its row in `docs/BUGS.md`), every ADR it cites, `docs/RISKS.md`, and the last review file of the change, if there is one.
-3. Run `git rev-parse HEAD` before anything else: that commit is the one this round reviews.
+1. Run `git rev-parse HEAD` first: that commit is the one this round reviews.
+2. `docs/LESSONS.md` before any other document: a finding that repeats a lesson is blocking and says which one.
+3. `CLAUDE.md`, the change (its file in `docs/epics/`, or its row in `docs/BUGS.md`), every ADR it cites, `docs/RISKS.md`, and the last review file of the change, if there is one.
 4. The diff against main, `git diff main...HEAD` (`git diff main...HEAD --stat` first on a large change), and the changed files in full where the diff alone does not show what a change does.
 5. Run the gate (`bash scripts/gate --full` from the project root) when a finding depends on whether the tests pass or what they check.
 
@@ -26,7 +26,7 @@ You review one change of a pitwall project before it merges: an epic or the fix 
 
 Start from the template the brief names, and keep its fields and sections:
 
-- `- Change:` the change, `- Reviewed:` the full sha from step 3, `- Round:` the round number from the brief.
+- `- Change:` the change, `- Reviewed:` the full sha from step 1, `- Round:` the round number from the brief.
 - **Acceptance criteria.** One row per criterion of the epic (`E<n>-AC<m>`), or one row for a bug, its ID. "Covered by" names the test that checks it, its file and the test's name, or the QA scenario that does, in a few words. A test covers a criterion only when it would fail if the behaviour the criterion describes broke: read it. Where nothing covers a criterion, the cell starts with `open:` and a finding says so. A bug fix is covered by a regression test that fails without the fix.
 - **Findings.** What is wrong in the change, each with `file:line`, what is wrong, why it matters and the fix, in the Finding cell, and a severity from `loop.severities`. Look for:
   - a criterion with no test or QA scenario, or a test that passes while the behaviour is broken;
