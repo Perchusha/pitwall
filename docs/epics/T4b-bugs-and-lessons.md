@@ -12,6 +12,7 @@ ADR: ADR-0006, ADR-0010
 - [ ] T4b-AC3: A fix merges by its risk class like an epic; until then T3b merges every fix after the owner's yes.
 - [ ] T4b-AC4: The guard's corpus (L-13). A script in `scripts/` replays the command lines of the local transcripts through the hooks' guard at a given commit and in the working tree, and prints each verdict that changed. It is a tool for developing pitwall: not part of the plugin and not a step of `scripts/check.mjs`, since CI has no transcripts; it runs only locally and skips its work, saying so, when it finds none. No transcript line enters the repository: the journal, the PR and a committed review file describe a changed verdict by its rule and the form of the command, without quoting the line (owner, 2026-11-10).
 - [ ] T4b-AC5: The 52 variants that T4a's verifying round wrote, kept by the owner outside the repository, become cases in `scripts/check.mjs` with their verdicts at T4a's merge, once a check has shown that none of them is a copy of a transcript line (owner, 2026-11-10).
+- [ ] T4b-AC6: The gate before every commit (L-14), built after AC4, with an ADR. The template gives a project `.githooks/pre-commit`, which runs `scripts/gate --fast` and refuses the commit when the gate fails; `/pitwall:kickoff` sets `core.hooksPath` to it, and `/pitwall:continue` sets it in a project laid out before. The hooks' guard refuses `git commit --no-verify` and `-n`, and any change of `core.hooksPath`: a narrow rule, checked against the corpus of AC4. The ADR records the limit: the hook checks the work tree, not the index, so a partial commit can still be red, and CI catches it (owner, 2026-11-11).
 
 ## Decisions
 
@@ -36,4 +37,5 @@ They are not T4b's criteria. They are fixed after T4b, when the script of T4b-AC
 
 ## Open questions
 
-None.
+- T4b-AC6: what does the pre-commit hook do where the gate cannot be green yet? A spike commits its prototype on `spike/<topic>` while `scripts/gate` is still the template's stub, which fails as soon as code appears, so a hook on every branch refuses each prototype commit. The agent recommends running the gate only on the branches of the loop (`loop.branches`: `epic/`, `fix/`), as the hook after edits already does; the stub must also count `.githooks/` as configuration, not code.
+- T4b-AC6: which changes of `core.hooksPath` does the guard let through? `/pitwall:kickoff` and `/pitwall:continue` set it themselves. The agent recommends letting through exactly `git config core.hooksPath .githooks` and refusing every other value, `--unset`, and `git -c core.hooksPath=...` on a single command.
