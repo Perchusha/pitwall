@@ -25,4 +25,4 @@ The first bugs, filed with `/pitwall:bug` once T4b is merged (see T4b-bugs-and-l
 
 ## Open questions
 
-- A change in flight is committed as `wip: ...` on its branch before the loop switches to a blocking bug's fix (T4b, Decisions), and its tree is often red then: the hook of AC3 refuses that commit, and the guard refuses `--no-verify`. How the two meet is answered before AC3 is built.
+None.
