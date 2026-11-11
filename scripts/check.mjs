@@ -1574,6 +1574,18 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     });
     merge('an unconfirmed fix', { prepare: toFix('high (unconfirmed)'), scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'] });
     merge('a fix with no row', { prepare: toFix(), scenario: fixPr, fixes: true, code: 1, merges: 0, says: ['gives BUG-1 no risk class'] });
+    merge('a low fix, the owner allowed fixes', { prepare: toFix('low'), scenario: fixPr, fixes: true, code: 0, result: 'merged', merges: 1, body: /^Risk class: low\. Merged without the owner, who allowed low and normal risk bug fixes/ });
+    // Review round 1: the owner's raise can reach main in another branch's first commit, which empties the waiting file.
+    const onMain = (risk) => (p) => {
+      toFix('normal')(p);
+      gitIn(p, 'switch', '-q', 'main');
+      const f = join(p, 'docs', 'BUGS.md');
+      writeFileSync(f, `${readFileSync(f, 'utf8').trimEnd()}\n| BUG-1 | No tray icon | QA | Open the app | A tray icon | Nothing | ${/unconfirmed/.test(risk) ? 'blocking (unconfirmed)' : 'blocking'} | ${risk} | open | - |\n`);
+      gitIn(p, 'commit', '-qm', 'docs: BUG-1 on main', '--', 'docs/BUGS.md');
+      gitIn(p, 'switch', '-q', 'fix/BUG-1');
+    };
+    merge('a fix the owner raised on main', { prepare: onMain('high'), scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'] });
+    merge('a fix still unconfirmed on main, confirmed on its branch', { prepare: onMain('high (unconfirmed)'), scenario: fixPr, fixes: true, code: 0, result: 'merged', merges: 1, body: fixWithout });
     merge('a fix, the owner said yes', { prepare: toFix('high'), scenario: fixPr, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): No tray icon (#7)', body: byOwner('high') });
     merge('ai-review red', { scenario: { ...green, statuses: { 'ai-review': 'failure' } }, code: 1, merges: 0, says: ['ai-review is failure', 'the code reviewer sets it'] });
     merge('gate red', { scenario: { ...green, gate: 'failure' }, code: 1, merges: 0, says: ['gate is failure'] });
@@ -1913,18 +1925,26 @@ step('bugs and lessons', (report) => {
     expect('the owner says no to a fix', bugs(['accept', 'BUG-3', '--fallback', 'Live with it']), 0, ['ACCEPTED: BUG-3 becomes R-1']);
     expect('a lesson', bugs(['lesson'], 'rule: Never x\nwhy: BUG-1\nchecked by: Not by a tool until BUG-1\n'), 0, ['RECORDED: L-1']);
     expect('a lesson without what checks it', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\n'), 1, ['lacks checked by']);
+    expect('a lesson checked by a dash', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\nchecked by: -\n'), 1, ['"checked by" says nothing']);
+    // Review round 1: a risk of a review round is numbered past one that waits.
+    expect('a risk while another waits', bugs(['risk', '--text', 'A game in full screen hides it', '--fallback', 'Look at the tray']), 0, ['ACCEPTED: R-2']);
     expect('what waits never lands on main', bugs(['flush']), 1, ['protected']);
     expect('nor a lesson in the tree of main', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: c\n'), 1, ['protected']);
 
     // The first commit of the next branch takes everything that waits; the docs check passes on it.
     gitIn(p, 'switch', '-qc', 'fix/BUG-1');
-    expect('flush', bugs(['flush']), 0, ['BUG-1 (new)', 'BUG-2 (new)', 'BUG-3 (new)', 'R-1 into docs/RISKS.md', 'L-1 into docs/LESSONS.md']);
+    expect('flush', bugs(['flush']), 0, ['BUG-1 (new)', 'BUG-2 (new)', 'BUG-3 (new)', 'R-1 into docs/RISKS.md', 'R-2 into docs/RISKS.md', 'L-1 into docs/LESSONS.md']);
     if (existsSync(waiting)) report('bugs.mjs flush left the rows waiting');
     if (!rowOf('BUG-3').includes('accepted (R-1)') || !/\| R-1 \| BUG-3 \(Pipes\), not fixed: /.test(doc('docs/RISKS.md'))) report(`bugs.mjs: the accepted bug and its risk: ${rowOf('BUG-3')}`);
     let dc = docsCheck(p, ['--stage', 'bug,lesson']);
     if (dc.status !== 0) report(`docs-check --stage bug,lesson after a flush:\n${dc.stdout}`);
     gitIn(p, 'commit', '-qam', 'docs: start BUG-1');
     expect("the conductor's own status", bugs(['set', 'BUG-1', '--status', 'in progress', '--tree']), 0, ['SET: BUG-1 status in docs/BUGS.md']);
+    // Review round 1: a lesson in the tree names only bugs whose row is there; one naming a waiting bug waits with it.
+    expect('a lesson in the tree naming a bug that waits', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: Not by a tool until BUG-7\n'), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
+    expect('a lesson in the tree naming a bug that is here', bugs(['lesson', '--tree'], 'rule: Check the tray\nwhy: BUG-1\nchecked by: a test\n'), 0, ['RECORDED: L-2 in docs/LESSONS.md']);
+    expect('a risk of a review round, in the tree', bugs(['risk', '--tree', '--text', 'Slow on battery', '--fallback', 'Plug it in']), 0, ['ACCEPTED: R-3 in docs/RISKS.md']);
+    expect('where it was found, put right', bugs(['set', 'BUG-1', '--found', 'owner', '--tree']), 0, ['SET: BUG-1 found']);
     if (!rowOf('BUG-1').includes('| in progress |')) report(`bugs.mjs set --tree: ${rowOf('BUG-1')}`);
     gitIn(p, 'commit', '-qam', 'docs: BUG-1 in progress');
 
@@ -1933,8 +1953,11 @@ step('bugs and lessons', (report) => {
     expect('a change to a bug whose row another branch holds', bugs(['set', 'BUG-2', '--risk', 'high']), 0, ['SET: BUG-2 risk']);
     if (listed().find((b) => b.id === 'BUG-2')?.risk !== 'high') report(`bugs.mjs list: BUG-2 raised, as seen from main: ${JSON.stringify(listed())}`);
     expect('the next number counts every branch', bugs(['file'], bug({ title: 'Fourth' })), 0, ['FILED: BUG-4']);
+    expect('a lesson naming a bug that is nowhere', bugs(['lesson'], 'rule: r\nwhy: w\nchecked by: Not by a tool until BUG-99\n'), 0, ['RECORDED: L-3']);
     gitIn(p, 'switch', '-qc', 'epic/E1-x');
-    expect('flush takes the row from the branch that holds it', bugs(['flush']), 0, ['BUG-2 (its row from fix/BUG-1, with risk)', 'BUG-4 (new)']);
+    expect('flush takes the row from the branch that holds it', bugs(['flush']), 0, ['BUG-2 (its row from fix/BUG-1, with risk)', 'BUG-4 (new)', 'Still waiting for the bugs they name: L-3']);
+    if (/\| L-3 \|/.test(doc('docs/LESSONS.md')) || !/\| L-3 \|/.test(readFileSync(join(p, '.git', 'pitwall', 'lessons.md'), 'utf8'))) report('bugs.mjs flush: a lesson naming a bug that is nowhere must keep waiting');
+    rmSync(join(p, '.git', 'pitwall', 'lessons.md'));
     if (!/\| BUG-2 \| Snooze is short \|.*\| not blocking \| high \| open \|/.test(rowOf('BUG-2'))) report(`bugs.mjs flush: BUG-2 taken along: ${rowOf('BUG-2')}`);
     gitIn(p, 'commit', '-qam', 'docs: start E1-x');
 
@@ -1948,7 +1971,7 @@ step('bugs and lessons', (report) => {
     if (gitIn(p, 'merge', '--no-edit', 'main').status === 0) report('bugs.mjs resolve: the merge of main did not stop on docs/BUGS.md, so the case below proves nothing');
     expect('resolve', bugs(['resolve']), 0, ['RESOLVED: docs/BUGS.md']);
     const joined = ['BUG-1', 'BUG-2', 'BUG-3', 'BUG-4'].map(rowOf);
-    if (!joined[0].includes('| in review |') || !joined[1].includes('| high |') || !joined[2].includes('accepted (R-1)') || !joined[3].includes('| Fourth |')) report(`bugs.mjs resolve: ${JSON.stringify(joined)}`);
+    if (!joined[0].includes('| owner |') || !joined[0].includes('| in review |') || !joined[1].includes('| high |') || !joined[2].includes('accepted (R-1)') || !joined[3].includes('| Fourth |')) report(`bugs.mjs resolve: ${JSON.stringify(joined)}`);
     gitIn(p, 'commit', '-q', '--no-edit');
     dc = docsCheck(p, ['--stage', 'bug,lesson']);
     if (dc.status !== 0) report(`docs-check --stage bug,lesson after resolve:\n${dc.stdout}`);
@@ -1971,6 +1994,38 @@ step('bugs and lessons', (report) => {
     if (!readFileSync(join(old, 'docs', 'BUGS.md'), 'utf8').includes('| BUG-1 | Nothing | QA | Open the app | A tray icon | Nothing | blocking | high | open | - |')) report(`bugs.mjs flush: the migrated table\n${readFileSync(join(old, 'docs', 'BUGS.md'), 'utf8')}`);
     dc = docsCheck(old, ['--stage', 'bug']);
     if (dc.status !== 0) report(`docs-check --stage bug on the migrated table:\n${dc.stdout}`);
+
+    // Review round 1: the bug a fix branch fixes, filed into another change's first commit, comes along with its flush;
+    // and the owner's confirmation, carried by that flush to main, survives the merge of main into the other change.
+    const q = join(dir, 'q');
+    if (layOut(q).status !== 0) return report('layout failed');
+    gitIn(q, 'init', '-q', '-b', 'main');
+    gitIn(q, 'add', '-A');
+    gitIn(q, 'commit', '-qm', 'skeleton');
+    const qb = (args, input) => runScript('bugs.mjs', [...args, '--project', q], { input: input ?? '' });
+    const qrow = (id) => readFileSync(join(q, 'docs', 'BUGS.md'), 'utf8').split('\n').find((l) => l.startsWith(`| ${id} |`)) ?? '';
+    qb(['file'], bug({ title: 'Blocking one' }));
+    qb(['file'], bug({ title: 'Unconfirmed one', confirmed: 'no' }));
+    gitIn(q, 'switch', '-qc', 'epic/E1-x');
+    qb(['flush']);
+    gitIn(q, 'commit', '-qam', 'docs: start E1-x');
+    qb(['set', 'BUG-2', '--severity', 'not blocking', '--risk', 'low']);
+    gitIn(q, 'switch', '-q', 'main');
+    gitIn(q, 'switch', '-qc', 'fix/BUG-1');
+    expect('a fix branch takes its own row from the branch that holds it', qb(['flush']), 0, ['BUG-1 (its row from epic/E1-x, the bug this branch fixes)', 'BUG-2 (its row from epic/E1-x, with severity, risk)']);
+    expect('and its status can be set then', qb(['set', 'BUG-1', '--status', 'in progress', '--tree']), 0, ['SET: BUG-1 status']);
+    gitIn(q, 'commit', '-qam', 'docs: start BUG-1');
+    gitIn(q, 'switch', '-q', 'main');
+    gitIn(q, 'merge', '-q', '--no-ff', 'fix/BUG-1', '-m', 'fix(BUG-1): blocking one (#2)');
+    gitIn(q, 'switch', '-q', 'epic/E1-x');
+    gitIn(q, 'merge', '--no-edit', 'main');
+    expect('resolve keeps the confirmation', qb(['resolve']), 0, ['RESOLVED: docs/BUGS.md']);
+    if (!/\| not blocking \| low \| open \|/.test(qrow('BUG-2')) || !/\| in progress \|/.test(qrow('BUG-1'))) report(`bugs.mjs resolve: the owner's confirmation, or the fix's status, was lost: ${qrow('BUG-1')} / ${qrow('BUG-2')}`);
+    gitIn(q, 'commit', '-q', '--no-edit');
+    // A table with a column of its own is never rewritten: the column would be lost.
+    writeFileSync(join(q, 'docs', 'BUGS.md'), readFileSync(join(q, 'docs', 'BUGS.md'), 'utf8').replace('| Fix PR |', '| Fix PR | Notes |'));
+    expect('a column of its own', qb(['set', 'BUG-2', '--title', 'x', '--tree']), 1, ['neither the template']);
+    expect('a column of its own, flushed', (qb(['file'], bug({ title: 'Fifth' })), qb(['flush'])), 1, ['nothing was written']);
 
     // docs-check --stage bug and lesson on each kind of gap.
     const base = join(dir, 'gaps');
@@ -1999,6 +2054,10 @@ step('bugs and lessons', (report) => {
     gap('accepted as a risk nobody accepted', 'bug', 'docs/BUGS.md', [B(with_(8, 'accepted (R-9)'))], ['is accepted as R-9, which is not a risk the owner accepted']);
     gap('a status of its own', 'bug', 'docs/BUGS.md', [B(with_(8, 'done'))], ['status "done" is not one of']);
     gap('the same bug twice', 'bug', 'docs/BUGS.md', [B(ok), B(ok)], ['BUG-1 is in the table twice']);
+    const rk = join(dir, 'rk');
+    cpSync(base, rk, { recursive: true });
+    writeFileSync(join(rk, 'docs', 'RISKS.md'), '# Risks\n\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-1 | A | B | 2026-11-11 |\n| R-1 | C | D | 2026-11-11 |\n');
+    if (!/R-1 is in the table twice/.test(docsCheck(rk, ['--stage', 'bug']).stdout)) report('docs-check --stage bug does not refuse a risk numbered twice');
     gap('a lesson the way the skill records it', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A review finding | 2026-11-11 | Not by a tool until the check is built |'], []);
     gap('a lesson nothing checks', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A finding | 2026-11-11 |  |'], ['says nothing under "Checked by"']);
     gap('a lesson checked by a dash', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A finding | 2026-11-11 | - |'], ['says nothing under "Checked by"']);

@@ -45,7 +45,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
    ```
    It prints `FILED:` with the ID. A refusal names the field to fix: fix it and run it again.
 6. **Can it happen again** in another place, the same mistake made elsewhere? Then say so, with the rule in one line, and suggest `/pitwall:lesson`.
-7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug takes both at once), or `--title "<t>"`. The change waits in the git directory as a new bug does, and a class the owner raises counts for the fix's merge at once.
+7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug takes both at once), or `--title "<t>"`, or `--found <where>`. The change waits in the git directory as a new bug does, and a class the owner raises counts for the fix's merge at once.
 8. **The owner's no to a fix**: the bug becomes an accepted risk. Ask what they will do if it comes true, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> --fallback "<their answer>"`.
 9. **Tell the owner** in a few lines: the ID and title, the severity and class, that the row waits in the git directory until the next branch, and what happens next: a blocking bug's fix goes first in the next `/pitwall:continue`, before the change in flight; one that is not blocking waits until no epic is ready. The fix closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour.
 

@@ -281,8 +281,9 @@ export function oldDefaults(row, cfg) {
 // The risk class of a bug fix as a merge reads it (T4b-AC3): the highest of the class docs/BUGS.md gives the
 // bug in the first commit of the fix's branch that holds its row (the row as filed, with the owner's changes
 // that waited for that commit), at the commit that merges, and in a change the owner made after the fix
-// started, which waits in the git directory of this clone (owner, 2026-11-11). A class raised anywhere holds;
-// one lowered on the branch does not. An unconfirmed bug, and a bug of a table from before T4b, is high.
+// started, which waits in the git directory of this clone (owner, 2026-11-11), or which another branch's
+// first commit already took to main (review round 1). A class raised anywhere holds; one lowered on the
+// branch does not. An unconfirmed bug, and a bug of a table from before T4b, is high.
 // Null when neither commit gives the bug a class.
 export function bugRiskClassAt(git, project, bug, sha, base, cfg) {
   const order = riskOrder(cfg);
@@ -306,7 +307,16 @@ export function bugRiskClassAt(git, project, bug, sha, base, cfg) {
   const path = pendingBugsPath(project, cfg);
   const waiting = path && existsSync(path) ? bugTable(readFileSync(path, 'utf8')).rows.find((r) => bugFacts(r, cfg).id === bug && String(r.risk ?? '').trim()) : null;
   const later = waiting ? bugFacts(waiting, cfg).risk : null;
-  return [first, head, later].filter(Boolean).reduce((a, b) => (order.indexOf(b) > order.indexOf(a) ? b : a));
+  // The owner's change can also have reached main in another branch's first commit, which empties the waiting
+  // file. An unconfirmed class there is older than any confirmation, so it counts only on the branch itself.
+  const confirmedAt = (ref) => {
+    const shown = git('show', `${ref}:docs/BUGS.md`);
+    const t = shown.ok ? bugTable(shown.raw) : null;
+    const r = t?.rows.find((x) => bugFacts(x, cfg).id === bug);
+    return r && !bugFacts(r, cfg, t.old).unconfirmed ? bugFacts(r, cfg, t.old).risk : null;
+  };
+  const onMain = [base, `refs/remotes/origin/${base}`].filter((ref) => git('rev-parse', '--verify', '-q', `${ref}^{commit}`).ok).map(confirmedAt);
+  return [first, head, later, ...onMain].filter(Boolean).reduce((a, b) => (order.indexOf(b) > order.indexOf(a) ? b : a));
 }
 
 // The next BUG-n: one more than any in docs/BUGS.md, its archive, the rows waiting, docs/BUGS.md on every

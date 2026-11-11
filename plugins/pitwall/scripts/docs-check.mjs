@@ -1307,6 +1307,9 @@ function checkCodeReview() {
 // docs/BUGS.md, read by its header. A table of seven columns from before T4b passes: /pitwall:continue gives
 // it the new columns. In the new one every row is a bug the loop can act on.
 function checkBugs() {
+  // Risks the owner accepted, from a review round or in place of a fix: one number each (review round 1).
+  const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')).map((r) => bareCell(r[0])) : [];
+  for (const r of new Set(risks.filter((x, i) => /^R-\d+$/.test(x) && risks.indexOf(x) !== i))) report('docs/RISKS.md', `${r} is in the table twice: number the later one anew`);
   const rel = 'docs/BUGS.md';
   if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
   const table = bugTable(read(rel));

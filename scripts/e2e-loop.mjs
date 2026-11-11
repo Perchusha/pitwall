@@ -225,7 +225,8 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       const unmet = [];
       const m = merges().find((x) => /^fix\(BUG-1\): /.test(x[1]));
       if (!m) return ['BUG-1 is not merged into origin main with a "fix(BUG-1): ..." merge commit'];
-      if (!/Risk class: normal\./.test(m[2] ?? '')) unmet.push(`BUG-1's merge commit does not record its risk class, normal: "${m[2]}"`);
+      // By its class, once the owner's choice for fixes is recorded, not after a yes to this one merge (review round 1).
+      if (!/^Risk class: normal\. Merged without the owner, who allowed low and normal risk bug fixes/.test(m[2] ?? '')) unmet.push(`BUG-1's merge commit does not say it merged by its risk class, normal, without the owner: "${m[2]}"`);
       if (merges().some((x) => /^feat\(E2\): /.test(x[1])) || /refs\/heads\/epic\/E2-/.test(git('ls-remote', '--heads', 'origin').stdout)) unmet.push('E2 was started before the blocking bug was fixed');
       const bugs = shown('docs/BUGS.md').stdout;
       if (!/^\| ID \| Title \| Found in \| Steps \| Expected \| Actual \| Severity \| Risk \| Status \| Fix PR \|$/m.test(bugs)) unmet.push('docs/BUGS.md on main lacks the columns of T4b: the first commit of the fix did not give the table of seven columns its new ones');

@@ -13,7 +13,7 @@ Plugin files used: the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/` (`bugs.mjs`, 
 
 ## Rules
 
-- Never write `docs/LESSONS.md` by hand: `bugs.mjs lesson` numbers and dates the row. It waits in the git directory until the first commit of the next branch, except a lesson from the review of the change in flight, which goes on that change's branch with `--tree` (step 5).
+- Never write `docs/LESSONS.md` by hand: `bugs.mjs lesson` numbers and dates the row. It waits in the git directory until the first commit of the next branch, except a lesson from the review of the change in flight that names no bug waiting for a branch, which goes on that change's branch with `--tree` (step 5).
 - Run each command as written, from the project root, one command per call; give the lesson on stdin with a quoted heredoc in bash (the Bash tool).
 - One question per message, then wait. Never answer for the owner.
 
@@ -37,7 +37,7 @@ Plugin files used: the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/` (`bugs.mjs`, 
    checked by: <what checks it>
    EOF
    ```
-   When the lesson comes from the review of the change in flight (`/pitwall:continue` step 8), add `--tree` after `lesson`: it goes into `docs/LESSONS.md` on that change's branch, where the next implementer of the change reads it, and the conductor commits it with the round's docs.
+   When the lesson comes from the review of the change in flight (`/pitwall:continue` step 8), add `--tree` after `lesson`: it goes into `docs/LESSONS.md` on that change's branch, where the next implementer of the change reads it, and the conductor commits it with the round's docs. Not when it names a bug whose row is not in `docs/BUGS.md` on that branch, such as the missing check just filed in step 3: the script refuses, since the docs check of the change would find an ID that points nowhere, so record it without `--tree`, and it waits with the bug for the same first commit.
 6. **Tell the owner** the `L-<n>`, the rule, what checks it, and where it waits.
 
 ## Output
