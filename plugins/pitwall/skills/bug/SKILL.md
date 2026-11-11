@@ -7,7 +7,7 @@ description: Files a defect of a pitwall project as the next BUG-n - its title, 
 
 > Status: built in T4b.
 
-Files a bug where the loop finds it: the row waits in the git directory, outside the work tree, until the first commit of the next branch moves it into `docs/BUGS.md` (owner, 2026-11-11). Its fix runs the loop like an epic and merges by its risk class; only a blocking bug's fix goes before the next epic.
+Files a bug where the loop finds it: the row waits in the git directory, outside the work tree, until the first commit of the next branch moves it into `docs/BUGS.md` (owner, 2026-11-11). Its fix runs the loop like an epic and always merges after the owner's yes; its risk class picks the fix's implementer. Only a blocking bug's fix goes before the next epic, right after the change in flight.
 
 Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskClasses`) and the scripts in `${CLAUDE_PLUGIN_ROOT}/scripts/` (`bugs.mjs`, `docs-check.mjs`).
 
@@ -29,7 +29,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
 3. **Propose** a severity and a risk class, each with a reason in one line:
    - the severity by `bugs.severities`: blocking when the defect itself does harm in ordinary work (work stops, or data, work or a secret is lost because of it); a gap in a protection that does harm only after someone else's mistake is not blocking;
    - the class by what the fix will touch, as `riskClasses` gives its examples: a guard, auth, payments, data migrations or deletion, infrastructure or security is high.
-4. **Ask the owner** in one message to confirm both or change them. Their answer, or "as you propose", confirms them. When no owner can answer (you run as an agent nobody talks to, or the owner left without a word), file it unconfirmed: the script files it blocking and high, marked so, until they confirm it in `/pitwall:owner-calls` (owner, 2026-11-11).
+4. **Ask the owner** in one message to confirm both or change them. Their answer, or "as you propose", confirms them. When no owner can answer (you run as an agent nobody talks to, or the owner left without a word), file it unconfirmed: the script files it blocking, marked so, with the class you proposed, until they confirm it in `/pitwall:owner-calls` (owner, 2026-11-11).
 5. **File it**, with `confirmed: yes` when the owner answered and `confirmed: no` otherwise:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" file <<'EOF'
@@ -45,9 +45,9 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
    ```
    It prints `FILED:` with the ID. A refusal names the field to fix: fix it and run it again.
 6. **Can it happen again** in another place, the same mistake made elsewhere? Then say so, with the rule in one line, and suggest `/pitwall:lesson`.
-7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug takes both at once), or `--title "<t>"`, or `--found <where>`. The change waits in the git directory as a new bug does, and a class the owner raises counts for the fix's merge at once.
+7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug is confirmed by its severity), or `--title "<t>"`, or `--found <where>`. The change waits in the git directory as a new bug does.
 8. **The owner's no to a fix**: the bug becomes an accepted risk. Ask what they will do if it comes true, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> --fallback "<their answer>"`.
-9. **Tell the owner** in a few lines: the ID and title, the severity and class, that the row waits in the git directory until the next branch, and what happens next: a blocking bug's fix goes first in the next `/pitwall:continue`, before the change in flight; one that is not blocking waits until no epic is ready. The fix closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour.
+9. **Tell the owner** in a few lines: the ID and title, the severity and class, that the row waits in the git directory until the next branch, and what happens next: a blocking bug's fix goes right after the change in flight, before the next epic; one that is not blocking waits until no epic is ready; every fix merges after the owner's yes. The fix closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour.
 
 ## Output
 

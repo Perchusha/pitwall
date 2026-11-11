@@ -1,22 +1,18 @@
 #!/usr/bin/env node
 // Records the owner's choice of ADR-0010 (T3b-AC6): may low and normal risk epics merge without
-// the owner once gate and ai-review are green? With --fixes, the same choice for bug fixes, a choice
-// of its own (T4b-AC3; owner, 2026-11-11): the yes given to epics was given under "bug fixes always
-// wait for you", so it never reaches a fix. /pitwall:continue asks it once, when the first fix of
-// low or normal class is ready to merge.
+// the owner once gate and ai-review are green?
 //
-//   node merge-choice.mjs [--fixes] --allow | --deny [--project <dir>]
+//   node merge-choice.mjs --allow | --deny [--project <dir>]
 //
 // The owner runs it in a terminal, never an agent: it refuses to run under Claude Code, which sets
 // CLAUDECODE in every command it runs, and pitwall's guard refuses it to every agent, the main
 // conversation included (hooks.ownerOnly). A session that asks the question hands the owner this
 // command (L-6).
 //
-// It writes the answer into .claude/pitwall.json (loop.ownerChoice, autoMerge; with --fixes
-// loop.ownerChoiceFixes, autoMergeFixes). --allow also writes the two allow rules of merge-rules.mjs
-// into .claude/settings.local.json, which stays on this machine, but only when the review guard works
-// (merge-rules.mjs guardWorks); otherwise it records nothing and says why. --deny removes the rules
-// unless the other choice is still yes. The session-start hook writes the rules again,
+// It writes the answer into .claude/pitwall.json (loop.ownerChoice, autoMerge). --allow also writes
+// the two allow rules of merge-rules.mjs into .claude/settings.local.json, which stays on this
+// machine, but only when the review guard works (merge-rules.mjs guardWorks); otherwise it records
+// nothing and says why. --deny removes the rules. The session-start hook writes the rules again,
 // with the plugin's path as the session spells it, whenever the answer is yes.
 //
 // Exit 0 recorded, 1 refused, 2 usage.
@@ -27,8 +23,8 @@ import { config, parseArgs, pluginRoot, requireNode, writeJson } from './lib.mjs
 import { guardWorks, syncRules } from './merge-rules.mjs';
 
 requireNode();
-const usage = 'node merge-choice.mjs [--fixes] --allow | --deny [--project <dir>]';
-const args = parseArgs(process.argv.slice(2), { allow: 'switch', deny: 'switch', fixes: 'switch', project: 'value' }, usage);
+const usage = 'node merge-choice.mjs --allow | --deny [--project <dir>]';
+const args = parseArgs(process.argv.slice(2), { allow: 'switch', deny: 'switch', project: 'value' }, usage);
 if (Boolean(args.allow) === Boolean(args.deny)) {
   console.error(`merge-choice: give --allow or --deny\nusage: ${usage}`);
   process.exit(2);
@@ -51,9 +47,7 @@ try {
   refuse(`.claude/pitwall.json does not parse: ${String(e.message).split('\n')[0]}`);
 }
 const allow = Boolean(args.allow);
-const fixes = Boolean(args.fixes);
-const key = fixes ? cfg.loop.ownerChoiceFixes : cfg.loop.ownerChoice;
-const other = settings[fixes ? cfg.loop.ownerChoice : cfg.loop.ownerChoiceFixes] === true;
+const key = cfg.loop.ownerChoice;
 
 if (allow) {
   const broken = guardWorks(project, pluginRoot, cfg, settings);
@@ -61,23 +55,17 @@ if (allow) {
 }
 // The session spells the plugin's folder its own way (CLAUDE_PLUGIN_ROOT): the rules go in for both spellings
 // of this one, and the next session start keeps only the session's.
-const rules = syncRules(project, [pluginRoot, pluginRoot.split('\\').join('/')], allow || other);
+const rules = syncRules(project, [pluginRoot, pluginRoot.split('\\').join('/')], allow);
 if (rules.error) refuse(`.claude/settings.local.json ${rules.error}: fix it by hand, then run this again. Nothing was recorded.`);
 const was = settings[key];
 settings[key] = allow;
 writeJson(file, settings);
 
 console.log(`merge-choice: .claude/pitwall.json records ${key}: ${allow}${was === allow ? ' (as before)' : ''}`);
-const said = fixes
-  ? allow
-    ? 'low and normal risk bug fixes now merge without you once gate and ai-review are green, each by the class you confirmed when it was filed; high risk fixes still wait for you'
-    : 'every bug fix waits for your yes'
-  : allow
-    ? `low and normal risk epics now merge without you once gate and ai-review are green; high risk still waits for you, and bug fixes have a choice of their own (merge-choice.mjs --fixes)`
-    : 'every merge of an epic waits for your yes';
-const ruleWords = allow || other
-  ? `.claude/settings.local.json ${rules.changed ? 'now allows' : 'already allowed'} review-status.mjs and "merge.mjs --change" from ${pluginRoot}; each session start writes them again for the plugin's path as that session spells it.`
-  : rules.changed ? 'The allow rules were removed from .claude/settings.local.json.' : '.claude/settings.local.json holds no allow rules of pitwall.';
-console.log(`merge-choice: ${said}. ${ruleWords}`);
+console.log(
+  allow
+    ? `merge-choice: low and normal risk epics now merge without you once gate and ai-review are green; high risk and bug fixes still wait for you. .claude/settings.local.json ${rules.changed ? 'now allows' : 'already allowed'} review-status.mjs and "merge.mjs --change" from ${pluginRoot}; each session start writes them again for the plugin's path as that session spells it.`
+    : `merge-choice: every merge waits for your yes. ${rules.changed ? 'The allow rules were removed from .claude/settings.local.json.' : '.claude/settings.local.json holds no allow rules of pitwall.'}`,
+);
 console.log('merge-choice: the session commits .claude/pitwall.json with its next change.');
 console.log('RESULT: recorded');

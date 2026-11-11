@@ -540,7 +540,8 @@ function checkKickoff() {
       if (!Object.keys(cfg.processLevels).includes(s.processLevel)) report(file, `processLevel "${s.processLevel}" is not one of ${Object.keys(cfg.processLevels).join(', ')}`);
       if (!cfg.mergeProtection.modes.includes(s.mergeProtection)) report(file, `mergeProtection "${s.mergeProtection}" is not one of ${cfg.mergeProtection.modes.join(', ')}`);
       // The owner's choice of ADR-0010; a project laid out before it has no key yet.
-      for (const choice of [cfg.loop.ownerChoice, cfg.loop.ownerChoiceFixes]) if (Object.hasOwn(s, choice) && typeof s[choice] !== 'boolean') report(file, `${choice} "${s[choice]}" is not true or false`);
+      const choice = cfg.loop.ownerChoice;
+      if (Object.hasOwn(s, choice) && typeof s[choice] !== 'boolean') report(file, `${choice} "${s[choice]}" is not true or false`);
     }
   }
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);
@@ -1333,12 +1334,9 @@ function checkBugs() {
     for (const k of ['steps', 'expected', 'actual']) if (!cellText(row[k])) report(at, `says nothing under "${k[0].toUpperCase()}${k.slice(1)}"`);
     if (!b.severity) report(at, `severity "${row.severity ?? ''}" is not one of ${severities.join(', ')}`);
     if (!b.risk) report(at, `risk "${row.risk ?? ''}" is not one of ${riskOrder(cfg).join(', ')}`);
-    // Not confirmed by the owner: blocking and high, both marked, until they answer (owner, 2026-11-11).
-    const marked = (c) => new RegExp(`\\(${mark}\\)`, 'i').test(String(c ?? ''));
-    const marks = [row.severity, row.risk].filter(marked).length;
-    if (marks === 1 || (marks === 2 && (b.severity !== cfg.bugs.unconfirmed.severity || b.risk !== cfg.bugs.unconfirmed.risk))) {
-      report(at, `a bug the owner has not confirmed is "${cfg.bugs.unconfirmed.severity} (${mark})" and "${cfg.bugs.unconfirmed.risk} (${mark})", both, until they answer`);
-    }
+    // Not confirmed by the owner: blocking, marked so, until they answer (owner, 2026-11-11). The class is never
+    // marked: it only picks the implementer, and every fix waits for the owner's yes anyway.
+    if (b.unconfirmed && b.severity !== cfg.bugs.unconfirmed.severity) report(at, `a bug the owner has not confirmed is "${cfg.bugs.unconfirmed.severity} (${mark})" until they answer`);
     const status = cfg.bugs.statuses.find((x) => b.status.toLowerCase() === x || (x === 'accepted' && b.accepted));
     if (!status) report(at, `status "${b.status}" is not one of ${cfg.bugs.statuses.map((x) => (x === 'accepted' ? 'accepted (R-n)' : x)).join(', ')}`);
     else if (b.accepted && !accepted.get(b.accepted)) report(at, `is accepted as ${b.accepted}, which is not a risk the owner accepted in docs/RISKS.md`);

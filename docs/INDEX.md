@@ -3,7 +3,7 @@
 | Document | Holds | Read it when |
 | --- | --- | --- |
 | `SPEC.md` | The design: pipeline, levels, decisions, epic loop, agents, packaging, validation | Planning any change |
-| `EPICS.md` | The plan for building pitwall, epics T0 to T6 | Picking the next work |
+| `EPICS.md` | The plan for building pitwall, epics T0 to T7 | Picking the next work |
 | `epics/` | One epic per file with acceptance criteria | Implementing or reviewing an epic |
 | `adr/` | Decisions about pitwall itself | Touching an area a decision covers |
 | `RISKS.md` | R-n: risks the owner accepted, with their fallbacks | Changing a check or a decision a risk names |

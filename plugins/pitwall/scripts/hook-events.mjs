@@ -295,28 +295,23 @@ function selfTest(s) {
 // needs no new command from the owner; while the review guard does not work, and on no, there are none.
 function mergeRules({ cfg, settings, root }) {
   const choice = settings[cfg.loop.ownerChoice];
-  const fixes = settings[cfg.loop.ownerChoiceFixes];
-  const epics =
+  const said =
     choice === true
-      ? 'low and normal risk epics merge without the owner once gate and ai-review are green, high risk waits for them'
+      ? 'low and normal risk epics merge without the owner once gate and ai-review are green; high risk and bug fixes wait for the owner'
       : choice === false
-        ? 'every merge of an epic waits for the owner'
+        ? 'every merge waits for the owner'
         : 'the owner has not chosen yet whether low and normal risk epics merge without them, so every merge waits; /pitwall:continue asks';
-  // Bug fixes have a choice of their own (T4b-AC3), asked when the first fix of low or normal class is ready.
-  const fixWords = fixes === true ? 'low and normal risk bug fixes merge without them too' : fixes === false ? 'every bug fix waits for them' : 'bug fixes wait for them until they choose otherwise';
-  const said = `${epics}; ${fixWords}`;
-  const yes = choice === true || fixes === true;
   const dir = process.env.CLAUDE_PLUGIN_ROOT || pluginRoot;
   try {
-    const broken = yes ? guardWorks(root, dir, cfg, settings) : null;
+    const broken = choice === true ? guardWorks(root, dir, cfg, settings) : null;
     // The session's spelling, and the same path with forward slashes, which a model may write instead.
-    const r = syncRules(root, [dir, dir.split('\\').join('/')], yes && !broken);
+    const r = syncRules(root, [dir, dir.split('\\').join('/')], choice === true && !broken);
     const rules = r.error
       ? `; .claude/settings.local.json ${r.error}, so its allow rules were not checked`
       : broken
         ? `; the review guard does not work (${broken}), so the allow rules are off and every merge waits`
         : r.changed
-          ? yes
+          ? choice === true
             ? '; the allow rules in .claude/settings.local.json were written for this plugin path'
             : '; the allow rules were removed from .claude/settings.local.json'
           : '';

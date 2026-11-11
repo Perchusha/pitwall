@@ -21,7 +21,7 @@ T4c-AC3 belongs here and not in T4a: recording needs a commit on protected `main
 
 ## Out of scope
 
-- The guards and the loop's follow-ups (T4a); bugs and lessons (T4b); the guard's corpus and the gate before every commit (T4d).
+- The guards and the loop's follow-ups (T4a); bugs and lessons (T4b); the gate before every commit (T4d).
 
 ## Open questions
 

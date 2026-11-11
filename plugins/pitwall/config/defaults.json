@@ -218,6 +218,9 @@
     },
     "unconfirmed": {
       "mark": "unconfirmed",
+      "severity": "blocking"
+    },
+    "oldTable": {
       "severity": "blocking",
       "risk": "high"
     },
@@ -251,8 +254,7 @@
       "blocking",
       "should fix"
     ],
-    "ownerChoice": "autoMerge",
-    "ownerChoiceFixes": "autoMergeFixes"
+    "ownerChoice": "autoMerge"
   },
   "discovery": {
     "scenarios": {

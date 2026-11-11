@@ -1,12 +1,12 @@
 ---
 name: owner-calls
-description: Lists everything that waits for the owner in a pitwall project, grouped, one line each, with what happens if the owner says nothing - the switches only the owner sets, open questions of the epics and the plan, bugs filed without the owner's answer, PRs ready and waiting for the owner's yes, open bugs, work the loop set aside - then asks them one at a time and records each answer where it belongs. The owner runs it as /pitwall:owner-calls.
+description: Lists everything that waits for the owner in a pitwall project, grouped, one line each, with what happens if the owner says nothing - the switches only the owner sets, open questions of the epics and the plan, bugs filed without the owner's answer, PRs ready and waiting for the owner's yes, open bugs - then asks them one at a time and records each answer where it belongs. The owner runs it as /pitwall:owner-calls.
 disable-model-invocation: true
 ---
 
 # owner-calls - what waits for the owner
 
-> Status: built in T4a; bugs by severity, unconfirmed bugs and work set aside since T4b.
+> Status: built in T4a; bugs by severity and unconfirmed bugs since T4b.
 
 Gathers what waits for the owner with a script, shows it in one message and goes through it with them, one question at a time. Whatever an agent may not write, it hands over as a command for the owner's own terminal.
 
@@ -27,8 +27,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs`, `bugs.mjs` f
    - an open question of an epic: ask it; record the answer in that epic's "## Open questions" as a line `Answered (<date>): <the question>: <the answer>`, in place of the question; a new one-way decision goes through `/pitwall:decide <area>` instead;
    - an open item of the plan review: it is closed in the plan, not here: say so and point to `/pitwall:plan`;
    - a bug filed without the owner's answer: show its row (`node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" list --all`), propose its severity and its risk class as `/pitwall:bug` step 3 does, and ask the owner to confirm or change both; record them with `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>`. When they will not have it fixed, ask what they will do if it comes true and run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> --fallback "<their answer>"` instead;
-   - an open bug: nothing to ask; a blocking one's fix goes first in the next `/pitwall:continue`, one that is not blocking waits until no epic is ready. When the owner changes its severity, its class or its title, or will not have it fixed, record it with `bugs.mjs set` or `bugs.mjs accept`, as above;
-   - work set aside: nothing to ask; `/pitwall:continue` pops the stash when it returns to that change.
+   - an open bug: nothing to ask; a blocking one's fix goes right after the change in flight, one that is not blocking waits until no epic is ready, and every fix merges after the owner's yes. When the owner changes its severity, its class or its title, or will not have it fixed, record it with `bugs.mjs set` or `bugs.mjs accept`, as above;
 4. Before any merge, put the answers where they stay (`git branch --show-current` tells where the project is):
    - on the branch of a change with no PR open yet (`gh pr list --head <branch> --state open` lists nothing): commit them there, naming each path, `git commit -m "docs: the owner's answers" -- <paths>`;
    - on `main`, which is protected, or on a branch whose PR is open: never commit them, since a commit there can move a reviewed head and ask for another review round. They stay in the tree, and the first commit of the next branch `/pitwall:continue` starts records them (its step 1); say so.

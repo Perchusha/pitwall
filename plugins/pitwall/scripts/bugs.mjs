@@ -6,9 +6,10 @@
 //       The bug on stdin, one "name: value" line each (a line with no name goes on the value before it):
 //       title, found in, steps, expected, actual, severity, risk, and confirmed: yes when the owner
 //       answered on the severity and the class, no when they were not asked. An unconfirmed bug is
-//       filed blocking and high, marked so, whatever the filer proposed (owner, 2026-11-11).
+//       filed blocking, marked so, whatever the filer proposed (owner, 2026-11-11). The class picks the
+//       implementer of the fix and nothing else: every fix merges after the owner's yes (ADR-0010).
 //   node bugs.mjs set <BUG-n> [--severity <s>] [--risk <class>] [--status <s>] [--fix-pr <#n>] [--title <t>] [--found <where>] [--tree] [--project <dir>]
-//       A change to a bug. An unconfirmed bug is confirmed by giving both its severity and its class.
+//       A change to a bug. An unconfirmed bug is confirmed by giving its severity.
 //       --tree writes docs/BUGS.md in the work tree, for the conductor's own status on its branch;
 //       without it the change waits in the git directory, as a new bug does.
 //   node bugs.mjs accept <BUG-n> --fallback <text> [--project <dir>]
@@ -29,25 +30,20 @@
 //       Moves what waits into docs/BUGS.md, docs/RISKS.md and docs/LESSONS.md, in the work tree of the
 //       branch the project is on, never main, for the first commit of that branch. A table of seven
 //       columns from before T4b gains the new ones first, each open bug in it blocking and high. A change
-//       to a bug whose row another branch holds, not merged yet, takes that row with it; one no branch
-//       holds keeps waiting. On fix/BUG-n it takes BUG-n's row from the branch that holds it, when it
-//       is not on this one yet. A lesson naming a bug that is not a row here after that keeps waiting.
-//       A table whose columns are neither the template's nor the seven of before T4b is refused, and
-//       nothing is written.
-//   node bugs.mjs resolve [--project <dir>]
-//       Finishes a git merge of main into a change's branch that stopped on docs/BUGS.md, docs/RISKS.md
-//       or docs/LESSONS.md: every row of both sides stays; a cell of a bug both sides changed keeps the
-//       status further along, the owner's confirmed word over an unconfirmed one, then the higher class
-//       and blocking, or else main's word.
+//       to a bug whose row is on the change in flight, not merged yet, keeps waiting for the branch after
+//       it, and so does a lesson naming a bug that is not a row here. A table whose columns are neither
+//       the template's nor the seven of before T4b is refused, and nothing is written.
 //
 // What waits lives in the git directory (bugs.pending in the config), outside the work tree, so no
 // implementer commits it into another change and no switch, stash or checkout touches it (owner,
-// 2026-11-11). Numbers are taken past every one in the work tree, in what waits and on every branch.
+// 2026-11-11). One change is in flight at a time and a blocking bug waits for it to merge, so the
+// branches never write docs/BUGS.md side by side. Numbers are taken past every one in the work tree, in
+// what waits and on every branch.
 // Exit 0 done, 1 refused (a value the config does not know, a bug that does not exist, main), 2 usage.
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { bugCell, bugColumns, bugFacts, bugsOnBranches, bugTable, bugsView, changedCells, config, gitRunner, isNewBug, nextBugId, oldDefaults, parseArgs, pendingBugsPath, requireNode, riskOrder, writeBugTable } from './lib.mjs';
+import { bugCell, bugColumns, bugFacts, bugTable, bugsView, changedCells, config, gitRunner, isNewBug, nextBugId, oldDefaults, parseArgs, pendingBugsPath, requireNode, riskOrder, writeBugTable } from './lib.mjs';
 
 requireNode();
 const usage = [
@@ -58,7 +54,6 @@ const usage = [
   'node bugs.mjs lesson [--tree] [--project <dir>]   (the lesson on stdin)',
   'node bugs.mjs list [--json] [--all] [--project <dir>]',
   'node bugs.mjs flush [--project <dir>]',
-  'node bugs.mjs resolve [--project <dir>]',
 ].join('\n       ');
 const bad = (msg) => {
   console.error(`bugs: ${msg}\nusage: ${usage}`);
@@ -78,7 +73,6 @@ const specs = {
   lesson: { project: 'value', tree: 'switch' },
   list: { project: 'value', json: 'switch', all: 'switch' },
   flush: { project: 'value' },
-  resolve: { project: 'value' },
 };
 if (!specs[command]) bad(command ? `unknown command "${command}"` : 'a command is required');
 const named = ['set', 'accept'].includes(command);
@@ -194,11 +188,9 @@ if (command === 'file') {
   const confirmed = pick(fields.confirmed, ['yes', 'no'], 'confirmed');
   const found = pick(fields['found in'], cfg.bugs.foundIn, 'found in');
   let severity = pick(fields.severity, severities, 'severity');
-  let risk = pick(fields.risk, classes, 'risk');
-  if (confirmed === 'no') {
-    severity = `${cfg.bugs.unconfirmed.severity} (${mark})`;
-    risk = `${cfg.bugs.unconfirmed.risk} (${mark})`;
-  }
+  const risk = pick(fields.risk, classes, 'risk');
+  // Not confirmed by the owner: blocking, marked so, until they answer; the class only picks the implementer.
+  if (confirmed === 'no') severity = `${cfg.bugs.unconfirmed.severity} (${mark})`;
   const bug = nextBugId(project, view, git, cfg);
   wait({ id: bug, title: fields.title, found, steps: fields.steps, expected: fields.expected, actual: fields.actual, severity, risk, status: cfg.bugs.statuses[0], fix: '-' });
   console.log(`FILED: ${bug} (${bugCell(fields.title)}), ${severity}, ${risk}. It waits in ${shown(waiting.bugs)} until the first commit of the next branch moves it into docs/BUGS.md.`);
@@ -212,7 +204,7 @@ if (command === 'set') {
     if (!args.title.trim() || args.title.length > 60) refuse('the title is a short name of 1 to 60 characters');
     change.title = args.title.trim();
   }
-  if (bug.unconfirmed && (args.severity !== undefined) !== (args.risk !== undefined)) refuse(`${id} is not confirmed yet: give both its severity and its class, as the owner answered`);
+  // An unconfirmed bug is confirmed by its severity, as the owner answered.
   if (args.severity !== undefined) change.severity = pick(args.severity, severities, 'severity');
   if (args.risk !== undefined) change.risk = pick(args.risk, classes, 'risk');
   if (args.status !== undefined) {
@@ -302,7 +294,7 @@ if (command === 'list') {
   }
   if (bugs.length === 0) console.log(`bugs: no ${args.all ? '' : 'open '}bugs.`);
   for (const b of bugs) {
-    console.log(`${b.id} (${b.title}): ${b.severity}${b.unconfirmed ? ` and ${b.risk}, both ${mark}` : `, ${b.risk}`}, ${b.status || 'open'}${b.branch ? `, its row on ${b.branch}` : ''}${b.waiting ? `, waits in the git directory (${b.waiting === 'new' ? 'new' : 'a change'})` : ''}`);
+    console.log(`${b.id} (${b.title}): ${b.severity}${b.unconfirmed ? ` (${mark})` : ''}, ${b.risk}, ${b.status || 'open'}${b.branch ? `, its row on ${b.branch}` : ''}${b.waiting ? `, waits in the git directory (${b.waiting === 'new' ? 'new' : 'a change'})` : ''}`);
   }
   if (view.tree.old) console.log('Note: docs/BUGS.md has the table of seven columns from before T4b; bugs.mjs flush gives it the new columns, each open bug blocking and high.');
   process.exit(0);
@@ -313,8 +305,7 @@ if (command === 'flush') {
   const { path, table, rows } = treeTable();
   const moved = [];
   const kept = [];
-  if (table.old) moved.push(`docs/BUGS.md gains the columns Title, Severity, Risk: each bug of the old table is ${cfg.bugs.unconfirmed.severity} and ${cfg.bugs.unconfirmed.risk}, its title taken from what happened`);
-  let elsewhere = null;
+  if (table.old) moved.push(`docs/BUGS.md gains the columns Title, Severity, Risk: each bug of the old table is ${cfg.bugs.oldTable.severity} and ${cfg.bugs.oldTable.risk}, its title taken from what happened`);
   for (const p of bugTable(read(waiting.bugs)).rows) {
     const at = rows.findIndex((r) => bugFacts(r, cfg).id === p.id);
     const cells = changedCells(p);
@@ -325,26 +316,10 @@ if (command === 'flush') {
       rows.push(p);
       moved.push(`${p.id} (new)`);
     } else {
-      // A change to a bug another branch holds, not merged yet: this branch takes the row with the
-      // change, and when both meet in a merge, bugs.mjs resolve joins the two rows cell by cell.
-      elsewhere ??= bugsOnBranches(project, cfg, git);
-      const base = elsewhere.get(p.id);
-      if (!base) {
-        kept.push(p);
-        continue;
-      }
-      rows.push({ ...base.row, ...cells });
-      moved.push(`${p.id} (its row from ${base.branch}, with ${Object.keys(cells).join(', ')})`);
+      // A change to a bug whose row is on the change in flight, not merged yet: it waits for a branch that
+      // starts after that change merged, which holds the row (one change in flight at a time).
+      kept.push(p);
     }
-  }
-  // The branch of a fix holds its bug's row: one filed into another change's first commit, not merged yet, comes along.
-  const own = new RegExp(`^${cfg.loop.branches.fix}(BUG-\\d+)$`).exec(git('branch', '--show-current').out)?.[1];
-  if (own && !rows.some((r) => bugFacts(r, cfg).id === own)) {
-    elsewhere ??= bugsOnBranches(project, cfg, git);
-    const base = elsewhere.get(own);
-    if (!base) refuse(`${own} is a row of no branch and does not wait in the git directory: file it with /pitwall:bug first`);
-    rows.push({ ...base.row });
-    moved.push(`${own} (its row from ${base.branch}, the bug this branch fixes)`);
   }
   const ids = new Set(rows.map((r) => bugFacts(r, cfg).id));
   const writes = [];
@@ -362,7 +337,7 @@ if (command === 'flush') {
     writes.push([rel, appendRows(read(join(project, rel)), lines)]);
     moved.push(...lines.map((l) => `${rowId(l)} into ${rel}`));
   }
-  const left = [kept.length ? ` Still waiting, since no branch holds their row: ${kept.map((k) => k.id).join(', ')}.` : '', keptLessons.length ? ` Still waiting for the bugs they name: ${keptLessons.map(rowId).join(', ')}.` : ''].join('');
+  const left = [kept.length ? ` Still waiting for the branch after the change in flight, which holds their row: ${kept.map((k) => k.id).join(', ')}.` : '', keptLessons.length ? ` Still waiting for the bugs they name: ${keptLessons.map(rowId).join(', ')}.` : ''].join('');
   if (moved.length === 0) {
     console.log(`FLUSHED: nothing waits.${left}`);
     process.exit(0);
@@ -376,56 +351,5 @@ if (command === 'flush') {
   else rmSync(waiting.lessons, { force: true });
   const files = ['docs/BUGS.md', ...writes.map(([rel]) => rel)];
   console.log(`FLUSHED: ${moved.join('; ')}. Commit ${files.join(', ')} in the first commit of this branch.${left}`);
-  process.exit(0);
-}
-
-if (command === 'resolve') {
-  // After git merge main stopped on docs/BUGS.md, docs/RISKS.md or docs/LESSONS.md: both sides added or
-  // changed rows. Every row of both is kept; a cell of a bug that only one side changed is that side's.
-  if (!git('rev-parse', '-q', '--verify', 'MERGE_HEAD').ok) refuse('no merge is in progress: resolve finishes a git merge that stopped on docs/BUGS.md, docs/RISKS.md or docs/LESSONS.md');
-  const conflicted = git('-c', 'core.quotePath=false', 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean);
-  const done = [];
-  const side = (stage, rel) => bugTable(git('show', `:${stage}:${rel}`).raw);
-  if (conflicted.includes('docs/BUGS.md')) {
-    const [base, ours, theirs] = [1, 2, 3].map((n) => side(n, 'docs/BUGS.md'));
-    if (!ours.header || !theirs.header) refuse('docs/BUGS.md: one side holds no table, so its rows cannot be joined: resolve it by hand');
-    const byId = (t) => new Map(t.rows.map((r) => [bugFacts(r, cfg).id, t.old ? { ...r, ...oldDefaults(r, cfg) } : r]));
-    const [b, o, t] = [base, ours, theirs].map(byId);
-    // Cell by cell against the merge base: a cell one side changed is that side's. One both changed
-    // differently keeps the status further along, the higher class, blocking over not blocking, and
-    // otherwise main's word.
-    const rank = { status: (v) => cfg.bugs.statuses.findIndex((s) => String(v).toLowerCase().startsWith(s)), risk: (v) => classes.indexOf(bugFacts({ risk: v }, cfg).risk), severity: (v) => (bugFacts({ severity: v }, cfg).severity === severities[0] ? 1 : 0) };
-    // An unconfirmed severity or class is only ever the first word on a bug: the owner's confirmed one is newer.
-    const unconfirmed = (v) => new RegExp(`\\(${mark}\\)`, 'i').test(String(v));
-    const confirmedOf = (y, z) => (unconfirmed(y) !== unconfirmed(z) ? (unconfirmed(y) ? z : y) : null);
-    const joinRows = (was, mine, main) => {
-      const row = {};
-      for (const k of new Set([...Object.keys(main), ...Object.keys(mine)])) {
-        const [x, y, z] = [was?.[k], mine[k] ?? '', main[k] ?? ''];
-        const confirmed = ['severity', 'risk'].includes(k) ? confirmedOf(y, z) : null;
-        row[k] = y === z ? y : was && y === x ? z : was && z === x ? y : confirmed ?? (rank[k] ? (rank[k](y) > rank[k](z) ? y : z) : z);
-      }
-      return row;
-    };
-    const rows = [...t.keys()].map((key) => (o.has(key) ? joinRows(b.get(key), o.get(key), t.get(key)) : t.get(key)));
-    for (const [key, r] of o) if (!t.has(key)) rows.push(r);
-    writeFileSync(join(project, 'docs', 'BUGS.md'), writeBugTable(ours, rows));
-    git('add', '--', 'docs/BUGS.md');
-    done.push('docs/BUGS.md');
-  }
-  for (const rel of Object.values(DOC).filter((r) => conflicted.includes(r))) {
-    const [ours, theirs] = [2, 3].map((n) => side(n, rel));
-    if (!ours.header || !theirs.header) refuse(`${rel}: one side holds no table, so its rows cannot be joined: resolve it by hand`);
-    const main = new Map(rowLines(theirs).map((l) => [rowId(l) ?? l, l]));
-    const clash = rowLines(ours).filter((l) => main.has(rowId(l) ?? l) && main.get(rowId(l) ?? l).trim() !== l.trim()).map(rowId);
-    if (clash.length) refuse(`${rel}: both sides gave ${clash.join(', ')} to different rows: number one of them anew by hand`);
-    const lines = [...ours.lines.slice(0, ours.first), ...theirs.lines.slice(theirs.first, theirs.end), ...rowLines(ours).filter((l) => !main.has(rowId(l) ?? l)), ...ours.lines.slice(ours.end)];
-    writeFileSync(join(project, rel), lines.join('\n'));
-    git('add', '--', rel);
-    done.push(rel);
-  }
-  const others = conflicted.filter((f) => !done.includes(f));
-  if (others.length) refuse(`${done.length ? `joined the rows of ${done.join(', ')}; ` : ''}other files are in conflict too (${others.join(', ')}): they are no table of rows, so stop and hand them over`);
-  console.log(done.length ? `RESOLVED: ${done.join(', ')}, every row of both sides kept, each cell of a bug as the side that changed it left it. Finish the merge with git commit --no-edit.` : 'RESOLVED: nothing: none of docs/BUGS.md, docs/RISKS.md, docs/LESSONS.md is in conflict');
   process.exit(0);
 }

@@ -11,12 +11,11 @@
 // risk class through the allow rules alone. In both, review-status.mjs and merge.mjs are not in the
 // session's allow list: e0 lets them through as the owner would answer the prompts, e1 relies on
 // the rules ADR-0010 writes. bug starts from the state e1 saved (T4b-AC4): the harness, as a careless
-// merge would, breaks the tray menu's Quit on main and drops its test; one session files the defect with
+// merge would, breaks the tray menu's Quit on main and drops its tests; one session files the defect with
 // /pitwall:bug, the scripted owner confirming it blocking and normal, and a second runs
-// /pitwall:continue 1, which must fix it before the planned E2 and merge it by its class. When the
-// conductor hands over merge-choice.mjs --fixes --allow, the harness runs it as the owner would in a
-// terminal. A stage passes on what git and GitHub hold afterwards, never on the model's wording, and
-// saves its state and its numbers at once.
+// /pitwall:continue 1, which must fix it before the planned E2 and merge it after the owner's yes, as
+// every fix merges. A stage passes on what git and GitHub hold afterwards, never on the model's wording,
+// and saves its state and its numbers at once.
 //
 // By default GitHub is the fake of scripts/fake-github.mjs, with a local bare repository as origin
 // and a CI that runs the gate job of ci.yml. --github <owner/repo> runs against an empty private
@@ -54,11 +53,10 @@ Facts you answer from:
 const BUG_FACTS = `- Since the last change merged, picking Quit in the tray menu does nothing on both laptops: ${BUG_REPORT}
 - A QA scenario of the fix you will run after its merge.`;
 // The owner's answer on merges without them differs by stage: no at e0; at e1 the harness ran merge-choice.mjs --allow for them.
-const OWNER_RULES = (stage, ranFixes) => `Answer as this owner, in English, in one to three sentences, and only what was asked.
+const OWNER_RULES = (stage) => `Answer as this owner, in English, in one to three sentences, and only what was asked.
 - When asked to set up or record merge protection, or to run protect.mjs: yes.
 ${stage === 'e0' ? '- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.' : '- When asked whether low and normal risk epics may merge without you: yes, you ran merge-choice.mjs --allow yourself; .claude/pitwall.json records it.'}${stage === 'bug' ? `
-- When asked to confirm the severity and the risk class of the bug: blocking and normal.
-- When asked whether low and normal risk bug fixes may merge without you: yes.${ranFixes ? ' You ran merge-choice.mjs --fixes --allow in your terminal just now, and it printed RESULT: recorded: say so.' : ''}` : ''}
+- When asked to confirm the severity and the risk class of the bug: blocking and normal.` : ''}
 - When asked whether to merge an epic or a fix now: yes.
 - When asked a question about an epic (clarification, a NEEDS_OWNER question, an option to pick): answer from the facts; when the facts do not say, accept the assistant's recommendation.
 - When asked to accept a risk: accept it with the fallback the assistant proposes.
@@ -225,15 +223,14 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       const unmet = [];
       const m = merges().find((x) => /^fix\(BUG-1\): /.test(x[1]));
       if (!m) return ['BUG-1 is not merged into origin main with a "fix(BUG-1): ..." merge commit'];
-      // By its class, once the owner's choice for fixes is recorded, not after a yes to this one merge (review round 1).
-      if (!/^Risk class: normal\. Merged without the owner, who allowed low and normal risk bug fixes/.test(m[2] ?? '')) unmet.push(`BUG-1's merge commit does not say it merged by its risk class, normal, without the owner: "${m[2]}"`);
+      // Every fix merges after the owner's yes, at any class (ADR-0010; owner, 2026-11-11).
+      if (!/^A bug fix, approved by the owner as every fix is \(pitwall ADR-0010\)\. Approved by the owner/.test(m[2] ?? '')) unmet.push(`BUG-1's merge commit does not record the owner's yes: "${m[2]}"`);
       if (merges().some((x) => /^feat\(E2\): /.test(x[1])) || /refs\/heads\/epic\/E2-/.test(git('ls-remote', '--heads', 'origin').stdout)) unmet.push('E2 was started before the blocking bug was fixed');
       const bugs = shown('docs/BUGS.md').stdout;
       if (!/^\| ID \| Title \| Found in \| Steps \| Expected \| Actual \| Severity \| Risk \| Status \| Fix PR \|$/m.test(bugs)) unmet.push('docs/BUGS.md on main lacks the columns of T4b: the first commit of the fix did not give the table of seven columns its new ones');
       if (!/^\| BUG-1 \|[^\n]*\| blocking \| normal \|/m.test(bugs)) unmet.push('docs/BUGS.md on main does not hold BUG-1 as blocking and normal');
       if (shown('docs/reviews/BUG-1.md').status !== 0) unmet.push('docs/reviews/BUG-1.md is not on main');
       if (existsSync(join(project, '.git', 'pitwall', 'bugs.md'))) unmet.push('rows still wait in the git directory: the first commit of the fix did not take them (bugs.mjs flush)');
-      if (JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8')).autoMergeFixes !== true) unmet.push('the owner was not asked whether bug fixes merge without them, or was not handed merge-choice.mjs --fixes: .claude/pitwall.json holds no autoMergeFixes true');
       return unmet;
     },
   };
@@ -274,7 +271,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent',
   ];
   // e0: the owner said no to merges without them, so they answer each prompt for the status and the merge; standing in for
-  // those answers. bug: the owner's yes to the fix's merge, before the choice for fixes is recorded.
+  // those answers. bug: the owner's yes to the fix's merge, which every fix waits for.
   const ownerAnswers = [`Bash(node "${P}/scripts/review-status.mjs" *)`, `Bash(node "${P}/scripts/merge.mjs" *)`];
 
   const results = [];
@@ -289,7 +286,6 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     if (stage === 'bug') injectDefect();
     // The bug stage files the defect in one session, then runs the loop in a second.
     let filing = stage === 'bug';
-    let ranFixes = false;
     const started = Date.now();
     const history = [];
     let cost = 0;
@@ -330,15 +326,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
           unmet = promises[stage]();
           if (unmet.length === 0) break;
         }
-        // The owner's choice for bug fixes, handed over as a command for their terminal: the harness runs it for them.
-        const said = history[history.length - 1].text;
-        if (stage === 'bug' && !ranFixes && /merge-choice\.mjs"?\s+--fixes\s+--allow/.test(said)) {
-          const choice = script('merge-choice.mjs', ['--fixes', '--allow', '--project', project], ownerEnv);
-          if (choice.status !== 0) throw new Error(`merge-choice.mjs --fixes --allow: ${choice.stdout}${choice.stderr}`);
-          ranFixes = true;
-          console.log('  the owner allowed low and normal risk bug fixes to merge without them (merge-choice.mjs --fixes --allow)');
-        }
-        const ask = `${SCENARIO}${stage === 'bug' ? `\n${BUG_FACTS}` : ''}\n\n${OWNER_RULES(stage, ranFixes)}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
+        const ask = `${SCENARIO}${stage === 'bug' ? `\n${BUG_FACTS}` : ''}\n\n${OWNER_RULES(stage)}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
         const o = run('claude', ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands'], { cwd: ownerDir, input: ask, timeout: 5 * 60 * 1000 });
         const reply = JSON.parse(o.stdout);
         cost += reply.total_cost_usd ?? 0;

@@ -29,7 +29,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 | 3. Spike | `/pitwall:spike` | `docs/spikes/<topic>.md` with a measured result, the prototype on `spike/<topic>` |
 | 4. Plan | `/pitwall:plan` | `docs/SPEC.md`, `docs/EPICS.md` and one file per epic with acceptance criteria |
 | 5. Plan review | (the `plan-reviewer` agent, from `plan`) | `docs/PLAN-REVIEW.md`: pre-mortem, requirements, launch, sizing, findings; `ai-review` on the plan PR, which merges after your yes |
-| 6. Epic loop | `/pitwall:continue` | One merged change per lap: a blocking bug's fix or the next epic, implemented, gated, reviewed into `docs/reviews/`, merged by risk class (tags and QA in T4c) |
+| 6. Epic loop | `/pitwall:continue` | One merged change per lap: the change in flight, a blocking bug's fix or the next epic, implemented, gated, reviewed into `docs/reviews/`, merged by risk class (tags and QA in T4c) |
 
 Helpers: `/pitwall:gate`, `/pitwall:owner-calls` (everything that waits for you, in one list, with what happens if you say nothing), `/pitwall:bug` (a defect of merged work, with a title, a severity and a risk class you confirm), `/pitwall:lesson` (a mistake that can repeat, and what checks it), `/pitwall:release`.
 
@@ -41,7 +41,7 @@ Helpers: `/pitwall:gate`, `/pitwall:owner-calls` (everything that waits for you,
 
 ## What stages 0 to 5 leave in a project
 
-- `.claude/pitwall.json`: the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, your answer on merges of epics without you (`autoMergeFixes`, the one for bug fixes, comes when the first fix of low or normal class is ready).
+- `.claude/pitwall.json`: the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, your answer on merges of epics without you.
 - `docs/IDEA.md`, `docs/DISCOVERY.md` (analogues with links, constraints with the date you confirmed them, assumptions `A-1`, `A-2` by risk), an ADR for each one-way decision the owner made (at lite, only the few that matter most; the rest are in the accepted two-way list) and `docs/STACK.md` with registry-checked versions.
 - `docs/spikes/<topic>.md` for each spike: the criterion, committed before any prototype code and never changed, the measured numbers and the conclusion. The prototype stays on `spike/<topic>`.
 - `docs/SPEC.md`, `docs/EPICS.md` and one file per epic (E0 first, each with acceptance criteria `E<n>-AC<m>` and a risk class), `docs/RISKS.md` with the risks you accepted, and `docs/PLAN-REVIEW.md` from the plan reviewer.
@@ -51,7 +51,7 @@ Each stage ends with `scripts/docs-check.mjs --stage <stage>` from the plugin, w
 
 ## What the epic loop leaves
 
-`/pitwall:continue` takes one change per lap: a blocking bug's fix on `fix/BUG-<n>` first, then the change in flight, the next epic on `epic/E<n>-<slug>`, and a bug that is not blocking once no epic is ready. A change it leaves for a fix waits in a stash named `pitwall: <change> before <bug>`, which it pops when it returns. Bugs, risks and lessons recorded between branches wait in the git directory, outside the work tree, until the first commit of the next branch. It asks you what is unclear before any code, dispatches an implementer by the risk class (a fresh one with the handoff when the first runs out of its budget), runs `scripts/gate --full`, opens the PR, and runs the code reviewer until it approves, under the same stopping rule as the plan review. Each change leaves:
+`/pitwall:continue` takes one change per lap and never interrupts it: the change in flight, then a blocking bug's fix on `fix/BUG-<n>`, the next epic on `epic/E<n>-<slug>`, and a bug that is not blocking once no epic is ready. Bugs, risks and lessons recorded between branches wait in the git directory, outside the work tree, until the first commit of the next branch. It asks you what is unclear before any code, dispatches an implementer by the risk class (a fresh one with the handoff when the first runs out of its budget), runs `scripts/gate --full`, opens the PR, and runs the code reviewer until it approves, under the same stopping rule as the plan review. Each change leaves:
 
 - its commits and its PR, with each acceptance criterion and what covers it;
 - `docs/reviews/E<n>-<slug>.md` or `docs/reviews/BUG-<n>.md` from the code reviewer: the commit it reviewed, the criteria and their tests or QA scenarios, and every finding with the commit or the accepted risk that closed it;
@@ -66,7 +66,7 @@ The reviewer runs in your local session and publishes its verdict as the `ai-rev
 - on a public repository, or a private one on a paid plan, branch protection enforces it, admins included, and `gate` must come from GitHub Actions;
 - on a private repository on GitHub Free, where branch protection is not available, kickoff records the mode `local-hook`, and a hook refuses `gh pr merge` until both are green on the PR's head.
 
-The plan PR merges once you say yes, with a merge commit (the repository must allow merge commits, and must not require linear history). Epics and fixes merge with a merge commit too, `feat(E<n>): ...` or `fix(BUG-<n>): ...`, through `scripts/merge.mjs`, which records your yes or the risk class in the message. High-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) always wait for you. Low and normal risk epics merge themselves only if you chose that, once, at kickoff or at your first `/pitwall:continue`; low and normal risk bug fixes only if you chose that too, a choice of its own that `/pitwall:continue` asks when the first such fix is ready. You run `node "<plugin>/scripts/merge-choice.mjs" --allow` (or `--deny`, and `--fixes` for bug fixes) yourself in a terminal, which records the answer in `.claude/pitwall.json` and writes two narrow allow rules into `.claude/settings.local.json` for the review status and `merge.mjs --change`; no agent can run it.
+The plan PR merges once you say yes, with a merge commit (the repository must allow merge commits, and must not require linear history). Epics and fixes merge with a merge commit too, `feat(E<n>): ...` or `fix(BUG-<n>): ...`, through `scripts/merge.mjs`, which records your yes or the risk class in the message. High-risk PRs (auth, payments, data migrations and deletion, infrastructure, security) and bug fixes always wait for you. Low and normal risk epics merge themselves only if you chose that, once, at kickoff or at your first `/pitwall:continue`: you run `node "<plugin>/scripts/merge-choice.mjs" --allow` (or `--deny`) yourself in a terminal, which records the answer in `.claude/pitwall.json` and writes two narrow allow rules into `.claude/settings.local.json` for the review status and `merge.mjs --change`; no agent can run it.
 
 ## Hooks
 
