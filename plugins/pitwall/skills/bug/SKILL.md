@@ -17,6 +17,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
 - Never write `docs/BUGS.md` yourself, and commit nothing: `bugs.mjs` writes the row into the git directory, and `/pitwall:continue` moves it into the first commit of its next branch, so no implementer commits it into another change.
 - Run each command as written, from the project root, one command per call. Give a bug, a lesson, a risk or a fallback to `bugs.mjs` on stdin with a quoted heredoc in bash (the Bash tool), as the steps show: nothing in it is expanded, so a command quoted in the steps stays as it was written. Never put free text in a double-quoted argument: bash expands `$`, backticks and commands inside it.
 - One question per message, then wait. Never answer for the owner.
+- Run `bugs.mjs` yourself, every command of it: it is no script of the owner's, so never hand one of its commands to the owner to run.
 - Severity and class follow the config, never a word of your own: `bugs.severities` says what blocking means, and `riskClasses` gives the examples of each class.
 
 ## Steps
@@ -29,8 +30,8 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
 3. **Propose** a severity and a risk class, each with a reason in one line:
    - the severity by `bugs.severities`: blocking when the defect itself does harm in ordinary work (work stops, or data, work or a secret is lost because of it); a gap in a protection that does harm only after someone else's mistake is not blocking;
    - the class by what the fix will touch, as `riskClasses` gives its examples (auth, payments, data migrations and deletion, infrastructure, security: high); it picks the implementer of the fix.
-4. **Ask the owner** in one message to confirm both or change them. Their answer, or "as you propose", confirms them. When no owner can answer (you run as an agent nobody talks to, or the owner left without a word), file it unconfirmed: the script files it blocking, marked so, with the class you proposed, until they confirm it in `/pitwall:owner-calls` (owner, 2026-11-11).
-5. **File it**, with `confirmed: yes` when the owner answered and `confirmed: no` otherwise:
+4. **Ask the owner** in one message to confirm both or change them, and wait for the answer before you file: their answer, or "as you propose", confirms them, with the values they gave. The main conversation always asks, whatever the session brief says of attendance: someone answers it, or the question waits. Only an agent that nobody talks to (a sub-agent, such as a QA agent) files it unconfirmed without asking: the script files it blocking, marked so, with the class it proposed, until the owner confirms it in `/pitwall:owner-calls` (owner, 2026-11-11).
+5. **File it** with the severity and class the owner answered and `confirmed: yes`; `confirmed: no` only in the case step 4 names:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" file <<'EOF'
    title: <the title>
@@ -45,7 +46,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
    ```
    It prints `FILED:` with the ID. A refusal names the field to fix: fix it and run it again.
 6. **Can it happen again** in another place, the same mistake made elsewhere? Then say so, with the rule in one line, and suggest `/pitwall:lesson`.
-7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug is confirmed by its severity), or `--title '<t>'` in single quotes (a title with a quote mark of its own is reworded), or `--found <where>`. The change waits in the git directory as a new bug does.
+7. **A change to a bug already filed**, when the owner asks for one, or confirms an unconfirmed one: run `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug is confirmed by its severity), or `--title '<t>'` in single quotes (a title with a quote mark of its own is reworded), or `--found <where>`. The change waits in the git directory as a new bug does.
 8. **The owner's no to a fix**: the bug becomes an accepted risk. Ask what they will do if it comes true, then:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> <<'EOF'
