@@ -1,7 +1,7 @@
 # T4c - Releases and QA
 
 Goal: every merged epic ships as a tagged version with a changelog, passes QA on staging and reaches production with a smoke check; pitwall itself reaches its users by tag, not by a merge into `main`.
-Depends on: T4b
+Depends on: T4d
 Risk class: high (tags and deploys to staging and production: a mistake reaches users, and a pushed tag is not taken back quietly)
 ADR: ADR-0010
 
@@ -21,7 +21,7 @@ T4c-AC3 belongs here and not in T4a: recording needs a commit on protected `main
 
 ## Out of scope
 
-- The guards and the loop's follow-ups (T4a); bugs and lessons (T4b).
+- The guards and the loop's follow-ups (T4a); bugs and lessons (T4b); the guard's corpus and the gate before every commit (T4d).
 
 ## Open questions
 

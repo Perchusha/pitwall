@@ -10,8 +10,9 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T3a](epics/T3a-hooks.md) | Hooks: session brief, guards on secrets and pushes, the review and merge guards, call budgets, checks after edits and before stopping | high | T2 | merged (#4) |
 | [T3b](epics/T3b-epic-loop.md) | The epic loop: conductor, implementers, code reviewer, bug fixes, merge by risk class, the owner's choice of merges without them | high | T3a | merged (#5) |
 | [T4a](epics/T4a-guards-and-process.md) | Guards and process follow-ups: the hook that keeps uncommitted work, owner calls, the headless runs' snapshots and unscripted stops | high | T3b | merged (#6) |
-| [T4b](epics/T4b-bugs-and-lessons.md) | Bugs and lessons: severity and risk class, fixes merged by their class, lessons that become guards, a guard's corpus run before each review round (L-13) | high | T4a | in progress |
-| [T4c](epics/T4c-release-and-qa.md) | Releases and QA: tags and changelog from merge commits, pitwall served by tag, staging, the qa agent | high | T4b | planned |
+| [T4b](epics/T4b-bugs-and-lessons.md) | Bugs and lessons: severity and risk class, fixes merged by their class, lessons that become guards | high | T4a | in progress |
+| [T4d](epics/T4d-guard-corpus-and-commit-gate.md) | The guard's corpus run before each review round (L-13), the gate before every commit (L-14) | high | T4b | planned |
+| [T4c](epics/T4c-release-and-qa.md) | Releases and QA: tags and changelog from merge commits, pitwall served by tag, staging, the qa agent | high | T4d | planned |
 | [T5](epics/T5-validation.md) | Validation on three systems: lite, standard, full | normal | T4c | planned |
 | [T6](epics/T6-adopt-existing-project.md) | Adopt an existing project: lay out only what is missing, keep what is there | normal | T1 | planned |
 
