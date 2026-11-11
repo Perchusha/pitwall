@@ -15,7 +15,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
 
 - A bug is a defect of what is merged already. A defect of the branch in flight is a finding of that change's review, or a fix within the same change: never file one for it on your own, and when the owner asks for it, say so once and do as they decide (owner, 2026-11-11).
 - Never write `docs/BUGS.md` yourself, and commit nothing: `bugs.mjs` writes the row into the git directory, and `/pitwall:continue` moves it into the first commit of its next branch, so no implementer commits it into another change.
-- Run each command as written, from the project root, one command per call. Give a bug or a lesson to `bugs.mjs` on stdin with a quoted heredoc in bash (the Bash tool), as the steps show: nothing in it is expanded, so a command quoted in the steps stays as it was written.
+- Run each command as written, from the project root, one command per call. Give a bug, a lesson, a risk or a fallback to `bugs.mjs` on stdin with a quoted heredoc in bash (the Bash tool), as the steps show: nothing in it is expanded, so a command quoted in the steps stays as it was written. Never put free text in a double-quoted argument: bash expands `$`, backticks and commands inside it.
 - One question per message, then wait. Never answer for the owner.
 - Severity and class follow the config, never a word of your own: `bugs.severities` says what blocking means, and `riskClasses` gives the examples of each class.
 
@@ -45,8 +45,13 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
    ```
    It prints `FILED:` with the ID. A refusal names the field to fix: fix it and run it again.
 6. **Can it happen again** in another place, the same mistake made elsewhere? Then say so, with the rule in one line, and suggest `/pitwall:lesson`.
-7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug is confirmed by its severity), or `--title "<t>"`, or `--found <where>`. The change waits in the git directory as a new bug does.
-8. **The owner's no to a fix**: the bug becomes an accepted risk. Ask what they will do if it comes true, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> --fallback "<their answer>"`.
+7. **A change to a bug already filed**, when the owner asks for one: `node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" set <BUG-n> --severity "<s>" --risk <class>` (an unconfirmed bug is confirmed by its severity), or `--title '<t>'` in single quotes (a title with a quote mark of its own is reworded), or `--found <where>`. The change waits in the git directory as a new bug does.
+8. **The owner's no to a fix**: the bug becomes an accepted risk. Ask what they will do if it comes true, then:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/bugs.mjs" accept <BUG-n> <<'EOF'
+   fallback: <their answer>
+   EOF
+   ```
 9. **Tell the owner** in a few lines: the ID and title, the severity and class, that the row waits in the git directory until the next branch, and what happens next: a blocking bug's fix goes right after the change in flight, before the next epic; one that is not blocking waits until no epic is ready; every fix merges after the owner's yes. The fix closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour.
 
 ## Output

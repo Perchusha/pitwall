@@ -1858,12 +1858,12 @@ step('bugs and lessons', (report) => {
     expect('a bug that does not exist', bugs(['set', 'BUG-9', '--risk', 'high']), 1, ['BUG-9 is not a bug']);
     expect('acceptance through set', bugs(['set', 'BUG-1', '--status', 'accepted']), 1, ['becomes a risk']);
     expect('a fix PR that is no number', bugs(['set', 'BUG-1', '--fix-pr', '12']), 1, ['is not a PR number']);
-    expect('the owner says no to a fix', bugs(['accept', 'BUG-3', '--fallback', 'Live with it']), 0, ['ACCEPTED: BUG-3 becomes R-1']);
+    expect('the owner says no to a fix', bugs(['accept', 'BUG-3'], 'fallback: Live with it\n'), 0, ['ACCEPTED: BUG-3 becomes R-1']);
     expect('a lesson', bugs(['lesson'], 'rule: Never x\nwhy: BUG-1\nchecked by: Not by a tool until BUG-1\n'), 0, ['RECORDED: L-1']);
     expect('a lesson without what checks it', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\n'), 1, ['lacks checked by']);
     expect('a lesson checked by a dash', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\nchecked by: -\n'), 1, ['"checked by" says nothing']);
     // Review round 1: a risk of a review round is numbered past one that waits.
-    expect('a risk while another waits', bugs(['risk', '--text', 'A game in full screen hides it', '--fallback', 'Look at the tray']), 0, ['ACCEPTED: R-2']);
+    expect('a risk while another waits', bugs(['risk'], 'risk: A game in full screen hides it\nfallback: Look at the tray\n'), 0, ['ACCEPTED: R-2']);
     expect('what waits never lands on main', bugs(['flush']), 1, ['protected']);
     expect('nor a lesson in the tree of main', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: c\n'), 1, ['protected']);
 
@@ -1875,17 +1875,24 @@ step('bugs and lessons', (report) => {
     expect('a second flush before the commit', bugs(['flush']), 0, ['nothing new to move']);
     if ((doc('docs/RISKS.md').match(/^\| R-1 \|/gm) ?? []).length !== 1 || (doc('docs/BUGS.md').match(/^\| BUG-1 \|/gm) ?? []).length !== 1) report('bugs.mjs: a second flush wrote a row twice');
     if (!rowOf('BUG-3').includes('accepted (R-1)') || !/\| R-1 \| BUG-3 \(Pipes\), not fixed: /.test(doc('docs/RISKS.md'))) report(`bugs.mjs: the accepted bug and its risk: ${rowOf('BUG-3')}`);
+    // Review round 3: as continue's step 4 runs it, the status goes into the same first commit; the bug that waits
+    // is never laid over the row the flush wrote, and a change without --tree to it is refused until the commit.
+    expect("the conductor's own status", bugs(['set', 'BUG-1', '--status', 'in progress', '--tree']), 0, ['SET: BUG-1 status in docs/BUGS.md']);
+    expect('a change to a bug just written, without --tree', bugs(['set', 'BUG-1', '--title', 'Tray icon gone']), 1, ['set it with --tree']);
+    if (listed().find((b) => b.id === 'BUG-1')?.status !== 'in progress') report(`bugs.mjs list: the waiting new row was laid over the flushed one: ${JSON.stringify(listed())}`);
+    expect('a flush after the status', bugs(['flush']), 0, ['nothing new to move']);
+    if (!rowOf('BUG-1').includes('| in progress |')) report(`bugs.mjs flush wrote the waiting row over the status the branch set: ${rowOf('BUG-1')}`);
     let dc = docsCheck(p, ['--stage', 'bug,lesson']);
     if (dc.status !== 0) report(`docs-check --stage bug,lesson after a flush:\n${dc.stdout}`);
     gitIn(p, 'commit', '-qam', 'docs: start BUG-1');
     bugs(['list']);
     if (existsSync(waiting) || existsSync(join(p, '.git', 'pitwall', 'risks.md')) || existsSync(join(p, '.git', 'pitwall', 'lessons.md'))) report('bugs.mjs: what the commit holds still waits in the git directory after the next run');
-    expect("the conductor's own status", bugs(['set', 'BUG-1', '--status', 'in progress', '--tree']), 0, ['SET: BUG-1 status in docs/BUGS.md']);
     // Review round 1: a lesson in the tree names only bugs whose row is there; one naming a waiting bug waits with it.
     expect('a lesson in the tree naming a bug that waits', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: Not by a tool until BUG-7\n'), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
     expect('a lesson in the tree naming a bug that is here', bugs(['lesson', '--tree'], 'rule: Check the tray\nwhy: BUG-1\nchecked by: a test\n'), 0, ['RECORDED: L-2 in docs/LESSONS.md']);
-    expect('a risk in the tree naming a bug that waits', bugs(['risk', '--tree', '--text', 'Slow until BUG-7 is fixed', '--fallback', 'Plug it in']), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
-    expect('a risk in the tree naming that bug in a code span', bugs(['risk', '--tree', '--text', 'Slow until `BUG-7` is fixed', '--fallback', 'Plug it in']), 0, ['ACCEPTED: R-3 in docs/RISKS.md']);
+    expect('a risk in the tree naming a bug that waits', bugs(['risk', '--tree'], 'risk: Slow until BUG-7 is fixed\nfallback: Plug it in\n'), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
+    expect('a risk in the tree naming that bug in a code span', bugs(['risk', '--tree'], 'risk: Slow until `BUG-7` is fixed, as $r = `run` would say\nfallback: Plug it in\n'), 0, ['ACCEPTED: R-3 in docs/RISKS.md']);
+    if (!doc('docs/RISKS.md').includes('Slow until `BUG-7` is fixed, as $r = `run` would say')) report('bugs.mjs risk: the text on stdin must reach docs/RISKS.md as written');
     mkdirSync(join(p, 'docs', 'archive'), { recursive: true });
     writeFileSync(join(p, 'docs', 'archive', 'bugs-1.md'), '# Bugs, archived\n\n| ID | Title |\n| --- | --- |\n| BUG-50 | Old one |\n');
     expect('a lesson in the tree naming an archived bug', bugs(['lesson', '--tree'], 'rule: Keep the tray\nwhy: BUG-50\nchecked by: a test\n'), 0, ['RECORDED: L-3 in docs/LESSONS.md']);
@@ -1920,6 +1927,10 @@ step('bugs and lessons', (report) => {
     const rows = ['BUG-1', 'BUG-2', 'BUG-3', 'BUG-4'].map(rowOf);
     if (!rows[0].includes('| owner |') || !rows[0].includes('| in review |') || !/\| Snooze is short \|.*\| not blocking \| high \| open \|/.test(rows[1]) || !rows[2].includes('accepted (R-1)') || !rows[3].includes('| Fourth |')) report(`bugs.mjs flush after the fix merged: ${JSON.stringify(rows)}`);
     gitIn(p, 'commit', '-qam', 'docs: start E1-x');
+    expect('the fix recorded on the next branch', bugs(['set', 'BUG-1', '--status', 'fixed', '--fix-pr', '#2', '--tree']), 0, ['SET: BUG-1 status, fix']);
+    gitIn(p, 'commit', '-qam', 'docs: BUG-1 fixed');
+    expect('a later flush', bugs(['flush']), 0, []);
+    if (!/\| fixed \| #2 \|/.test(rowOf('BUG-1'))) report(`bugs.mjs: a later flush reopened a fixed bug: ${rowOf('BUG-1')}`);
     if (listed().some((b) => b.branch)) report(`bugs.mjs list: a branch merged into main still adds its rows: ${JSON.stringify(listed())}`);
     dc = docsCheck(p, ['--stage', 'bug,lesson']);
     if (dc.status !== 0) report(`docs-check --stage bug,lesson after the second flush:\n${dc.stdout}`);

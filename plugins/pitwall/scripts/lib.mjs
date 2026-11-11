@@ -243,6 +243,9 @@ export function bugsView(project, cfg = config()) {
   for (const [id, { row, branch }] of path ? bugsOnBranches(project, cfg, gitRunner(project), { unmerged: true }) : []) if (!archived.has(id) && !rows.some((r) => idOf(r) === id)) rows.push({ ...row, branch });
   for (const p of pending.rows) {
     const at = rows.findIndex((r) => idOf(r) === idOf(p));
+    // A new bug a flush already wrote somewhere, or the archive holds, waits only until a commit holds it: the
+    // row it was written into is the record (review round 3).
+    if (isNewBug(p) && (at >= 0 || archived.has(idOf(p)))) continue;
     if (at >= 0) rows[at] = { ...rows[at], ...changedCells(p), waiting: rows[at].waiting ?? 'change' };
     else rows.push({ ...p, waiting: isNewBug(p) ? 'new' : 'change' });
   }

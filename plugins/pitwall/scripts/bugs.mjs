@@ -12,11 +12,11 @@
 //       A change to a bug. An unconfirmed bug is confirmed by giving its severity.
 //       --tree writes docs/BUGS.md in the work tree, for the conductor's own status on its branch;
 //       without it the change waits in the git directory, as a new bug does.
-//   node bugs.mjs accept <BUG-n> --fallback <text> [--project <dir>]
+//   node bugs.mjs accept <BUG-n> [--project <dir>]
 //       The owner's no to a fix: the bug becomes the next R-n of docs/RISKS.md, its status accepted (R-n);
-//       both wait in the git directory too.
-//   node bugs.mjs risk --text <risk> --fallback <text> [--tree] [--project <dir>]
-//       A risk the owner accepted, the next R-n, dated today: --tree writes docs/RISKS.md in the work
+//       both wait in the git directory too. On stdin: fallback, what the owner does if it comes true.
+//   node bugs.mjs risk [--tree] [--project <dir>]
+//       A risk the owner accepted, on stdin as risk and fallback, the next R-n, dated today: --tree writes docs/RISKS.md in the work
 //       tree, for a risk of the review of the change in flight; without it, it waits like a bug.
 //   node bugs.mjs lesson [--tree] [--project <dir>]
 //       The lesson on stdin, as a bug is given: rule, why, checked by. It becomes the next L-n, dated
@@ -50,8 +50,8 @@ requireNode();
 const usage = [
   'node bugs.mjs file [--project <dir>]   (the bug on stdin)',
   'node bugs.mjs set <BUG-n> [--severity <s>] [--risk <class>] [--status <s>] [--fix-pr <#n>] [--title <t>] [--found <where>] [--tree] [--project <dir>]',
-  'node bugs.mjs accept <BUG-n> --fallback <text> [--project <dir>]',
-  'node bugs.mjs risk --text <risk> --fallback <text> [--tree] [--project <dir>]',
+  'node bugs.mjs accept <BUG-n> [--project <dir>]   (the fallback on stdin)',
+  'node bugs.mjs risk [--tree] [--project <dir>]   (the risk and its fallback on stdin)',
   'node bugs.mjs lesson [--tree] [--project <dir>]   (the lesson on stdin)',
   'node bugs.mjs list [--json] [--all] [--project <dir>]',
   'node bugs.mjs flush [--project <dir>]',
@@ -69,8 +69,8 @@ const [command, ...rest] = process.argv.slice(2);
 const specs = {
   file: { project: 'value' },
   set: { project: 'value', severity: 'value', risk: 'value', status: 'value', 'fix-pr': 'value', title: 'value', found: 'value', tree: 'switch' },
-  accept: { project: 'value', fallback: 'value' },
-  risk: { project: 'value', text: 'value', fallback: 'value', tree: 'switch' },
+  accept: { project: 'value' },
+  risk: { project: 'value', tree: 'switch' },
   lesson: { project: 'value', tree: 'switch' },
   list: { project: 'value', json: 'switch', all: 'switch' },
   flush: { project: 'value' },
@@ -181,9 +181,10 @@ function notOnMain(what) {
   if (branch === cfg.mergeProtection.branch) refuse(`${what} on ${branch}, which is protected: it belongs in the first commit of the next branch, so run it there`);
 }
 
-// What waits leaves the git directory only once a commit holds it (review round 2): flush writes it into docs/
-// and keeps it, and each run lets go of what HEAD holds now, a row with the same cells, or the same line of a
-// risk or a lesson. A session that ends between the flush and the commit loses nothing.
+// A new bug, a risk or a lesson leaves the git directory only once a commit holds it (review round 2): flush
+// writes it into docs/ and keeps it, and each run lets go of what HEAD holds now, a bug by its ID, whatever
+// the conductor set on it since (review round 3), or the same line of a risk or a lesson. A session that
+// ends between the flush and the commit loses no new row. A change to a bug goes at the flush that writes it.
 function prune() {
   const atHead = (rel) => {
     const r = git('show', `HEAD:${rel}`);
@@ -195,7 +196,9 @@ function prune() {
     const table = bugTable(read(waiting.bugs));
     const left = table.rows.filter((w) => {
       const h = held.get(w.id);
-      return !h || Object.entries(changedCells(w)).some(([k, v]) => String(h[k] ?? '').trim() !== String(v).trim());
+      if (!h) return true;
+      if (isNewBug(w)) return false;
+      return Object.entries(changedCells(w)).some(([k, v]) => String(h[k] ?? '').trim() !== String(v).trim());
     });
     if (left.length === 0) rmSync(waiting.bugs, { force: true });
     else if (left.length !== table.rows.length) save(waiting.bugs, writeBugTable(table, left, INTRO.bugs));
@@ -249,7 +252,7 @@ if (command === 'set') {
   if (args.risk !== undefined) change.risk = pick(args.risk, classes, 'risk');
   if (args.status !== undefined) {
     const status = pick(args.status, cfg.bugs.statuses, 'status');
-    if (status === 'accepted') refuse('a bug the owner will not have fixed becomes a risk: bugs.mjs accept <BUG-n> --fallback <text>');
+    if (status === 'accepted') refuse('a bug the owner will not have fixed becomes a risk: bugs.mjs accept <BUG-n>, the fallback on stdin');
     change.status = status;
   }
   if (args['fix-pr'] !== undefined) {
@@ -259,6 +262,11 @@ if (command === 'set') {
   if (args.found !== undefined) change.found = pick(args.found, cfg.bugs.foundIn, 'found in');
   if (Object.keys(change).length === 1) bad('set changes nothing: give --severity, --risk, --status, --fix-pr, --title or --found');
   const what = Object.keys(change).filter((k) => k !== 'id').join(', ');
+  // A bug a flush just wrote into this branch, its commit not made yet: the change goes into that row, or it
+  // would wait over a row the next flush never writes again (review round 3).
+  const inTree = bugTable(read(join(project, 'docs', 'BUGS.md'))).rows.some((r) => bugFacts(r, cfg).id === id);
+  const waitsNew = bugTable(read(waiting.bugs)).rows.some((r) => r.id === id && isNewBug(r));
+  if (!args.tree && inTree && waitsNew) refuse(`${id} was just written into docs/BUGS.md on this branch and is not committed yet: set it with --tree`);
   if (args.tree) {
     notOnMain('writing docs/BUGS.md');
     const { path, table, rows } = treeTable();
@@ -277,9 +285,10 @@ if (command === 'set') {
 if (command === 'accept') {
   const bug = find(id);
   if (!bug.open) refuse(`${id} is ${bug.status} already`);
-  if (!args.fallback?.trim()) bad('accept needs --fallback: what the owner does if the risk comes true');
+  // Free text goes on stdin through a quoted heredoc: in a quoted argument bash would expand it (review round 3).
+  const { fallback } = stdinFields(['fallback']);
   const risk = nextId('R', DOC.risks, 'risks');
-  const line = `| ${risk} | ${bugCell(`${id} (${bug.title}), not fixed: ${bug.row.actual ?? ''}`)} | ${bugCell(args.fallback)} | ${today()} |`;
+  const line = `| ${risk} | ${bugCell(`${id} (${bug.title}), not fixed: ${bug.row.actual ?? ''}`)} | ${bugCell(fallback)} | ${today()} |`;
   save(waiting.risks, appendRows(read(waiting.risks) || INTRO.risks, [line]));
   wait({ id, status: `accepted (${risk})` });
   console.log(`ACCEPTED: ${id} becomes ${risk}; both wait in the git directory until the first commit of the next branch`);
@@ -288,12 +297,12 @@ if (command === 'accept') {
 
 if (command === 'risk') {
   // A risk the owner accepted in a review round: numbered past every R-n here, waiting and on every branch.
-  if (!args.text?.trim() || !args.fallback?.trim()) bad('risk needs --text, the risk the owner accepted, and --fallback, what they do if it comes true');
+  const { risk: text, fallback } = stdinFields(['risk', 'fallback']);
   const risk = nextId('R', DOC.risks, 'risks');
-  const line = `| ${risk} | ${bugCell(args.text)} | ${bugCell(args.fallback)} | ${today()} |`;
+  const line = `| ${risk} | ${bugCell(text)} | ${bugCell(fallback)} | ${today()} |`;
   if (args.tree) {
     notOnMain('writing docs/RISKS.md');
-    onlyBugsHere(`${args.text} ${args.fallback}`, 'risk');
+    onlyBugsHere(`${text} ${fallback}`, 'risk');
     const path = join(project, DOC.risks);
     if (!existsSync(path) || !bugTable(read(path)).header) refuse(`${path} holds no table of risks: it is a path every pitwall project has (pitwall ADR-0006)`);
     writeFileSync(path, appendRows(read(path), [line]));
@@ -345,16 +354,22 @@ if (command === 'flush') {
   const moved = [];
   const kept = [];
   if (table.old) moved.push(`docs/BUGS.md gains the columns Title, Severity, Risk: each bug of the old table is ${cfg.bugs.oldTable.severity} and ${cfg.bugs.oldTable.risk}, its title taken from what happened`);
+  const archived = archivedBugIds(project);
+  const applied = [];
   for (const p of bugTable(read(waiting.bugs)).rows) {
     const at = rows.findIndex((r) => bugFacts(r, cfg).id === p.id);
     const cells = changedCells(p);
-    if (at >= 0) {
-      const differ = Object.keys(cells).filter((k) => String(rows[at][k] ?? '').trim() !== String(cells[k]).trim());
-      rows[at] = { ...rows[at], ...cells };
-      if (differ.length) moved.push(`${p.id} (${differ.join(', ')})`);
-    } else if (isNewBug(p)) {
+    if (isNewBug(p)) {
+      // A new bug an earlier flush wrote, or the archive holds, is never written over: what the branch set
+      // on it since stands (review round 3).
+      if (at >= 0 || archived.has(p.id)) continue;
       rows.push(p);
       moved.push(`${p.id} (new)`);
+    } else if (at >= 0) {
+      const differ = Object.keys(cells).filter((k) => String(rows[at][k] ?? '').trim() !== String(cells[k]).trim());
+      rows[at] = { ...rows[at], ...cells };
+      applied.push(p.id);
+      if (differ.length) moved.push(`${p.id} (${differ.join(', ')})`);
     } else {
       // A change to a bug whose row is on the change in flight, not merged yet: it waits for a branch that
       // starts after that change merged, which holds the row (one change in flight at a time).
@@ -387,6 +402,13 @@ if (command === 'flush') {
   }
   writeFileSync(path, writeBugTable(table, rows));
   for (const [rel, text] of writes) writeFileSync(join(project, rel), text);
+  // A change is written once and goes; a new bug waits until a commit holds it.
+  if (applied.length) {
+    const t = bugTable(read(waiting.bugs));
+    const left = t.rows.filter((r) => isNewBug(r) || !applied.includes(r.id));
+    if (left.length) save(waiting.bugs, writeBugTable(t, left, INTRO.bugs));
+    else rmSync(waiting.bugs, { force: true });
+  }
   const files = ['docs/BUGS.md', ...writes.map(([rel]) => rel)];
   console.log(`FLUSHED: ${moved.join('; ')}. Commit ${files.join(', ')} in the first commit of this branch: what waits leaves the git directory once a commit holds it.${left}`);
   process.exit(0);
