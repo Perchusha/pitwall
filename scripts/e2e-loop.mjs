@@ -230,10 +230,36 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (!/^\| ID \| Title \| Found in \| Steps \| Expected \| Actual \| Severity \| Risk \| Status \| Fix PR \|$/m.test(bugs)) unmet.push('docs/BUGS.md on main lacks the columns of T4b: the first commit of the fix did not give the table of seven columns its new ones');
       if (!/^\| BUG-1 \|[^\n]*\| blocking \| normal \|/m.test(bugs)) unmet.push('docs/BUGS.md on main does not hold BUG-1 as blocking and normal');
       if (shown('docs/reviews/BUG-1.md').status !== 0) unmet.push('docs/reviews/BUG-1.md is not on main');
+      // The owner was asked about the fix's merge before it happened (owner, 2026-11-11): the merge commit alone
+      // cannot tell a yes the conductor asked for from --owner-approved run without a question.
+      if (!fixAsked.before) unmet.push('the fix merged before the scripted owner was asked about its merge');
+      // The next branch's flush leaves BUG-1 on main as the fix left it (owner, 2026-11-11; review round 3).
+      fixAsked.reopened ??= reopenedAtNextFlush();
+      if (fixAsked.reopened) unmet.push(`the first commit of the next branch would reopen BUG-1: bugs.mjs flush there writes "${fixAsked.reopened}"`);
       if (existsSync(join(project, '.git', 'pitwall', 'bugs.md'))) unmet.push('rows still wait in the git directory: the first commit of the fix did not take them (bugs.mjs flush)');
       return unmet;
     },
   };
+  // The bug stage: whether the owner was asked about the fix's merge before it happened, and what the next
+  // branch's flush would make of BUG-1's row on main.
+  const fixAsked = { asked: false, merged: false, before: false, reopened: undefined };
+  const fixMerged = () => merges().some((x) => /^fix\(BUG-1\): /.test(x[1]));
+  // A copy of the git directory, with what waits in it, checked out at origin's main on a branch of its own, as
+  // the next branch of the loop starts; the project itself is left as the stage left it.
+  function reopenedAtNextFlush() {
+    const copy = mkdtempSync(join(scratch, 'next-branch-'));
+    try {
+      cpSync(join(project, '.git'), join(copy, '.git'), { recursive: true });
+      const g = (...a) => run('git', a, { cwd: copy, env });
+      g('checkout', '-q', '-f', '-B', 'e2e-next', 'origin/main');
+      const flushed = run(process.execPath, [join(plugin, 'scripts', 'bugs.mjs'), 'flush', '--project', copy], { cwd: copy, env });
+      if (flushed.status !== 0) return `nothing: it refused (${(flushed.stderr || flushed.stdout).trim()})`;
+      const row = readFileSync(join(copy, 'docs', 'BUGS.md'), 'utf8').split('\n').find((l) => l.startsWith('| BUG-1 |')) ?? '';
+      return /\| open \|/.test(row) ? row : '';
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  }
   // The filing session of the bug stage is done once BUG-1 waits in the git directory, confirmed.
   const filed = () => {
     const f = join(project, '.git', 'pitwall', 'bugs.md');
@@ -313,6 +339,19 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         cost += out.total_cost_usd ?? 0;
         history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
         console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
+        if (stage === 'bug' && !filing) {
+          // Merged in this turn: the question had to come in an earlier one. Then this turn's question counts.
+          if (!fixAsked.merged && fixMerged()) {
+            fixAsked.merged = true;
+            fixAsked.before = fixAsked.asked;
+          }
+          if (/\bmerg/i.test(String(out.result ?? '')) && String(out.result ?? '').includes('?')) fixAsked.asked = true;
+          if (fixAsked.merged && !fixAsked.before) {
+            unmet = promises[stage]();
+            error = 'the fix merged before the scripted owner was asked about its merge';
+            break;
+          }
+        }
         if (filing) {
           if (filed()) {
             // Filed: the owner starts the loop in a fresh session.
