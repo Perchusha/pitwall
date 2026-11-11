@@ -129,7 +129,7 @@ export function changeOf(branch, cfg) {
 // (the owner said so at the clarification) holds and one lowered there does not. Null when the plan at
 // the commit gives it none. git is a gitRunner.
 export function riskClassAt(git, epic, sha, base, cfg) {
-  const order = Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
+  const order = riskOrder(cfg);
   const classAt = (ref) => {
     const plan = git('show', `${ref}:docs/EPICS.md`);
     const row = plan.ok ? plan.out.split('\n').map((l) => l.split('|').map((c) => c.trim())).find((cells) => cells[0] === '' && new RegExp(`^\\[?${epic}\\]?(\\(|$)`).test(cells[1] ?? '')) : null;
@@ -139,6 +139,154 @@ export function riskClassAt(git, epic, sha, base, cfg) {
   const atHead = classAt(sha);
   const atFork = fork.ok ? classAt(fork.out) : null;
   return atHead && atFork && order.indexOf(atFork) > order.indexOf(atHead) ? atFork : atHead;
+}
+
+// The risk classes from the lowest to the highest.
+export const riskOrder = (cfg) => Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object');
+
+// ---------- bugs (T4b) ----------
+//
+// docs/BUGS.md is read by its header, never by the place of a column, so the table of seven columns a
+// project laid out before T4b holds still reads: each open bug in it is blocking and high until
+// /pitwall:continue adds the columns (T4b-AC2). A new bug's row, and a change to a bug not fixed yet,
+// wait outside the work tree, in the git directory (bugs.pending in the config), until the first commit
+// of the next branch moves them into docs/BUGS.md: no implementer commits them into another change,
+// and no switch, stash or checkout touches them (owner, 2026-11-11). A row that waits holds every cell
+// of a new bug, or, for a change, the ID and the cells that change, the others left empty.
+
+const BOM = String.fromCodePoint(0xfeff);
+export const BUG_KEYS = { id: 'ID', title: 'Title', found: 'Found in', steps: 'Steps', expected: 'Expected', actual: 'Actual', severity: 'Severity', risk: 'Risk', status: 'Status', fix: 'Fix PR' };
+const cellsOf = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
+const separatorRow = (cells) => cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+// A value as a table cell holds it: one line, a pipe escaped.
+export const bugCell = (value) => String(value ?? '').replace(/\s*\r?\n\s*/g, ' ').replace(/(?<!\\)\|/g, '\\|').trim();
+
+// The columns of the template's table, in order.
+export const bugColumns = () => cellsOf(readFileSync(join(templateRoot, 'docs', 'BUGS.md'), 'utf8').split(/\r?\n/).find((l) => l.startsWith('|')));
+
+// The first table of a text: the lines it spans, its header, and its rows keyed as BUG_KEYS names them.
+// old: the table has the seven columns of a project laid out before T4b.
+export function bugTable(text) {
+  const lines = String(text ?? '').replace(BOM, '').replace(/\r\n?/g, '\n').split('\n');
+  const first = lines.findIndex((l) => l.startsWith('|'));
+  let end = first;
+  if (first >= 0) while (end < lines.length && lines[end].startsWith('|')) end += 1;
+  const header = first >= 0 ? cellsOf(lines[first]) : null;
+  const keys = (header ?? []).map((h) => Object.keys(BUG_KEYS).find((k) => BUG_KEYS[k].toLowerCase() === h.toLowerCase()) ?? null);
+  const rows = first < 0 ? [] : lines.slice(first + 1, end).map(cellsOf).filter((c) => !separatorRow(c)).map((cells) => {
+    const row = {};
+    keys.forEach((k, i) => {
+      if (k) row[k] = cells[i] ?? '';
+    });
+    return row;
+  });
+  const old = Boolean(header) && header.map((h) => h.toLowerCase()).join('|') === OLD_BUG_COLUMNS.map((h) => h.toLowerCase()).join('|');
+  return { lines, first, end, header, keys, rows, old };
+}
+// The table of a project laid out before T4b.
+export const OLD_BUG_COLUMNS = ['ID', 'Found in', 'Steps', 'Expected', 'Actual', 'Status', 'Fix PR'];
+
+// A table's text with these rows in the template's columns, the lines around the table kept.
+export function writeBugTable(table, rows, intro) {
+  const cols = bugColumns();
+  const keys = cols.map((c) => Object.keys(BUG_KEYS).find((k) => BUG_KEYS[k] === c));
+  const body = [`| ${cols.join(' | ')} |`, `| ${cols.map(() => '---').join(' | ')} |`, ...rows.map((r) => `| ${keys.map((k) => bugCell(r[k])).join(' | ')} |`)];
+  if (table.first < 0) return `${intro ?? ''}${body.join('\n')}\n`;
+  return [...table.lines.slice(0, table.first), ...body, ...table.lines.slice(table.end)].join('\n');
+}
+
+// What a row says, read: its severity and class (each marked when the owner has not confirmed it), and
+// whether it is still open. A row of an old table is blocking and high.
+export function bugFacts(row, cfg, old = false) {
+  const mark = cfg.bugs.unconfirmed.mark;
+  const read = (cell, values) => {
+    const m = new RegExp(`^(${values.join('|')})(?:\\s*\\((${mark})\\))?$`, 'i').exec(String(cell ?? '').trim());
+    return m ? { value: values.find((v) => v.toLowerCase() === m[1].toLowerCase()), unconfirmed: Boolean(m[2]) } : { value: null, unconfirmed: false };
+  };
+  const severity = old ? { value: cfg.bugs.unconfirmed.severity, unconfirmed: false } : read(row.severity, Object.keys(cfg.bugs.severities));
+  const risk = old ? { value: cfg.bugs.unconfirmed.risk, unconfirmed: false } : read(row.risk, riskOrder(cfg));
+  const status = String(row.status ?? '').trim();
+  return {
+    id: String(row.id ?? '').replace(/`/g, '').trim(),
+    title: String(row.title ?? '').trim(),
+    severity: severity.value,
+    risk: risk.value,
+    unconfirmed: severity.unconfirmed || risk.unconfirmed,
+    status,
+    open: !/^(fixed|accepted|closed)\b/i.test(status),
+    accepted: /^accepted\s*\((R-\d+)\)$/i.exec(status)?.[1] ?? null,
+  };
+}
+
+// The file in the git directory where rows wait (kind: bugs, risks the owner accepted in place of a fix,
+// or lessons), or null outside git.
+export function pendingBugsPath(project, cfg = config(), kind = 'bugs') {
+  const r = spawnSync('git', ['-C', project, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) return null;
+  return join(resolve(project, r.stdout.trim()), ...cfg.bugs.pending[kind].split('/'));
+}
+
+// The bugs as the loop sees them: the rows of docs/BUGS.md in the work tree, then the bugs whose row only
+// another branch holds, not merged yet (branch: where), with the rows waiting in the git directory over
+// them all, each with its facts and, when part of it waits, waiting: 'new' or 'change'.
+export function bugsView(project, cfg = config()) {
+  const text = (p) => (p && existsSync(p) ? readFileSync(p, 'utf8') : '');
+  const tree = bugTable(text(join(project, 'docs', 'BUGS.md')));
+  const path = pendingBugsPath(project, cfg);
+  const pending = bugTable(text(path));
+  const rows = tree.rows.filter((r) => /^`?BUG-\d+`?$/.test(String(r.id ?? '').trim())).map((r) => (tree.old ? { ...r, ...oldDefaults(r, cfg) } : { ...r }));
+  const idOf = (r) => bugFacts(r, cfg).id;
+  // A bug the archive holds is closed, whatever an old branch still says of it.
+  const archive = join(project, 'docs', 'archive');
+  const archived = new Set(existsSync(archive) ? readdirSync(archive).filter((f) => f.endsWith('.md')).flatMap((f) => bugTable(readFileSync(join(archive, f), 'utf8')).rows.map(idOf)) : []);
+  for (const [id, { row, branch }] of path ? bugsOnBranches(project, cfg) : []) if (!archived.has(id) && !rows.some((r) => idOf(r) === id)) rows.push({ ...row, branch });
+  for (const p of pending.rows) {
+    const at = rows.findIndex((r) => idOf(r) === idOf(p));
+    if (at >= 0) rows[at] = { ...rows[at], ...changedCells(p), waiting: rows[at].waiting ?? 'change' };
+    else rows.push({ ...p, waiting: isNewBug(p) ? 'new' : 'change' });
+  }
+  rows.sort((a, b) => Number(/\d+/.exec(idOf(a))?.[0] ?? 0) - Number(/\d+/.exec(idOf(b))?.[0] ?? 0));
+  return { tree, pending, path, rows: rows.map((r) => ({ row: r, ...bugFacts(r, cfg) })) };
+}
+
+// A row that waits is a new bug when it holds the steps; a change holds only the cells that change.
+export const isNewBug = (row) => String(row.steps ?? '').trim() !== '';
+export const changedCells = (row) => Object.fromEntries(Object.entries(row).filter(([k, v]) => k !== 'id' && String(v ?? '').trim() !== ''));
+
+// The rows of docs/BUGS.md on every local and fetched branch, the newest commit first: id -> { row, branch }.
+// A bug filed into one branch's first commit is not on main until that branch merges.
+export function bugsOnBranches(project, cfg = config(), git = gitRunner(project)) {
+  const found = new Map();
+  const refs = git('for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/').out.split('\n').filter((r) => r && !/\/HEAD$/.test(r));
+  for (const ref of refs) {
+    const shown = git('show', `${ref}:docs/BUGS.md`);
+    if (!shown.ok) continue;
+    const table = bugTable(shown.raw);
+    for (const r of table.rows) {
+      const id = bugFacts(r, cfg).id;
+      if (/^BUG-\d+$/.test(id) && !found.has(id)) found.set(id, { row: table.old ? { ...r, ...oldDefaults(r, cfg) } : r, branch: ref });
+    }
+  }
+  return found;
+}
+
+// The cells a row of an old table gains when /pitwall:continue adds the columns: blocking and high, as it
+// was read before, and a title taken from what happened.
+export function oldDefaults(row, cfg) {
+  const words = String(row.actual ?? row.expected ?? '').replace(/\s+/g, ' ').trim();
+  const title = words.length <= 60 ? words : `${words.slice(0, 57).replace(/\s+\S*$/, '')}...`;
+  return { title: title || String(row.id ?? ''), severity: cfg.bugs.unconfirmed.severity, risk: cfg.bugs.unconfirmed.risk };
+}
+
+// The next BUG-n: one more than any in docs/BUGS.md, its archive, the rows waiting, docs/BUGS.md on every
+// branch and the fix branches.
+export function nextBugId(project, view, git = gitRunner(project), cfg = config()) {
+  const seen = [...view.rows.map((r) => r.id), ...bugsOnBranches(project, cfg, git).keys()];
+  const archive = join(project, 'docs', 'archive');
+  if (existsSync(archive)) for (const f of readdirSync(archive).filter((n) => n.endsWith('.md'))) seen.push(...bugTable(readFileSync(join(archive, f), 'utf8')).rows.map((r) => r.id));
+  seen.push(...git('for-each-ref', '--format=%(refname)', 'refs/heads/fix/', 'refs/remotes/origin/fix/').out.split('\n'));
+  const n = Math.max(0, ...seen.map((s) => Number(/\bBUG-(\d+)\b/.exec(String(s ?? ''))?.[1] ?? 0)));
+  return `BUG-${n + 1}`;
 }
 
 export function gitRunner(cwd) {

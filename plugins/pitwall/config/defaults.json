@@ -211,6 +211,36 @@
   "planning": {
     "branch": "plan/initial"
   },
+  "bugs": {
+    "severities": {
+      "blocking": "the defect itself does harm in ordinary work: work stops, or data, work or a secret is lost because of it; its fix goes before the next epic",
+      "not blocking": "anything else, a gap in a protection that does harm only after someone else's mistake included; its fix waits until no epic is ready"
+    },
+    "unconfirmed": {
+      "mark": "unconfirmed",
+      "severity": "blocking",
+      "risk": "high"
+    },
+    "foundIn": [
+      "QA",
+      "review",
+      "production",
+      "owner",
+      "CI"
+    ],
+    "statuses": [
+      "open",
+      "in progress",
+      "in review",
+      "fixed",
+      "accepted"
+    ],
+    "pending": {
+      "bugs": "pitwall/bugs.md",
+      "risks": "pitwall/risks.md",
+      "lessons": "pitwall/lessons.md"
+    }
+  },
   "loop": {
     "branches": {
       "epic": "epic/",
