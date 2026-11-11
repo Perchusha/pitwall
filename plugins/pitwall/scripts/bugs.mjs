@@ -22,13 +22,14 @@
 //       The lesson on stdin, as a bug is given: rule, why, checked by. It becomes the next L-n, dated
 //       today, and waits in the git directory; --tree writes docs/LESSONS.md in the work tree instead,
 //       for a lesson from the review of the change in flight, which that change's branch commits, and
-//       only when every BUG-n it names is a row there (a lesson waits for the bug it names).
+//       only when every BUG-n it names is a row there or in docs/archive/; risk --tree likewise.
 //   node bugs.mjs list [--json] [--all] [--project <dir>]
 //       The open bugs (--all: every bug): docs/BUGS.md, the bugs whose row only another branch holds,
 //       and what waits over them.
 //   node bugs.mjs flush [--project <dir>]
-//       Moves what waits into docs/BUGS.md, docs/RISKS.md and docs/LESSONS.md, in the work tree of the
-//       branch the project is on, never main, for the first commit of that branch. A table of seven
+//       Writes what waits into docs/BUGS.md, docs/RISKS.md and docs/LESSONS.md, in the work tree of the
+//       branch the project is on, never main, for the first commit of that branch; what waits stays in
+//       the git directory until a commit holds it, and any later run lets it go. A table of seven
 //       columns from before T4b gains the new ones first, each open bug in it blocking and high. A change
 //       to a bug whose row is on the change in flight, not merged yet, keeps waiting for the branch after
 //       it, and so does a lesson naming a bug that is not a row here. A table whose columns are neither
@@ -43,7 +44,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { bugCell, bugColumns, bugFacts, bugTable, bugsView, changedCells, config, gitRunner, isNewBug, nextBugId, oldDefaults, parseArgs, pendingBugsPath, requireNode, riskOrder, writeBugTable } from './lib.mjs';
+import { archivedBugIds, bugCell, bugColumns, bugFacts, bugTable, bugsView, changedCells, config, gitRunner, isNewBug, nextBugId, oldDefaults, parseArgs, pendingBugsPath, requireNode, riskOrder, writeBugTable } from './lib.mjs';
 
 requireNode();
 const usage = [
@@ -172,12 +173,51 @@ function treeTable() {
   const rows = table.rows.map((r) => (table.old ? { ...r, ...oldDefaults(r, cfg) } : { ...r }));
   return { path, table, rows };
 }
-// The bugs a text names, outside nothing: the docs check reads every BUG-n of docs/ as an ID.
-const bugsNamed = (text) => [...new Set([...String(text ?? '').matchAll(/\bBUG-\d+\b/g)].map((m) => m[0]))];
+// The bugs a text names: the docs check reads every BUG-n of docs/ as an ID that must point somewhere.
+// One in a code span is an example, which the docs check skips.
+const bugsNamed = (text) => [...new Set([...String(text ?? '').replace(/`[^`]*`/g, ' ').matchAll(/\bBUG-\d+\b/g)].map((m) => m[0]))];
 function notOnMain(what) {
   const branch = git('branch', '--show-current').out;
   if (branch === cfg.mergeProtection.branch) refuse(`${what} on ${branch}, which is protected: it belongs in the first commit of the next branch, so run it there`);
 }
+
+// What waits leaves the git directory only once a commit holds it (review round 2): flush writes it into docs/
+// and keeps it, and each run lets go of what HEAD holds now, a row with the same cells, or the same line of a
+// risk or a lesson. A session that ends between the flush and the commit loses nothing.
+function prune() {
+  const atHead = (rel) => {
+    const r = git('show', `HEAD:${rel}`);
+    return r.ok ? r.raw : null;
+  };
+  const headBugs = atHead('docs/BUGS.md');
+  if (headBugs !== null && existsSync(waiting.bugs)) {
+    const held = new Map(bugTable(headBugs).rows.map((r) => [bugFacts(r, cfg).id, r]));
+    const table = bugTable(read(waiting.bugs));
+    const left = table.rows.filter((w) => {
+      const h = held.get(w.id);
+      return !h || Object.entries(changedCells(w)).some(([k, v]) => String(h[k] ?? '').trim() !== String(v).trim());
+    });
+    if (left.length === 0) rmSync(waiting.bugs, { force: true });
+    else if (left.length !== table.rows.length) save(waiting.bugs, writeBugTable(table, left, INTRO.bugs));
+  }
+  for (const kind of ['risks', 'lessons']) {
+    const headText = atHead(DOC[kind]);
+    if (headText === null || !existsSync(waiting[kind])) continue;
+    const held = new Set(headText.split(/\r?\n/).map((l) => l.trim()));
+    const lines = rowLines(bugTable(read(waiting[kind])));
+    const left = lines.filter((l) => !held.has(l.trim()));
+    if (left.length === 0) rmSync(waiting[kind], { force: true });
+    else if (left.length !== lines.length) save(waiting[kind], appendRows(INTRO[kind], left));
+  }
+}
+prune();
+
+// The bugs this branch holds a row of, the archive's included: the only ones a text written on it may name.
+const bugsHere = () => new Set([...bugTable(read(join(project, 'docs', 'BUGS.md'))).rows.map((r) => bugFacts(r, cfg).id), ...archivedBugIds(project)]);
+const onlyBugsHere = (text, what) => {
+  const away = bugsNamed(text).filter((b) => !bugsHere().has(b));
+  if (away.length) refuse(`${away.join(', ')} is not a row of docs/BUGS.md on this branch: record this ${what} without --tree, so that it waits with the bug and reaches docs/ in the same first commit, or name the bug in a code span`);
+};
 
 const view = bugsView(project, cfg);
 const find = (bug) => view.rows.find((r) => r.id === bug) ?? refuse(`${bug} is not a bug of docs/BUGS.md, nor one waiting to go there`);
@@ -253,6 +293,7 @@ if (command === 'risk') {
   const line = `| ${risk} | ${bugCell(args.text)} | ${bugCell(args.fallback)} | ${today()} |`;
   if (args.tree) {
     notOnMain('writing docs/RISKS.md');
+    onlyBugsHere(`${args.text} ${args.fallback}`, 'risk');
     const path = join(project, DOC.risks);
     if (!existsSync(path) || !bugTable(read(path)).header) refuse(`${path} holds no table of risks: it is a path every pitwall project has (pitwall ADR-0006)`);
     writeFileSync(path, appendRows(read(path), [line]));
@@ -272,9 +313,7 @@ if (command === 'lesson') {
   if (args.tree) {
     notOnMain('writing docs/LESSONS.md');
     // A lesson in the tree that names a bug whose row is not there fails the docs check of this change (round 1, finding 2).
-    const here = new Set(bugTable(read(join(project, 'docs', 'BUGS.md'))).rows.map((r) => bugFacts(r, cfg).id));
-    const away = bugsNamed(`${fields.rule} ${fields.why} ${fields['checked by']}`).filter((b) => !here.has(b));
-    if (away.length) refuse(`${away.join(', ')} is not a row of docs/BUGS.md on this branch: record this lesson without --tree, so that it waits with the bug and reaches docs/ in the same first commit`);
+    onlyBugsHere(`${fields.rule} ${fields.why} ${fields['checked by']}`, 'lesson');
     const path = join(project, DOC.lessons);
     if (!existsSync(path) || !bugTable(read(path)).header) refuse(`${path} holds no table of lessons: it is a path every pitwall project has (pitwall ADR-0006)`);
     writeFileSync(path, appendRows(read(path), [line]));
@@ -310,8 +349,9 @@ if (command === 'flush') {
     const at = rows.findIndex((r) => bugFacts(r, cfg).id === p.id);
     const cells = changedCells(p);
     if (at >= 0) {
+      const differ = Object.keys(cells).filter((k) => String(rows[at][k] ?? '').trim() !== String(cells[k]).trim());
       rows[at] = { ...rows[at], ...cells };
-      moved.push(`${p.id} (${Object.keys(cells).join(', ')})`);
+      if (differ.length) moved.push(`${p.id} (${differ.join(', ')})`);
     } else if (isNewBug(p)) {
       rows.push(p);
       moved.push(`${p.id} (new)`);
@@ -321,7 +361,7 @@ if (command === 'flush') {
       kept.push(p);
     }
   }
-  const ids = new Set(rows.map((r) => bugFacts(r, cfg).id));
+  const ids = new Set([...rows.map((r) => bugFacts(r, cfg).id), ...archivedBugIds(project)]);
   const writes = [];
   const keptLessons = [];
   for (const kind of ['risks', 'lessons']) {
@@ -331,25 +371,23 @@ if (command === 'flush') {
       keptLessons.push(...lines.filter((l) => bugsNamed(l).some((b) => !ids.has(b))));
       lines = lines.filter((l) => !keptLessons.includes(l));
     }
-    if (!lines.length) continue;
     const rel = DOC[kind];
+    // A line a flush before this one already wrote, the commit not made yet, is not written twice.
+    const there = new Set(rowLines(bugTable(read(join(project, rel)))).map(rowId));
+    lines = lines.filter((l) => !there.has(rowId(l)));
+    if (!lines.length) continue;
     if (!existsSync(join(project, rel)) || !bugTable(read(join(project, rel))).header) refuse(`${rel} holds no table: it is a path every pitwall project has (pitwall ADR-0006)`);
     writes.push([rel, appendRows(read(join(project, rel)), lines)]);
     moved.push(...lines.map((l) => `${rowId(l)} into ${rel}`));
   }
   const left = [kept.length ? ` Still waiting for the branch after the change in flight, which holds their row: ${kept.map((k) => k.id).join(', ')}.` : '', keptLessons.length ? ` Still waiting for the bugs they name: ${keptLessons.map(rowId).join(', ')}.` : ''].join('');
   if (moved.length === 0) {
-    console.log(`FLUSHED: nothing waits.${left}`);
+    console.log(`FLUSHED: nothing new to move.${left}`);
     process.exit(0);
   }
   writeFileSync(path, writeBugTable(table, rows));
   for (const [rel, text] of writes) writeFileSync(join(project, rel), text);
-  if (kept.length) save(waiting.bugs, writeBugTable(bugTable(read(waiting.bugs)), kept, INTRO.bugs));
-  else rmSync(waiting.bugs, { force: true });
-  rmSync(waiting.risks, { force: true });
-  if (keptLessons.length) save(waiting.lessons, appendRows(INTRO.lessons, keptLessons));
-  else rmSync(waiting.lessons, { force: true });
   const files = ['docs/BUGS.md', ...writes.map(([rel]) => rel)];
-  console.log(`FLUSHED: ${moved.join('; ')}. Commit ${files.join(', ')} in the first commit of this branch.${left}`);
+  console.log(`FLUSHED: ${moved.join('; ')}. Commit ${files.join(', ')} in the first commit of this branch: what waits leaves the git directory once a commit holds it.${left}`);
   process.exit(0);
 }

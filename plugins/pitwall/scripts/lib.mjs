@@ -237,10 +237,10 @@ export function bugsView(project, cfg = config()) {
   const pending = bugTable(text(path));
   const rows = tree.rows.filter((r) => /^`?BUG-\d+`?$/.test(String(r.id ?? '').trim())).map((r) => (tree.old ? { ...r, ...oldDefaults(r, cfg) } : { ...r }));
   const idOf = (r) => bugFacts(r, cfg).id;
-  // A bug the archive holds is closed, whatever an old branch still says of it.
-  const archive = join(project, 'docs', 'archive');
-  const archived = new Set(existsSync(archive) ? readdirSync(archive).filter((f) => f.endsWith('.md')).flatMap((f) => bugTable(readFileSync(join(archive, f), 'utf8')).rows.map(idOf)) : []);
-  for (const [id, { row, branch }] of path ? bugsOnBranches(project, cfg) : []) if (!archived.has(id) && !rows.some((r) => idOf(r) === id)) rows.push({ ...row, branch });
+  // A bug the archive holds is closed, whatever an old branch still says of it; a branch merged into main
+  // says nothing main does not (review round 2).
+  const archived = archivedBugIds(project);
+  for (const [id, { row, branch }] of path ? bugsOnBranches(project, cfg, gitRunner(project), { unmerged: true }) : []) if (!archived.has(id) && !rows.some((r) => idOf(r) === id)) rows.push({ ...row, branch });
   for (const p of pending.rows) {
     const at = rows.findIndex((r) => idOf(r) === idOf(p));
     if (at >= 0) rows[at] = { ...rows[at], ...changedCells(p), waiting: rows[at].waiting ?? 'change' };
@@ -254,12 +254,24 @@ export function bugsView(project, cfg = config()) {
 export const isNewBug = (row) => String(row.steps ?? '').trim() !== '';
 export const changedCells = (row) => Object.fromEntries(Object.entries(row).filter(([k, v]) => k !== 'id' && String(v ?? '').trim() !== ''));
 
+// The IDs of the bugs in docs/archive/, from every table of every file: closed bugs.
+export function archivedBugIds(project) {
+  const archive = join(project, 'docs', 'archive');
+  if (!existsSync(archive)) return new Set();
+  const ids = readdirSync(archive).filter((f) => f.endsWith('.md')).flatMap((f) => readFileSync(join(archive, f), 'utf8').split(/\r?\n/).map((l) => /^\|\s*`?(BUG-\d+)`?\s*\|/.exec(l)?.[1]));
+  return new Set(ids.filter(Boolean));
+}
+
 // The rows of docs/BUGS.md on every local and fetched branch, the newest commit first: id -> { row, branch }.
-// A bug filed into one branch's first commit is not on main until that branch merges.
-export function bugsOnBranches(project, cfg = config(), git = gitRunner(project)) {
+// A bug filed into one branch's first commit is not on main until that branch merges. unmerged: only the
+// branches not merged into main, whose rows main does not hold yet; numbering reads them all.
+export function bugsOnBranches(project, cfg = config(), git = gitRunner(project), { unmerged = false } = {}) {
   const found = new Map();
+  const base = cfg.mergeProtection.branch;
+  const mains = [`refs/heads/${base}`, `refs/remotes/origin/${base}`].filter((r) => git('rev-parse', '--verify', '-q', `${r}^{commit}`).ok);
   const refs = git('for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads/', 'refs/remotes/').out.split('\n').filter((r) => r && !/\/HEAD$/.test(r));
   for (const ref of refs) {
+    if (unmerged && mains.some((m) => git('merge-base', '--is-ancestor', ref, m).ok)) continue;
     const shown = git('show', `${ref}:docs/BUGS.md`);
     if (!shown.ok) continue;
     const table = bugTable(shown.raw);
@@ -282,9 +294,7 @@ export function oldDefaults(row, cfg) {
 // The next BUG-n: one more than any in docs/BUGS.md, its archive, the rows waiting, docs/BUGS.md on every
 // branch and the fix branches.
 export function nextBugId(project, view, git = gitRunner(project), cfg = config()) {
-  const seen = [...view.rows.map((r) => r.id), ...bugsOnBranches(project, cfg, git).keys()];
-  const archive = join(project, 'docs', 'archive');
-  if (existsSync(archive)) for (const f of readdirSync(archive).filter((n) => n.endsWith('.md'))) seen.push(...bugTable(readFileSync(join(archive, f), 'utf8')).rows.map((r) => r.id));
+  const seen = [...view.rows.map((r) => r.id), ...bugsOnBranches(project, cfg, git).keys(), ...archivedBugIds(project)];
   seen.push(...git('for-each-ref', '--format=%(refname)', 'refs/heads/fix/', 'refs/remotes/origin/fix/').out.split('\n'));
   const n = Math.max(0, ...seen.map((s) => Number(/\bBUG-(\d+)\b/.exec(String(s ?? ''))?.[1] ?? 0)));
   return `BUG-${n + 1}`;

@@ -105,7 +105,7 @@ for (const b of view.rows.filter((x) => x.open)) {
   if (b.unconfirmed) {
     groups.questions.push({ what: `${b.id} (${b.title}) was filed without your answer: confirm its severity, now ${b.severity}, and its class, ${b.risk}${waits}`, default: `it stays ${b.severity}: its fix goes right after the change in flight` });
   } else {
-    groups.bugs.push({ what: `${b.id} (${b.title}): ${b.severity}, ${b.risk} risk, ${b.status || 'open'}${waits}`, default: b.severity === blocking ? 'its fix goes right after the change in flight, before the next epic' : 'it waits until no epic is ready' });
+    groups.bugs.push({ what: `${b.id} (${b.title}): ${b.severity}, ${b.risk} risk, ${b.status || 'open'}${waits}`, default: /^in (progress|review)$/i.test(b.status) ? 'its fix is in flight, and merges after your yes' : b.severity === blocking ? 'its fix goes right after the change in flight, before the next epic' : 'it waits until no epic is ready' });
   }
 }
 if (view.tree.old) notes.push(`docs/BUGS.md has the table of seven columns from before T4b: each open bug in it counts as ${cfg.bugs.oldTable.severity} and ${cfg.bugs.oldTable.risk} until /pitwall:continue gives it the new columns`);

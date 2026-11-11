@@ -27,7 +27,7 @@ The first epic in `docs/EPICS.md` whose status is neither merged nor released. T
 ## How to work
 
 - pitwall is built with its own process: one epic, one branch `epic/T<n>-<slug>`, one PR, reviewed by a fresh-context agent before merge. Reviews of pitwall's own epics stop after three rounds, and what is open then goes to `docs/BUGS.md` or `docs/RISKS.md` (owner, 2026-11-11); only a realistic finding blocks; an exotic one becomes one accepted risk (`review.findings` in `config/defaults.json`).
-- `main` is protected, so a merged epic is recorded (its status in `docs/EPICS.md`) in the first commit of the next epic's branch.
+- `main` is protected, so a merged epic is recorded (its status in `docs/EPICS.md`) in the first commit of the next epic's branch. That commit also takes the bugs, risks and lessons that wait in the git directory: run `node plugins/pitwall/scripts/bugs.mjs flush` first, and commit the files it names.
 - Skills hold process only. Knowledge goes in `docs/`, defaults in `config/defaults.json`. Never a second source of truth.
 - Every skill carries a `> Status:` line. Until it reads `> Status: built ...`, the skill keeps `disable-model-invocation: true` so it never triggers by itself; the check enforces both. An unbuilt agent says so in its description and returns `STATUS: NOT_IMPLEMENTED`.
 - The plugin never assumes a stack. It calls the project's `scripts/gate` and reads the docs by path.

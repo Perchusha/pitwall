@@ -218,7 +218,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (!remote('ls-tree', '--name-only', 'origin/main', 'docs/reviews/').stdout.split('\n').some((f) => /^docs\/reviews\/E1-.+\.md$/.test(f))) unmet.push('no review file of E1 on main');
       return unmet;
     },
-    // T4b-AC4: a blocking bug goes before the planned E2, and its fix merges by its class.
+    // T4b-AC4: a blocking bug goes before the planned E2, and its fix merges after the owner's yes.
     bug: () => {
       const unmet = [];
       const m = merges().find((x) => /^fix\(BUG-1\): /.test(x[1]));

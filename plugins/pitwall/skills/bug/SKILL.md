@@ -28,7 +28,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`bugs`, `riskCl
    - the steps that show it, what was expected, and what happened instead, each in a line or two. Quote a command as it was run.
 3. **Propose** a severity and a risk class, each with a reason in one line:
    - the severity by `bugs.severities`: blocking when the defect itself does harm in ordinary work (work stops, or data, work or a secret is lost because of it); a gap in a protection that does harm only after someone else's mistake is not blocking;
-   - the class by what the fix will touch, as `riskClasses` gives its examples: a guard, auth, payments, data migrations or deletion, infrastructure or security is high.
+   - the class by what the fix will touch, as `riskClasses` gives its examples (auth, payments, data migrations and deletion, infrastructure, security: high); it picks the implementer of the fix.
 4. **Ask the owner** in one message to confirm both or change them. Their answer, or "as you propose", confirms them. When no owner can answer (you run as an agent nobody talks to, or the owner left without a word), file it unconfirmed: the script files it blocking, marked so, with the class you proposed, until they confirm it in `/pitwall:owner-calls` (owner, 2026-11-11).
 5. **File it**, with `confirmed: yes` when the owner answered and `confirmed: no` otherwise:
    ```bash
