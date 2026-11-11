@@ -278,6 +278,37 @@ export function oldDefaults(row, cfg) {
   return { title: title || String(row.id ?? ''), severity: cfg.bugs.unconfirmed.severity, risk: cfg.bugs.unconfirmed.risk };
 }
 
+// The risk class of a bug fix as a merge reads it (T4b-AC3): the highest of the class docs/BUGS.md gives the
+// bug in the first commit of the fix's branch that holds its row (the row as filed, with the owner's changes
+// that waited for that commit), at the commit that merges, and in a change the owner made after the fix
+// started, which waits in the git directory of this clone (owner, 2026-11-11). A class raised anywhere holds;
+// one lowered on the branch does not. An unconfirmed bug, and a bug of a table from before T4b, is high.
+// Null when neither commit gives the bug a class.
+export function bugRiskClassAt(git, project, bug, sha, base, cfg) {
+  const order = riskOrder(cfg);
+  const classIn = (text) => {
+    const t = bugTable(text);
+    const r = t.rows.find((x) => bugFacts(x, cfg).id === bug);
+    return r ? bugFacts(r, cfg, t.old).risk : null;
+  };
+  const at = (ref) => {
+    const shown = git('show', `${ref}:docs/BUGS.md`);
+    return shown.ok ? classIn(shown.raw) : null;
+  };
+  const fork = git('merge-base', sha, base);
+  let first = null;
+  for (const c of fork.ok ? git('rev-list', '--reverse', '--first-parent', `${fork.out}..${sha}`).out.split('\n').filter(Boolean) : []) {
+    first = at(c);
+    if (first) break;
+  }
+  const head = at(sha);
+  if (!first && !head) return null;
+  const path = pendingBugsPath(project, cfg);
+  const waiting = path && existsSync(path) ? bugTable(readFileSync(path, 'utf8')).rows.find((r) => bugFacts(r, cfg).id === bug && String(r.risk ?? '').trim()) : null;
+  const later = waiting ? bugFacts(waiting, cfg).risk : null;
+  return [first, head, later].filter(Boolean).reduce((a, b) => (order.indexOf(b) > order.indexOf(a) ? b : a));
+}
+
 // The next BUG-n: one more than any in docs/BUGS.md, its archive, the rows waiting, docs/BUGS.md on every
 // branch and the fix branches.
 export function nextBugId(project, view, git = gitRunner(project), cfg = config()) {

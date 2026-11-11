@@ -8,12 +8,14 @@
 // --owner-approved is the skill's word that the owner said yes to this merge in the
 // conversation; the script cannot hear the owner. The plan merges only with it. A change,
 // the PR from the branch the project is on (epic/E<n>-<slug> or fix/BUG-<n>), merges with
-// it at any risk class; without it only an epic whose risk class merges by itself
-// (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that
-// (autoMerge in .claude/pitwall.json, ADR-0010). Anything else waits for the owner (exit 4):
-// high risk, a bug fix (bugs carry no risk class before T4b), an owner who said no or was not
-// asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
-// --owner-approved never runs under it (ADR-0010).
+// it at any risk class; without it only a change whose risk class merges by itself
+// (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that, for
+// epics (autoMerge in .claude/pitwall.json, ADR-0010) or for bug fixes (autoMergeFixes, a choice of
+// its own, T4b-AC3). A bug's class is the highest of its row in the first commit of the fix's
+// branch, at the head, and in a change that waits in the git directory (lib.mjs bugRiskClassAt).
+// Anything else waits for the owner (exit 4): high risk, an owner who said no or was not asked yet.
+// pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so --owner-approved
+// never runs under it (ADR-0010).
 //
 // Before it merges, it checks that it may (L-5): gh is installed and signed in, the account
 // may write, the PR from the branch is open into main with the local branch's commit as its
@@ -37,7 +39,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, riskClassAt, sleep } from './lib.mjs';
+import { bugFacts, bugRiskClassAt, bugTable, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, riskClassAt, riskOrder, sleep } from './lib.mjs';
 
 requireNode();
 const usage = 'node merge.mjs --plan --owner-approved | --change [--owner-approved] [--project <dir>] [--wait <seconds>] [--dry-run]';
@@ -105,21 +107,31 @@ if (change?.epic) {
   if (!riskClass) refuse(`docs/EPICS.md at ${sha.slice(0, 7)} gives ${change.epic} no risk class of ${Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object').join(', ')}`);
   const file = git('show', `${sha}:docs/epics/${change.id}.md`);
   title = (file.ok ? new RegExp(`^# ${change.epic} - (.+)$`, 'm').exec(file.out)?.[1] : '')?.trim() ?? '';
+} else if (change?.bug) {
+  // T4b-AC3: a fix merges by its risk class like an epic, read in three places, the highest counting.
+  riskClass = bugRiskClassAt(git, project, change.bug, sha, base, cfg);
+  if (!riskClass) refuse(`docs/BUGS.md on ${branch} gives ${change.bug} no risk class of ${riskOrder(cfg).join(', ')}`);
+  const shown = git('show', `${sha}:docs/BUGS.md`);
+  const row = shown.ok ? bugTable(shown.raw).rows.find((r) => bugFacts(r, cfg).id === change.bug) : null;
+  title = row ? bugFacts(row, cfg).title : '';
 }
 if (change && !approved) {
   let settings = null;
   try {
     settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
   } catch {}
-  const choice = settings?.[cfg.loop.ownerChoice];
-  if (!change.epic) owners(`${change.bug} is a bug fix: a fix merges after the owner's yes until bugs carry a risk class`);
-  if (cfg.riskClasses[riskClass].merge !== 'auto') owners(`${change.epic} is ${riskClass} risk: it merges only after the owner's yes (SPEC 6)`);
+  // Epics and bug fixes each have the owner's choice of their own (ADR-0010; owner, 2026-11-11): the yes
+  // given to epics was given under "bug fixes always wait for you", so it never reaches a fix.
+  const key = change.epic ? cfg.loop.ownerChoice : cfg.loop.ownerChoiceFixes;
+  const what = change.epic ? 'epics' : 'bug fixes';
+  const choice = settings?.[key];
+  if (cfg.riskClasses[riskClass].merge !== 'auto') owners(`${change.epic ?? change.bug} is ${riskClass} risk: it merges only after the owner's yes (SPEC 6)`);
   if (choice !== true) {
     owners(choice === false
-      ? `the owner chose that every merge waits for them (${cfg.loop.ownerChoice} is false in .claude/pitwall.json, ADR-0010)`
-      : `the owner has not chosen yet whether low and normal risk merge without them (no ${cfg.loop.ownerChoice} in .claude/pitwall.json, ADR-0010): ask them`);
+      ? `the owner chose that every merge of ${what} waits for them (${key} is false in .claude/pitwall.json, ADR-0010)`
+      : `the owner has not chosen yet whether low and normal risk ${what} merge without them (no ${key} in .claude/pitwall.json, ADR-0010): ask them${change.epic ? '' : ' once, and hand them merge-choice.mjs --fixes --allow or --deny'}`);
   }
-  log(`${change.epic} is ${riskClass} risk, and the owner allowed low and normal risk to merge without them (ADR-0010)`);
+  log(`${change.epic ?? change.bug} is ${riskClass} risk, and the owner allowed low and normal risk ${what} to merge without them (ADR-0010)`);
 }
 
 // 3. May we? gh, a signed-in account, a repository we may write to.
@@ -207,8 +219,8 @@ if (args.plan) {
   // A fix takes its title from the PR, without a leading BUG-n or conventional prefix.
   const prTitle = plainWords(pr.title).replace(/^(?:fix|feat)\([^)]*\):\s*/i, '').replace(new RegExp(`^${change.bug ?? change.epic}\\b\\s*[-:]?\\s*`), '');
   subject = `${change.epic ? 'feat' : 'fix'}(${change.epic ?? change.bug}): ${plainWords(title) || prTitle || change.id} (#${pr.number})`;
-  const who = approved ? `Approved by the owner, ${today()}, at ${sha}.` : `Merged without the owner, who allowed low and normal risk to merge once ${cfg.review.gateContext} and ${cfg.review.statusContext} are green (pitwall ADR-0010), at ${sha}.`;
-  body = `${change.epic ? `Risk class: ${riskClass}.` : 'A bug fix, approved by the owner as every fix is until bugs carry a risk class.'} ${who}`;
+  const who = approved ? `Approved by the owner, ${today()}, at ${sha}.` : `Merged without the owner, who allowed low and normal risk ${change.epic ? 'epics' : 'bug fixes'} to merge once ${cfg.review.gateContext} and ${cfg.review.statusContext} are green (pitwall ADR-0010), at ${sha}.`;
+  body = `Risk class: ${riskClass}. ${who}`;
 }
 const mergeArgs = ['pr', 'merge', String(pr.number), '--merge', '--match-head-commit', sha, '--subject', subject, '--body', body];
 const command = `gh pr merge ${pr.number} --merge --match-head-commit ${sha} --subject "${subject}" --body "${body}"`;

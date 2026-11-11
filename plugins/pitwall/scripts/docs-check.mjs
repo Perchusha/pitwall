@@ -540,8 +540,7 @@ function checkKickoff() {
       if (!Object.keys(cfg.processLevels).includes(s.processLevel)) report(file, `processLevel "${s.processLevel}" is not one of ${Object.keys(cfg.processLevels).join(', ')}`);
       if (!cfg.mergeProtection.modes.includes(s.mergeProtection)) report(file, `mergeProtection "${s.mergeProtection}" is not one of ${cfg.mergeProtection.modes.join(', ')}`);
       // The owner's choice of ADR-0010; a project laid out before it has no key yet.
-      const choice = cfg.loop.ownerChoice;
-      if (Object.hasOwn(s, choice) && typeof s[choice] !== 'boolean') report(file, `${choice} "${s[choice]}" is not true or false`);
+      for (const choice of [cfg.loop.ownerChoice, cfg.loop.ownerChoiceFixes]) if (Object.hasOwn(s, choice) && typeof s[choice] !== 'boolean') report(file, `${choice} "${s[choice]}" is not true or false`);
     }
   }
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);

@@ -1490,17 +1490,19 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
 
     // merge.mjs --change, by risk class and the owner's choice.
     const green = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local', branch, title: 'E1 - The reminder' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
-    const choose = (p, v) => {
+    const choose = (p, v, fixes) => {
       const f = join(p, '.claude', 'pitwall.json');
       const s = JSON.parse(readFileSync(f, 'utf8'));
       // null: a project laid out before the owner's choice existed.
       if (v === null) delete s.autoMerge;
       else s.autoMerge = v;
+      // The owner's choice for bug fixes (T4b-AC3): undefined until it is asked.
+      if (fixes !== undefined) s.autoMergeFixes = fixes;
       writeFileSync(f, JSON.stringify(s, null, 2) + '\n');
     };
-    const merge = (label, { scenario = green, args = ['--change'], autoMerge = true, prepare, code, result, merges, subject, body, says = [] }) => {
+    const merge = (label, { scenario = green, args = ['--change'], autoMerge = true, fixes, prepare, code, result, merges, subject, body, says = [] }) => {
       const p = fresh((q) => {
-        choose(q, autoMerge);
+        choose(q, autoMerge, fixes);
         prepare?.(q);
       });
       const sha = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
@@ -1520,9 +1522,9 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
       checkHandoff(r.stdout, fail);
     };
     const without = new RegExp(`^Risk class: normal\\. Merged without the owner, .*\\(pitwall ADR-0010\\), at [0-9a-f]{40}\\.$`);
-    const byOwner = (cls) => new RegExp(`^${cls ? `Risk class: ${cls}\\.` : 'A bug fix, approved by the owner as every fix is until bugs carry a risk class\\.'} Approved by the owner, \\d{4}-\\d{2}-\\d{2}, at [0-9a-f]{40}\\.$`);
+    const byOwner = (cls) => new RegExp(`^Risk class: ${cls}\\. Approved by the owner, \\d{4}-\\d{2}-\\d{2}, at [0-9a-f]{40}\\.$`);
     merge('normal risk, the owner allowed it', { code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: without });
-    merge('normal risk, the owner said no', { autoMerge: false, code: 4, result: 'waits for the owner', merges: 0, says: ['every merge waits for them'] });
+    merge('normal risk, the owner said no', { autoMerge: false, code: 4, result: 'waits for the owner', merges: 0, says: ['every merge of epics waits for them'] });
     merge('normal risk, the owner not asked yet', { autoMerge: null, code: 4, result: 'waits for the owner', merges: 0, says: ['has not chosen yet'] });
     merge('normal risk, the owner said yes to this merge', { autoMerge: false, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: byOwner('normal') });
     const high = (p) => {
@@ -1541,10 +1543,38 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     };
     merge('high on main, lowered on the branch', { prepare: lowered, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
     merge('a class read from the commit, not the tree', { prepare: (p) => writeFileSync(join(p, 'docs', 'EPICS.md'), readFileSync(join(p, 'docs', 'EPICS.md'), 'utf8').replace('| The reminder | normal | E0 | in progress |', '| The reminder | high | E0 | in progress |')), code: 0, result: 'merged', merges: 1, body: without });
-    const toFix = (p) => gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
+    // T4b-AC3: a fix merges by its risk class like an epic, under the owner's choice for fixes, a choice of its own.
+    // Its class is the highest of the branch's first commit that holds its row, the head, and a change waiting
+    // in the git directory. Each risk given here is one commit of docs/BUGS.md on the fix's branch.
+    const toFix = (...risks) => (p) => {
+      gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
+      const f = join(p, 'docs', 'BUGS.md');
+      const before = readFileSync(f, 'utf8').trimEnd();
+      for (const risk of risks) {
+        const [severity, cls] = /unconfirmed/.test(risk) ? ['blocking (unconfirmed)', risk] : ['blocking', risk];
+        writeFileSync(f, `${before}\n| BUG-1 | No tray icon | QA | Open the app | A tray icon | Nothing | ${severity} | ${cls} | in review | - |\n`);
+        gitIn(p, 'commit', '-qm', `docs: BUG-1, ${risk}`, '--', 'docs/BUGS.md');
+      }
+    };
     const fixPr = { ...green, pr: { head: 'local', branch: 'fix/BUG-1', title: 'BUG-1: no tray icon after login' } };
-    merge('a bug fix, the owner allowed low and normal', { prepare: toFix, scenario: fixPr, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is a bug fix'] });
-    merge('a bug fix, the owner said yes', { prepare: toFix, scenario: fixPr, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): no tray icon after login (#7)', body: byOwner(null) });
+    const fixWithout = new RegExp('^Risk class: normal\\. Merged without the owner, who allowed low and normal risk bug fixes .*\\(pitwall ADR-0010\\), at [0-9a-f]{40}\\.$');
+    merge('a normal fix, the owner allowed epics but not asked about fixes', { prepare: toFix('normal'), scenario: fixPr, code: 4, result: 'waits for the owner', merges: 0, says: ['has not chosen yet whether low and normal risk bug fixes merge without them', 'merge-choice.mjs --fixes'] });
+    merge('a normal fix, the owner allowed fixes', { prepare: toFix('normal'), scenario: fixPr, fixes: true, code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): No tray icon (#7)', body: fixWithout });
+    merge('a normal fix, the owner allowed fixes and not epics', { prepare: toFix('normal'), scenario: fixPr, autoMerge: false, fixes: true, code: 0, result: 'merged', merges: 1, body: fixWithout });
+    merge('a normal fix, the owner said no to fixes', { prepare: toFix('normal'), scenario: fixPr, fixes: false, code: 4, result: 'waits for the owner', merges: 0, says: ['every merge of bug fixes waits for them'] });
+    merge('a high fix', { prepare: toFix('high'), scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'] });
+    merge('a fix filed high and lowered on its branch', { prepare: toFix('high', 'normal'), scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'] });
+    merge('a fix the owner raised after it started', {
+      prepare: (p) => {
+        toFix('normal')(p);
+        const raised = runScript('bugs.mjs', ['set', 'BUG-1', '--risk', 'high', '--project', p]);
+        if (raised.status !== 0) report(`bugs.mjs set --risk high: ${raised.stdout}${raised.stderr}`);
+      },
+      scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'],
+    });
+    merge('an unconfirmed fix', { prepare: toFix('high (unconfirmed)'), scenario: fixPr, fixes: true, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is high risk'] });
+    merge('a fix with no row', { prepare: toFix(), scenario: fixPr, fixes: true, code: 1, merges: 0, says: ['gives BUG-1 no risk class'] });
+    merge('a fix, the owner said yes', { prepare: toFix('high'), scenario: fixPr, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): No tray icon (#7)', body: byOwner('high') });
     merge('ai-review red', { scenario: { ...green, statuses: { 'ai-review': 'failure' } }, code: 1, merges: 0, says: ['ai-review is failure', 'the code reviewer sets it'] });
     merge('gate red', { scenario: { ...green, gate: 'failure' }, code: 1, merges: 0, says: ['gate is failure'] });
     merge('the head moved', { scenario: { ...green, pr: { ...green.pr, head: '0'.repeat(40) } }, code: 1, merges: 0, says: ['push it and review it again'] });
@@ -1575,6 +1605,17 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     r = choiceRun(p, ['--deny']);
     if (r.status !== 0 || choiceOf(p) !== false || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)'])) report(`merge-choice --deny must record false and keep only the owner's rules: ${JSON.stringify(rules(p))}\n${r.stdout}`);
     for (const args of [[], ['--allow', '--deny']]) if (choiceRun(p, args).status !== 2) report(`merge-choice ${args.join(' ') || 'without a flag'}: expected a usage error`);
+    // T4b-AC3: the owner's choice for bug fixes, a key of its own; the rules stay while either choice is yes.
+    const fixesOf = (q) => JSON.parse(readFileSync(join(q, '.claude', 'pitwall.json'), 'utf8')).autoMergeFixes;
+    r = choiceRun(p, ['--fixes', '--allow']);
+    if (r.status !== 0 || fixesOf(p) !== true || choiceOf(p) !== false || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)', ...expectRules]) || !/bug fixes now merge without you/.test(r.stdout)) report(`merge-choice --fixes --allow: exit ${r.status}, autoMergeFixes ${fixesOf(p)}, autoMerge ${choiceOf(p)}, rules ${JSON.stringify(rules(p))}\n${r.stdout}${r.stderr}`);
+    r = choiceRun(p, ['--allow']);
+    r = choiceRun(p, ['--fixes', '--deny']);
+    if (r.status !== 0 || fixesOf(p) !== false || choiceOf(p) !== true || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)', ...expectRules])) report(`merge-choice --fixes --deny must keep the rules while epics may still merge: ${JSON.stringify(rules(p))}\n${r.stdout}`);
+    r = choiceRun(p, ['--deny']);
+    if (r.status !== 0 || JSON.stringify(rules(p)) !== JSON.stringify(['Bash(npm test)'])) report(`merge-choice --deny with fixes already no must remove the rules: ${JSON.stringify(rules(p))}\n${r.stdout}`);
+    r = choiceRun(p, ['--fixes', '--allow'], { ...owner, CLAUDECODE: '1' });
+    if (r.status !== 1 || fixesOf(p) !== false) report(`merge-choice --fixes under Claude Code must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
     r = choiceRun(dir, ['--allow']);
     if (r.status !== 1 || !/not a pitwall project/.test(r.stdout)) report(`merge-choice outside a pitwall project must refuse\n${r.stdout}`);
     p = fresh();
@@ -1737,12 +1778,21 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     }
     if (items(calls(p).out, 'merges').length !== 0) report(`owner-calls lists a green normal-risk PR the owner allowed to merge by itself: ${JSON.stringify(items(calls(p).out, 'merges'))}`);
     setSettings(p, (s) => ({ ...s, autoMerge: false }));
-    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*you have not allowed merges without you/.test(m))) report(`owner-calls does not list a green PR that waits for the owner's yes: ${JSON.stringify(calls(p).out)}`);
+    if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*you have not allowed epics to merge without you/.test(m))) report(`owner-calls does not list a green PR that waits for the owner's yes: ${JSON.stringify(calls(p).out)}`);
+    // T4b-AC3: a normal fix waits for the owner's choice for fixes, asked once, as a switch, when the first one is ready.
     gitIn(p, 'switch', '-q', '-c', 'fix/BUG-1', 'main');
-    gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'fix: BUG-1');
+    const fixBugs = join(p, 'docs', 'BUGS.md');
+    writeFileSync(fixBugs, `${readFileSync(fixBugs, 'utf8').trimEnd()}\n| BUG-1 | No tray icon | QA | Open the app | A tray icon | Nothing | blocking | normal | in review | - |\n`);
+    gitIn(p, 'commit', '-q', '-m', 'docs: BUG-1', '--', 'docs/BUGS.md');
     greenPr(p, 'fix/BUG-1');
     setSettings(p, (s) => ({ ...s, autoMerge: true }));
-    if (!items(calls(p).out, 'merges').some((m) => /^PR #2 \(BUG-1\) is ready.*a bug fix/.test(m))) report(`owner-calls does not list a green fix PR: ${JSON.stringify(calls(p).out)}`);
+    out = calls(p).out;
+    if (!items(out, 'merges').some((m) => /^PR #2 \(BUG-1\) is ready.*you have not allowed bug fixes to merge without you/.test(m))) report(`owner-calls does not list a green fix PR that waits for the owner's choice for fixes: ${JSON.stringify(out)}`);
+    const fixSwitch = (out.groups.find((g) => g.name === 'switches')?.items ?? []).find((i) => /bug fixes merge without you/.test(i.what));
+    if (!fixSwitch || !/merge-choice\.mjs" --fixes --allow --project/.test(fixSwitch.run?.[0]) || !/merge-choice\.mjs" --fixes --deny --project/.test(fixSwitch.run?.[1])) report(`owner-calls does not hand over the owner's choice for fixes once a normal fix is ready: ${JSON.stringify(out.groups)}`);
+    setSettings(p, (s) => ({ ...s, autoMergeFixes: true }));
+    out = calls(p).out;
+    if (items(out, 'merges').some((m) => /BUG-1/.test(m)) || items(out, 'switches').some((w) => /bug fixes/.test(w))) report(`owner-calls still lists a normal fix the owner allowed, or the choice made: ${JSON.stringify(out.groups)}`);
     gitIn(p, 'switch', '-q', '-c', 'epic/E2-release', 'main');
     gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'feat: E2');
     gitIn(p, 'push', '-q', 'origin', 'epic/E2-release');
@@ -3087,7 +3137,14 @@ step('hooks (recorded payloads)', (report) => {
     briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
     setChoice(false);
     const no = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
-    if (JSON.stringify(rulesNow()) !== JSON.stringify(['Bash(npm test)']) || !/every merge waits for the owner/.test(no) || !/were removed/.test(no)) report(`on no, the rules must go and the owner's stay, got ${JSON.stringify(rulesNow())}\n${no}`);
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(['Bash(npm test)']) || !/every merge of an epic waits for the owner/.test(no) || !/were removed/.test(no)) report(`on no, the rules must go and the owner's stay, got ${JSON.stringify(rulesNow())}\n${no}`);
+    // T4b-AC3: a yes for bug fixes alone keeps the rules too, and the brief says it.
+    const withFixes = JSON.parse(readFileSync(settingsFile, 'utf8'));
+    writeFileSync(settingsFile, JSON.stringify({ ...withFixes, autoMergeFixes: true }, null, 2));
+    const fixesYes = briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
+    if (JSON.stringify(rulesNow()) !== JSON.stringify(['Bash(npm test)', ...rulesFor(plugin)]) || !/low and normal risk bug fixes merge without them too/.test(fixesYes)) report(`on a yes for fixes alone, the rules must be written and the brief say so, got ${JSON.stringify(rulesNow())}\n${fixesYes}`);
+    writeFileSync(settingsFile, JSON.stringify(withFixes, null, 2));
+    briefWith({ env: { CLAUDE_PLUGIN_ROOT: plugin } });
     // A settings.local.json that does not read as settings is left alone, and the brief says so.
     setChoice(true);
     writeFileSync(local, '{ not json');

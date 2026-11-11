@@ -251,7 +251,8 @@
       "blocking",
       "should fix"
     ],
-    "ownerChoice": "autoMerge"
+    "ownerChoice": "autoMerge",
+    "ownerChoiceFixes": "autoMergeFixes"
   },
   "discovery": {
     "scenarios": {

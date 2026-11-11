@@ -10,7 +10,9 @@
 //              items of docs/PLAN-REVIEW.md, and every bug filed without the owner's answer on its
 //              severity and class (T4b);
 //   merges     the PRs of the loop that are ready, gate and ai-review green on their head, and
-//              wait for the owner's yes: high risk, a bug fix, or no yes to merges without them;
+//              wait for the owner's yes: high risk, or no yes to merges without them, for epics or,
+//              a choice of its own, for bug fixes (T4b-AC3), which is listed among the switches once
+//              the first fix of low or normal class is ready;
 //   bugs       the open bugs, docs/BUGS.md with the rows that wait in the git directory over it (T4b):
 //              a blocking one's fix goes first, one that is not blocking waits until no epic is ready;
 //   stashes    the work of a change the loop set aside in a stash named "pitwall: ..." before it
@@ -25,7 +27,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bugsView, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
+import { bugRiskClassAt, bugsView, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
 
 requireNode();
 const usage = 'node owner-calls.mjs [--project <dir>] [--json] [--no-github]';
@@ -68,6 +70,7 @@ if (settings.mergeProtection === 'pending' || !cfg.mergeProtection.modes.include
   groups.switches.push({ what: `merge protection is ${settings.mergeProtection ?? 'not recorded'}`, default: 'nothing merges', run: [script('protect.mjs')] });
 }
 const choice = settings[cfg.loop.ownerChoice];
+const fixChoice = settings[cfg.loop.ownerChoiceFixes];
 if (typeof choice !== 'boolean') {
   groups.switches.push({ what: 'you have not chosen whether low and normal risk epics merge without you (ADR-0010): the first command says yes, the second no', default: 'every merge waits for you', run: [script('merge-choice.mjs', '--allow'), script('merge-choice.mjs', '--deny')] });
 }
@@ -136,20 +139,24 @@ else {
       continue;
     }
     if (r.review?.state !== 'success' || g.gate?.conclusion !== 'success') continue;
-    // The class merge.mjs will read: at the PR's head, here or as fetched, and where it left main.
-    const head = c.epic ? [pr.headRefOid, `refs/remotes/origin/${pr.headRefName}`].find((x) => git('rev-parse', '--verify', '-q', `${x}^{commit}`).ok) : null;
-    const risk = head ? riskClassAt(git, c.epic, head, cfg.mergeProtection.branch, cfg) : null;
-    const waits = !c.epic
-      ? 'a bug fix'
-      : !risk
-        ? head ? `docs/EPICS.md at its head gives ${c.epic} no risk class` : 'its head is not in this clone, so its risk class is unknown: git fetch'
-        : cfg.riskClasses[risk].merge !== 'auto' ? `${risk} risk` : choice !== true ? 'you have not allowed merges without you' : null;
+    // The class merge.mjs will read: for an epic at the PR's head, here or as fetched, and where it left main;
+    // for a bug fix, the highest of the fix branch's first commit, its head and a change waiting here (T4b-AC3).
+    const head = [pr.headRefOid, `refs/remotes/origin/${pr.headRefName}`].find((x) => git('rev-parse', '--verify', '-q', `${x}^{commit}`).ok) ?? null;
+    const risk = !head ? null : c.epic ? riskClassAt(git, c.epic, head, cfg.mergeProtection.branch, cfg) : bugRiskClassAt(git, project, c.bug, head, cfg.mergeProtection.branch, cfg);
+    const allowed = (c.epic ? choice : fixChoice) === true;
+    const waits = !risk
+      ? head ? `docs/${c.epic ? 'EPICS' : 'BUGS'}.md at its head gives ${c.id} no risk class` : 'its head is not in this clone, so its risk class is unknown: git fetch'
+      : cfg.riskClasses[risk].merge !== 'auto' ? `${risk} risk` : !allowed ? `you have not allowed ${c.epic ? 'epics' : 'bug fixes'} to merge without you` : null;
     if (waits) groups.merges.push({ what: `PR #${pr.number} (${c.id}) is ready: gate and ai-review are green; it waits for your yes (${waits})`, default: 'it stays open' });
+    // The owner's choice for bug fixes is asked once, when the first fix of low or normal class is ready (owner, 2026-11-11).
+    if (c.bug && risk && cfg.riskClasses[risk].merge === 'auto' && typeof fixChoice !== 'boolean' && !groups.switches.some((s) => s.fixes)) {
+      groups.switches.push({ fixes: true, what: `you have not chosen whether low and normal risk bug fixes merge without you, a choice of its own (ADR-0010), and ${c.id} is the first one ready: the first command says yes, the second no`, default: 'every bug fix waits for you', run: [script('merge-choice.mjs', '--fixes', '--allow'), script('merge-choice.mjs', '--fixes', '--deny')] });
+    }
   }
 }
 
 const titles = { switches: 'Switches only you set', questions: 'Questions', merges: 'Ready to merge, waiting for your yes', bugs: 'Open bugs', stashes: 'Work set aside' };
-const out = { groups: Object.entries(groups).map(([n, items]) => ({ name: n, title: titles[n], items })).filter((g) => g.items.length), notes };
+const out = { groups: Object.entries(groups).map(([n, items]) => ({ name: n, title: titles[n], items: items.map(({ fixes, ...i }) => i) })).filter((g) => g.items.length), notes };
 if (args.json) {
   console.log(JSON.stringify(out, null, 2));
   process.exit(0);
