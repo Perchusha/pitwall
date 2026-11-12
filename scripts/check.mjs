@@ -2892,6 +2892,7 @@ const PAYLOADS = [
   'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
   'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
   'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
+  'qa-pre-tool-use-bash', 'qa-pre-tool-use-write',
 ];
 slowStep('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -3384,11 +3385,12 @@ slowStep('hooks (recorded payloads)', (report) => {
     expect('implementer-pre-tool-use-write', 'implementer writes code', { input: { tool_input: { file_path: join(project, 'src', 'b.js'), content: 'x' } } }, 'allow');
     expect('implementer-pre-tool-use-write', 'implementer writes a review file', { input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' } } }, 'allow');
 
-    // T4c-AC5, AC8, ADR-0013: the qa agent's limits (hooks.agents), on the code reviewer's recorded calls with the qa
-    // agent's type: a plugin agent's call carries its type and nothing else of its own (ADR-0007). It sets ai-review
-    // only on a release, gives bugs.mjs a bug in a quoted heredoc, and runs nothing else but read-only git and the gate.
-    const qaBash = (what, command, want) => expect('code-reviewer-pre-tool-use-bash', `qa agent: ${what}`, { input: { agent_type: 'pitwall:qa', tool_input: { command } } }, want);
-    const qaWrite = (what, file, want) => expect('code-reviewer-pre-tool-use-write', `qa agent: ${what}`, { input: { agent_type: 'pitwall:qa', tool_input: { file_path: file, content: '# Review\n' } } }, want);
+    // T4c-AC5, AC8, ADR-0013: the qa agent's limits (hooks.agents), on its own recorded calls (the hooks run of fdfa4c0).
+    // It sets ai-review only on a release, gives bugs.mjs a bug in a quoted heredoc, and runs nothing else but read-only
+    // git and the gate.
+    if (payloads['qa-pre-tool-use-bash'].input.agent_type !== 'pitwall:qa') report('the qa agent\'s calls do not carry agent_type pitwall:qa');
+    const qaBash = (what, command, want) => expect('qa-pre-tool-use-bash', `qa agent: ${what}`, { input: { tool_input: { command } } }, want);
+    const qaWrite = (what, file, want) => expect('qa-pre-tool-use-write', `qa agent: ${what}`, { input: { tool_input: { file_path: file, content: '# Review\n' } } }, want);
     const releaseStatus = `node "${P}/scripts/review-status.mjs" --review release --state success --project "${fwd(project)}"`;
     qaBash('review-status.mjs on a release', releaseStatus, 'allow');
     qaBash('review-status.mjs with failure', `node "${P}/scripts/review-status.mjs" --review release --state failure --description "qa: 2 failing" --project "${fwd(project)}"`, 'allow');
