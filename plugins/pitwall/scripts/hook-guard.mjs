@@ -650,6 +650,10 @@ export function guard(call, ctx) {
       if (cd && norm(cd[1] ?? cd[2] ?? cd[3], cwd, home) === root) text = text.slice(cd[0].length);
       // Agents add "2>&1" to see errors in the output; it writes nothing (L-9).
       text = text.replace(/\s+2>&1\s*$/, '');
+      // A quoted heredoc as the input of the command, the way /pitwall:bug gives bugs.mjs a bug: bash expands
+      // nothing in it, so it is data for the script, which must then be one of the agent's own (T4c-AC5).
+      const heredoc = tool === 'Bash' ? /^([^\n]*?)\s*<<-?\s*'([A-Za-z_]\w*)'[ \t]*\r?\n[\s\S]*?\r?\n\2[ \t]*$/.exec(text) : null;
+      if (heredoc) text = heredoc[1];
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
       const one = cmds.length === 1 ? cmds[0] : null;
@@ -672,7 +676,7 @@ export function guard(call, ctx) {
       // The project's gate in any of its modes, as CI runs it or straight from its path.
       const gateArgs = program(argv[0]) === 'bash' ? argv.slice(1) : argv;
       const runsGate = Boolean(policy.gate) && norm(gateArgs[0] ?? '', at, home) === `${root}/scripts/gate` && gateArgs.length <= 2 && (gateArgs.length === 1 || ['--fast', '--changed', '--full'].includes(gateArgs[1]));
-      if (!one || !(runsScript || readsGit || runsGate)) {
+      if (!one || !(runsScript || (!heredoc && (readsGit || runsGate)))) {
         const also = [...(policy.git ? [`read-only git (${policy.git.join(', ')})`] : []), ...(policy.gate ? ['scripts/gate'] : [])];
         return refuse('agent', `${agentType} runs only ${policy.run.join(' and ')} from the pitwall plugin, as node "<path>" with its arguments${also.length ? `, and ${also.join(' and ')}` : ''}.`);
       }
@@ -882,9 +886,12 @@ export function guard(call, ctx) {
       return refuse('owner', `${ownerOnly} records a choice of the owner (pitwall ADR-0010): the owner runs it in a terminal, not an agent. Hand them the command.`);
     }
 
-    // AC4: review-status.mjs only from the two reviewers.
+    // AC4: review-status.mjs only from the reviewers.
     const runsReviewStatus = ((INTERPRETERS.has(p) || /review-status\.mjs$/i.test(argv[0] ?? '')) && argv.some((w) => /review-status\.mjs$/i.test(w))) || (code !== null && code.includes('review-status'));
     if (runsReviewStatus && !reviewer) return refuse('review', `only ${h.reviewers.join(' and ')} run review-status.mjs (pitwall ADR-0007), and this call comes from ${agentId ? agentType || 'a sub-agent' : 'the main conversation'}.`);
+    // T4c-AC8: each reviewer sets the status of its own kind of review only (hooks.agents.<agent>.review): the plan
+    // reviewer the plan's, the code reviewer a change's, the qa agent a release's (ADR-0007, ADR-0013).
+    if (runsReviewStatus && policy?.review && argv[argv.indexOf('--review') + 1] !== policy.review) return refuse('review', `${agentType} sets ${ctx.cfg.review.statusContext} only through review-status.mjs --review ${policy.review} (pitwall ADR-0007, ADR-0013).`);
 
     // (e), AC4 and AC7 over the GitHub API: protection, statuses and merges.
     const api = apiCall(p, argv);

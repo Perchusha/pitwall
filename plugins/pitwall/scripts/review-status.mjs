@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 // Sets the ai-review commit status: the reviewer's verdict (T2-AC5, ADR-0002, ADR-0007).
 //
-//   node review-status.mjs --review plan|code --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]
+//   node review-status.mjs --review plan|code|release --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]
 //
-// Only a reviewer runs it: the plan reviewer (--review plan) and the code reviewer
-// (--review code, T3b-AC4); pitwall's hook lets only those two agents run it (ADR-0007,
-// T3a-AC4). It commits nothing but the review file, and sets the status on the head of
+// Only a reviewer runs it: the plan reviewer (--review plan), the code reviewer
+// (--review code, T3b-AC4) and the qa agent, for a release only (--review release, T4c-AC5,
+// ADR-0013); pitwall's hook lets only those three agents run it, the qa agent only with
+// --review release (ADR-0007, T3a-AC4). It commits nothing but the review file, and sets the status on the head of
 // the open PR from the review's branch, after it checks that it may (L-5):
 //   - the tree is clean but for the review file, on the review's branch: the planning
 //     branch for the plan; for code, the branch of the change (epic/E<n>-<slug> or
-//     fix/BUG-<n>), whose review file is docs/reviews/<change>.md (ADR-0011);
+//     fix/BUG-<n>), whose review file is docs/reviews/<change>.md (ADR-0011); for a release,
+//     release/v<x.y.z>, whose review file is docs/reviews/release-v<x.y.z>.md;
 //   - success only when the review passes its check (for the plan:
 //     docs-check --stage plan-review, and spike when there are spikes; for code:
-//     docs-check --stage code-review), and for code only when nothing but the review
+//     docs-check --stage code-review; for a release: docs-check --stage release and
+//     release.mjs --check), and for code and a release only when nothing but the review
 //     file changed after the commit the review names as reviewed (owner, ADR-0011);
 //   - gh is installed and signed in, the account may write, the branch is pushed
 //     (it pushes it), and the PR is open with this commit as its head.
@@ -31,7 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, printHandoff, requireNode, sleep } from './lib.mjs';
 
 requireNode();
-const usage = 'node review-status.mjs --review plan|code --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]';
+const usage = 'node review-status.mjs --review plan|code|release --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]';
 const args = parseArgs(process.argv.slice(2), { review: 'value', state: 'value', description: 'value', project: 'value', 'dry-run': 'switch' }, usage);
 const cfg = config();
 const project = resolve(args.project ?? '.');
@@ -47,12 +50,26 @@ const REVIEWS = {
   // The branch the project is on names the change and its review file (ADR-0011).
   code: () => {
     const c = changeOf(git('branch', '--show-current').out, cfg);
+    // A release is the qa agent's to review (ADR-0013).
+    if (c?.kind === 'release') refuse(`${c.branch} is a release: the qa agent reviews it, with --review release (pitwall ADR-0013)`);
     return {
       branch: c?.branch ?? Object.values(cfg.loop.branches).map((b) => `${b}<change>`).join(' or '),
       change: c,
       file: c?.review,
       stages: ['code-review'],
       subject: (s) => `docs: code review of ${c?.id}, ${words[s]}`,
+    };
+  },
+  // A release, reviewed by the qa agent (T4c-AC5, ADR-0013).
+  release: () => {
+    const c = changeOf(git('branch', '--show-current').out, cfg);
+    const ok = c?.kind === 'release' && c.id;
+    return {
+      branch: ok ? c.branch : `${cfg.loop.branches.release}${cfg.release.tagPrefix}<x.y.z>`,
+      change: ok ? c : { id: null },
+      file: ok ? c.review : null,
+      stages: ['release'],
+      subject: (s) => `docs: qa of ${c?.id}, ${words[s]}`,
     };
   },
 };
@@ -96,6 +113,7 @@ function handoff(reason, steps) {
 if (!git('rev-parse', '--show-toplevel').ok) refuse(`${project} is not inside a git repository`);
 const branch = git('branch', '--show-current').out;
 if (branch !== review.branch) refuse(`on branch "${branch}": the ${args.review} review sets its status on ${review.branch}`);
+if (args.review === 'release' && !review.change.id) refuse(`the branch ${branch} is no release: ${cfg.loop.branches.release}${cfg.release.tagPrefix}<x.y.z>`);
 if (args.review === 'code' && !review.change.id) refuse(`the branch ${branch} names no change: epic/E<n>-<slug>, named as the epic's file in docs/epics/, or fix/BUG-<n>`);
 // Porcelain lines are "XY path", and the first may start with a space, so the output is not trimmed.
 const changed = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all').raw.split('\n').filter(Boolean).map((l) => l.slice(3));
@@ -118,7 +136,13 @@ if (state === 'success') {
   log(`docs-check --stage ${stages} passes`);
   // The check reads this too, but the rule is this script's own (owner, ADR-0011): success belongs to the
   // reviewed code, so after the commit the review names, nothing but the review file may have changed.
-  if (args.review === 'code') {
+  // A release passes its own check too: the changelog, the records and no blocking bug open (ADR-0013).
+  if (args.review === 'release') {
+    const rel = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'release.mjs'), '--check', '--project', project], { encoding: 'utf8' });
+    if (rel.status !== 0) refuse('the release does not pass release.mjs --check: the release is red, so set failure', `${rel.stdout}${rel.stderr}`.trim());
+    log('release.mjs --check passes');
+  }
+  if (args.review !== 'plan') {
     // Read as the docs check reads the field: any list marker, emphasis or a code span around the sha.
     const reviewed = /^[-*+] Reviewed: *[*_`]*([0-9a-f]{40})[*_`]*[ \t]*$/m.exec(readFileSync(join(project, review.file), 'utf8'))?.[1];
     const after = reviewed ? git('-c', 'core.quotePath=false', 'diff', '--name-only', reviewed, 'HEAD') : null;

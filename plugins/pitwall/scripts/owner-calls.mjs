@@ -5,13 +5,14 @@
 //
 // Read-only. It gathers, grouped, each with what happens if the owner says nothing:
 //   switches   the switches only the owner sets, each with the command to run in a terminal:
-//              merge protection still pending, the choice of ADR-0010 not made;
+//              merge protection still pending, the choice of ADR-0010 not made, and a release
+//              merged into main and not tagged, whose tag the owner makes (ADR-0013);
 //   questions  the open questions of every epic not merged yet, while the plan is made the open
 //              items of docs/PLAN-REVIEW.md, and every bug filed without the owner's answer on its
 //              severity (T4b);
 //   merges     the PRs of the loop that are ready, gate and ai-review green on their head, and
-//              wait for the owner's yes: high risk, a bug fix at any class, or no yes to merges
-//              without them;
+//              wait for the owner's yes: high risk, a bug fix at any class, a release, or no yes
+//              to merges without them;
 //   bugs       the open bugs, docs/BUGS.md with the rows that wait in the git directory over it (T4b):
 //              a blocking one's fix goes right after the change in flight, one that is not blocking
 //              waits until no epic is ready.
@@ -25,7 +26,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bugsView, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
+import { bugsView, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, releaseHistory, requireNode, riskClassAt } from './lib.mjs';
 
 requireNode();
 const usage = 'node owner-calls.mjs [--project <dir>] [--json] [--no-github]';
@@ -70,6 +71,14 @@ if (settings.mergeProtection === 'pending' || !cfg.mergeProtection.modes.include
 const choice = settings[cfg.loop.ownerChoice];
 if (typeof choice !== 'boolean') {
   groups.switches.push({ what: 'you have not chosen whether low and normal risk epics merge without you (ADR-0010): the first command says yes, the second no', default: 'every merge waits for you', run: [script('merge-choice.mjs', '--allow'), script('merge-choice.mjs', '--deny')] });
+}
+
+// A release merged and not tagged: the owner makes its tag, and no release starts before it (ADR-0013).
+{
+  const g = gitRunner(project);
+  const ref = [`refs/remotes/origin/${cfg.mergeProtection.branch}`, `refs/heads/${cfg.mergeProtection.branch}`].find((r) => g('rev-parse', '--verify', '-q', r).ok);
+  const untagged = ref ? releaseHistory(g, ref, cfg).untagged : null;
+  if (untagged) groups.switches.push({ what: `${cfg.release.tagPrefix}${untagged.version} is merged as ${untagged.sha.slice(0, 7)} and not tagged: the command prints the ones that make and push its tag and publish its build`, default: 'no new release starts', run: [script('release.mjs', '--tag')] });
 }
 
 // The open questions of every epic not merged yet.
@@ -133,7 +142,9 @@ else {
     const head = c.epic ? [pr.headRefOid, `refs/remotes/origin/${pr.headRefName}`].find((x) => git('rev-parse', '--verify', '-q', `${x}^{commit}`).ok) : null;
     const risk = head ? riskClassAt(git, c.epic, head, cfg.mergeProtection.branch, cfg) : null;
     // Every bug fix waits for the owner's yes, at any class (ADR-0010; owner, 2026-11-11).
-    const waits = !c.epic
+    const waits = c.release
+      ? 'a release'
+      : !c.epic
       ? 'a bug fix'
       : !risk
         ? head ? `docs/EPICS.md at its head gives ${c.epic} no risk class` : 'its head is not in this clone, so its risk class is unknown: git fetch'

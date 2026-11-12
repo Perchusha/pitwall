@@ -33,8 +33,8 @@ is_docs() {
     docs/*.md|docs/*.png|docs/*.jpg|docs/*.jpeg|docs/*.svg|docs/*.txt) return 0 ;;
     .github/workflows/*.yml|.github/workflows/*.yaml|.github/*.md) return 0 ;;
     .claude/*.json|.claude/*.md) return 0 ;;
-    CLAUDE.md|AGENTS.md|README.md|LICENSE|.gitignore|.gitattributes|.editorconfig) return 0 ;;
-    scripts/gate|.githooks/*|.vscode/extensions.json) return 0 ;;
+    CLAUDE.md|AGENTS.md|README.md|CHANGELOG.md|LICENSE|.gitignore|.gitattributes|.editorconfig) return 0 ;;
+    scripts/gate|scripts/build|.githooks/*|.vscode/extensions.json) return 0 ;;
   esac
   return 1
 }

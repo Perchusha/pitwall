@@ -106,7 +106,8 @@
     "gateOutputChars": 3000,
     "reviewers": [
       "pitwall:plan-reviewer",
-      "pitwall:code-reviewer"
+      "pitwall:code-reviewer",
+      "pitwall:qa"
     ],
     "implementers": [
       "pitwall:implementer",
@@ -120,7 +121,8 @@
         "run": [
           "docs-check.mjs",
           "review-status.mjs"
-        ]
+        ],
+        "review": "plan"
       },
       "pitwall:code-reviewer": {
         "write": [
@@ -131,7 +133,22 @@
           "review-status.mjs"
         ],
         "git": ["diff", "log", "show", "status", "rev-parse", "ls-files", "blame", "merge-base", "branch"],
-        "gate": true
+        "gate": true,
+        "review": "code"
+      },
+      "pitwall:qa": {
+        "write": [
+          "docs/reviews/release-*.md"
+        ],
+        "run": [
+          "release.mjs",
+          "bugs.mjs",
+          "docs-check.mjs",
+          "review-status.mjs"
+        ],
+        "git": ["diff", "log", "show", "status", "rev-parse", "ls-files", "merge-base", "branch"],
+        "gate": true,
+        "review": "release"
       }
     },
     "ownerOnly": [
@@ -247,7 +264,8 @@
   "loop": {
     "branches": {
       "epic": "epic/",
-      "fix": "fix/"
+      "fix": "fix/",
+      "release": "release/"
     },
     "reviews": "docs/reviews",
     "severities": [
@@ -255,6 +273,19 @@
       "should fix"
     ],
     "ownerChoice": "autoMerge"
+  },
+  "release": {
+    "tagPrefix": "v",
+    "changelog": "CHANGELOG.md",
+    "build": "scripts/build",
+    "artifactLine": "ARTIFACT:",
+    "firstVersions": [
+      "0.1.0",
+      "1.0.0"
+    ],
+    "status": "released",
+    "pending": "pitwall/release",
+    "subject": "release"
   },
   "discovery": {
     "scenarios": {

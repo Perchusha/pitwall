@@ -12,10 +12,11 @@ One line per document: what it holds and when to read it. Every entity has an ID
 | `spikes/` | Prototypes of risky assumptions with measured results, one file each from `template.md` | Revisiting a risky choice |
 | `EPICS.md` | The plan: epics in order with status | Picking the next work |
 | `epics/` | One epic per file with acceptance criteria and risk class | Implementing, reviewing or testing an epic |
-| `reviews/` | One code review per epic or bug fix: what covers each criterion, the findings and what closed them | Reviewing a change, fixing a finding |
+| `reviews/` | One code review per epic or bug fix: what covers each criterion, the findings and what closed them; one QA review per release | Reviewing a change, fixing a finding |
 | `PLAN-REVIEW.md` | The plan reviewer's pre-mortem, checklists, sizing and findings, and how each was closed | Changing the plan |
 | `RISKS.md` | R-n: accepted risks and their fallbacks | Changing the plan or the stack |
 | `BUGS.md` | BUG-n: title, where found, steps, expected, actual, severity, risk class, status, fix PR | Selecting work, fixing a bug |
 | `LESSONS.md` | L-n: rules learned from mistakes and how each is checked | Before writing or reviewing code |
 | `JOURNAL.md` | One entry per epic: what shipped, numbers, cost, surprises | Reviewing progress |
+| `../CHANGELOG.md` | One section per released version, written by the release from the merge commits on main | Releasing, or looking up what a version holds |
 | `archive/` | Closed entries moved out of the state files | Looking up history |

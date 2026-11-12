@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // Merges a PR of a pitwall project once it may: the plan after the owner's yes (T2-AC5,
-// ADR-0008), and an epic or a bug fix by its risk class (T3b-AC5, ADR-0010).
+// ADR-0008), an epic or a bug fix by its risk class (T3b-AC5, ADR-0010), and a release after the
+// owner's yes (T4c, ADR-0013).
 //
 //   node merge.mjs --plan --owner-approved [--project <dir>] [--wait <seconds>] [--dry-run]
 //   node merge.mjs --change [--owner-approved] [--project <dir>] [--wait <seconds>] [--dry-run]
 //
 // --owner-approved is the skill's word that the owner said yes to this merge in the
 // conversation; the script cannot hear the owner. The plan merges only with it. A change,
-// the PR from the branch the project is on (epic/E<n>-<slug> or fix/BUG-<n>), merges with
+// the PR from the branch the project is on (epic/E<n>-<slug>, fix/BUG-<n> or release/v<x.y.z>), merges with
 // it at any risk class; without it only an epic whose risk class merges by itself
 // (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that
 // (autoMerge in .claude/pitwall.json, ADR-0010). Anything else waits for the owner (exit 4):
-// high risk, a bug fix at any class (merges without the owner cover epics only: ADR-0010, T4b),
+// high risk, a bug fix at any class (merges without the owner cover epics only: ADR-0010, T4b), a release,
 // an owner who said no or was not asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
 // --owner-approved never runs under it (ADR-0010).
 //
@@ -26,6 +27,8 @@
 //   the plan:   "Plan approved by the owner, <date>, at <sha>"
 //   an epic:    "feat(E<n>): <title> (#<pr>)", the risk class and who approved it in the body
 //   a bug fix:  "fix(BUG-<n>): <title> (#<pr>)", the same body
+//   a release:  "release: v<x.y.z> (#<pr>)", which release.mjs reads as the end of a release; it is
+//               refused while a blocking bug is open, an unconfirmed one included (ADR-0013)
 // A failed precondition prints a HANDOFF block with the commands for the owner, each on its
 // own line, the same in bash and PowerShell (L-6). --dry-run reads, and merges nothing.
 //
@@ -37,7 +40,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, riskClassAt, sleep } from './lib.mjs';
+import { changeOf, config, ghRunner, gitRunner, openBlockingBugs, parseArgs, parseJson, printHandoff, readGate, readReview, requireNode, riskClassAt, sleep } from './lib.mjs';
 
 requireNode();
 const usage = 'node merge.mjs --plan --owner-approved | --change [--owner-approved] [--project <dir>] [--wait <seconds>] [--dry-run]';
@@ -89,7 +92,7 @@ let change = null;
 if (args.change) {
   branch = git('branch', '--show-current').out;
   change = changeOf(branch, cfg);
-  if (!change?.id) refuse(`on branch "${branch || 'none'}": --change merges the PR of the change on this branch, epic/E<n>-<slug> or fix/BUG-<n>`);
+  if (!change?.id) refuse(`on branch "${branch || 'none'}": --change merges the PR of the change on this branch, epic/E<n>-<slug>, fix/BUG-<n> or ${cfg.loop.branches.release}${cfg.release.tagPrefix}<x.y.z>`);
 }
 const local = git('rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`);
 if (!local.ok) refuse(`there is no local branch ${branch} in ${project}`);
@@ -105,6 +108,13 @@ if (change?.epic) {
   if (!riskClass) refuse(`docs/EPICS.md at ${sha.slice(0, 7)} gives ${change.epic} no risk class of ${Object.keys(cfg.riskClasses).filter((k) => typeof cfg.riskClasses[k] === 'object').join(', ')}`);
   const file = git('show', `${sha}:docs/epics/${change.id}.md`);
   title = (file.ok ? new RegExp(`^# ${change.epic} - (.+)$`, 'm').exec(file.out)?.[1] : '')?.trim() ?? '';
+}
+// A release (ADR-0013): never while a blocking bug is open, one its qa agent has just filed included, and
+// always after the owner's yes.
+if (change?.release) {
+  const open = openBlockingBugs(project, cfg, sha);
+  if (open.length) refuse(`a blocking bug is open, so the release does not merge (pitwall ADR-0013): ${open.map((b) => `${b.id} (${b.title})${b.unconfirmed ? `, ${cfg.bugs.unconfirmed.mark}` : ''}`).join(', ')}. Its fix goes first; the release is closed and runs again after it`);
+  if (!approved) owners(`${change.release} is a release: it merges only after the owner's yes, which covers the tag they make after it (pitwall ADR-0013)`);
 }
 if (change && !approved) {
   let settings = null;
@@ -203,6 +213,10 @@ let body;
 if (args.plan) {
   subject = `Merge the plan from ${branch} (#${pr.number})`;
   body = `Plan approved by the owner, ${today()}, at ${sha}`;
+} else if (change.release) {
+  // The subject release.mjs reads as the end of a release (ADR-0013).
+  subject = `${cfg.release.subject}: ${change.release} (#${pr.number})`;
+  body = `A release, approved by the owner as every release is (pitwall ADR-0013). Approved by the owner, ${today()}, at ${sha}.`;
 } else {
   // A fix takes its title from the PR, without a leading BUG-n or conventional prefix.
   const prTitle = plainWords(pr.title).replace(/^(?:fix|feat)\([^)]*\):\s*/i, '').replace(new RegExp(`^${change.bug ?? change.epic}\\b\\s*[-:]?\\s*`), '');

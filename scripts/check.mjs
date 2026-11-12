@@ -219,6 +219,8 @@ step('template', (report) => {
     '.github/workflows/ci.yml',
     '.github/pull_request_template.md',
     'scripts/gate',
+    'scripts/build',
+    'CHANGELOG.md',
     '.githooks/pre-commit',
     'docs/INDEX.md',
     'docs/IDEA.md',
@@ -239,9 +241,9 @@ step('template', (report) => {
   ];
   for (const f of required) if (!existsSync(join(t, f))) report(`template/${f} is missing`);
 
-  // Executable in the git index when there is one (what a clone gets), else on disk: the template's gate, its git
-  // hook and pitwall's own (T4d-AC4), since git on macOS and Linux skips a hook that is not executable.
-  for (const f of [join(t, 'scripts', 'gate'), join(t, '.githooks', 'pre-commit'), join(root, '.githooks', 'pre-commit')]) {
+  // Executable in the git index when there is one (what a clone gets), else on disk: the template's gate, its build
+  // (T4c-AC4), its git hook and pitwall's own (T4d-AC4), since git on macOS and Linux skips a hook that is not executable.
+  for (const f of [join(t, 'scripts', 'gate'), join(t, 'scripts', 'build'), join(t, '.githooks', 'pre-commit'), join(root, '.githooks', 'pre-commit')]) {
     if (!existsSync(f)) {
       report(`${rel(f)} is missing`);
       continue;
@@ -297,6 +299,9 @@ step('template gate behaviour', (report) => {
     mkdirSync(join(project, 'src'));
     writeFileSync(join(project, 'src', 'main.ts'), 'export {};\n');
     expect('untracked code', run('bash', ['scripts/gate', '--fast'], project), 1);
+    // T4c-AC4: the build stub fails until E0 writes the real build, and refuses a version that is no x.y.z.
+    expect('the build stub', run('bash', ['scripts/build', '0.1.0'], project), 1);
+    expect('the build stub without a version', run('bash', ['scripts/build'], project), 2);
 
     const nogit = join(dir, 'nogit');
     mkdirSync(nogit);
@@ -372,7 +377,7 @@ step('template pre-commit hook', (report) => {
     const o = join(dir, 'o');
     if (layOut(o).status !== 0) return report('layout failed');
     rmSync(join(o, '.githooks'), { recursive: true, force: true });
-    writeFileSync(join(o, 'scripts', 'gate'), readFileSync(join(o, 'scripts', 'gate'), 'utf8').replace('scripts/gate|.githooks/*|', 'scripts/gate|'));
+    writeFileSync(join(o, 'scripts', 'gate'), readFileSync(join(o, 'scripts', 'gate'), 'utf8').replace('|.githooks/*|', '|'));
     git(o, 'init', '-q', '-b', 'main');
     git(o, 'add', '-A');
     commits('the old skeleton', o, true, ['-m', 'chore: kickoff']);
@@ -407,7 +412,7 @@ step('template pre-commit hook', (report) => {
     const q = join(dir, 'q');
     if (layOut(q).status !== 0) return report('layout failed');
     rmSync(join(q, '.githooks'), { recursive: true, force: true });
-    writeFileSync(join(q, 'scripts', 'gate'), readFileSync(join(q, 'scripts', 'gate'), 'utf8').replace('scripts/gate|.githooks/*|', 'scripts/gate|'));
+    writeFileSync(join(q, 'scripts', 'gate'), readFileSync(join(q, 'scripts', 'gate'), 'utf8').replace('|.githooks/*|', '|'));
     git(q, 'init', '-q', '-b', 'main');
     git(q, 'add', '-A');
     commits('the old skeleton', q, true, ['-m', 'chore: kickoff']);
@@ -2145,6 +2150,315 @@ slowStep('bugs and lessons', (report) => {
   });
 });
 
+// 6k2. T4c, ADR-0013: releases. release.mjs on scratch repositories (a first release, a minor and a patch, the owner's
+// version, the commits it leaves out, a release merged and not tagged, a tag that exists, a blocking bug open, a build
+// that fails, dirties the tree or names no artifact), merge.mjs and review-status.mjs on a release branch against the
+// fake gh, docs-check --stage release, and owner-calls with a release not tagged.
+function makeReleaseRepo(dir) {
+  const { project } = makePlanRepo(dir, { spike: false });
+  const put = (relPath, text) => {
+    mkdirSync(dirname(join(project, relPath)), { recursive: true });
+    writeFileSync(join(project, relPath), text);
+  };
+  const edit = (relPath, fn) => put(relPath, fn(readFileSync(join(project, relPath), 'utf8')));
+  const status = (id, s) => edit('docs/EPICS.md', (t) => t.replace(new RegExp(`(\\| \\[${id}\\][^\\n]*\\| )[^|\\n]+( \\|)$`, 'm'), `$1${s}$2`));
+  const review = (change, criteria) => put(`docs/reviews/${change}.md`, reviewText({ change, reviewed: 'a'.repeat(40), round: 1, criteria }));
+  gitIn(project, 'switch', '-q', 'main');
+  gitIn(project, 'merge', '-q', '--no-ff', 'plan/initial', '-m', 'Merge the plan from plan/initial (#1)', '-m', 'Plan approved by the owner, 2026-11-09, at x');
+  // A change the loop merged: its branch, its commits, and a merge commit as merge.mjs writes it.
+  const change = (branch, subject, work) => {
+    gitIn(project, 'switch', '-qc', branch);
+    work();
+    gitIn(project, 'add', '-A');
+    gitIn(project, 'commit', '-qm', `work on ${branch}`);
+    gitIn(project, 'switch', '-q', 'main');
+    gitIn(project, 'merge', '-q', '--no-ff', branch, '-m', subject, '-m', 'Approved by the owner, 2026-11-10.');
+  };
+  change('epic/E0-skeleton', 'feat(E0): Walking skeleton (#2)', () => {
+    status('E0', 'in review');
+    put('scripts/build', '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p out\necho "app $1" > out/app.txt\necho "ARTIFACT: out/app.txt"\n');
+    put('.gitignore', `${readFileSync(join(project, '.gitignore'), 'utf8')}out/\n`);
+    review('E0-skeleton', [['E0-AC1', '`scripts/gate`'], ['E0-AC2', '`.github/workflows/ci.yml`'], ['E0-AC3', 'QA-E0-1'], ['E0-AC4', '`scripts/build`'], ['E0-AC5', 'QA-E0-2']]);
+  });
+  change('epic/E1-reminder', 'feat(E1): The reminder (#3)', () => {
+    status('E0', 'merged (#2)');
+    status('E1', 'in review');
+    put('src/reminder.js', 'export const minutes = 45;\n');
+    put('src/reminder.test.js', 'import { minutes } from "./reminder.js";\n');
+    review('E1-reminder', [['E1-AC1', '`src/reminder.test.js` "shows after 45 minutes"'], ['E1-AC2', 'QA-E1-1, snooze']]);
+  });
+  change('fix/BUG-1', 'fix(BUG-1): Snooze is ignored (#4)', () => {
+    status('E1', 'merged (#3)');
+    edit('docs/BUGS.md', (t) => `${t.trimEnd()}\n| BUG-1 | Snooze is ignored | QA | Snooze, then wait | Ten minutes | At once | blocking | normal | in review | - |\n`);
+    put('src/reminder.js', 'export const minutes = 45;\nexport const snooze = 10;\n');
+    review('BUG-1', [['BUG-1', '`src/reminder.test.js` "snoozes for 10 minutes"']]);
+  });
+  // A commit on main that is no merge of the loop: named to the owner, never in the changelog.
+  put('README.md', 'A tray app.\n');
+  gitIn(project, 'add', '-A');
+  gitIn(project, 'commit', '-qm', 'chore: tidy');
+  return project;
+}
+
+slowStep('releases (fake gh)', (report) => {
+  scratch('pitwall-release-', (dir) => {
+    const base = makeReleaseRepo(dir);
+    let n = 0;
+    const fresh = (prepare) => {
+      const p = join(dir, `r${(n += 1)}`);
+      cpSync(base, p, { recursive: true });
+      prepare?.(p);
+      return p;
+    };
+    const env = { ...process.env, ...identity, GIT_CEILING_DIRECTORIES: dir };
+    const rel = (p, args) => runScript('release.mjs', [...args, '--project', p], { env, cwd: p });
+    const bugs = (p, input) => runScript('bugs.mjs', ['file', '--project', p], { input, env });
+    const expect = (label, r, code, says = [], lacks = []) => {
+      const out = `${r.stdout}${r.stderr}`;
+      if (r.status !== code) report(`release.mjs, ${label}: exit ${r.status}, expected ${code}\n${out}`);
+      for (const w of says) if (!out.includes(w)) report(`release.mjs, ${label}: output lacks "${w}"\n${out}`);
+      for (const w of lacks) if (out.includes(w)) report(`release.mjs, ${label}: output holds "${w}"\n${out}`);
+      return out;
+    };
+    const section = ['## v0.1.0 - DATE', '', '### Added', '', '- E0: Walking skeleton (#2)', '- E1: The reminder (#3)', '', '### Fixed', '', '- BUG-1: Snooze is ignored (#4)'].join('\n');
+    const bugInput = (fields = {}) => Object.entries({ title: 'The icon is gone', 'found in': 'QA', steps: 'Start it', expected: 'An icon', actual: 'None', severity: 'blocking', risk: 'normal', confirmed: 'no', ...fields }).map(([k, v]) => `${k}: ${v}`).join('\n') + '\n';
+    // A release branch with its one commit, as /pitwall:release step 3 leaves it.
+    const branched = (p, version = '0.1.0') => {
+      gitIn(p, 'switch', '-qc', `release/v${version}`);
+      const w = rel(p, ['--write']);
+      gitIn(p, 'add', 'CHANGELOG.md');
+      gitIn(p, 'commit', '-qm', `docs: release v${version}`, '--', 'CHANGELOG.md', 'docs/EPICS.md', 'docs/BUGS.md');
+      return w;
+    };
+    // The release merged into main as merge.mjs merges it.
+    const mergeRelease = (p, version = '0.1.0', pr = 5) => {
+      gitIn(p, 'switch', '-q', 'main');
+      gitIn(p, 'merge', '-q', '--no-ff', `release/v${version}`, '-m', `release: v${version} (#${pr})`, '-m', 'Approved by the owner.');
+    };
+
+    // --plan: the first release waits for the owner's version; the merges since the start, the commit left out.
+    expect('the first release', rel(base, ['--plan']), 4, ['the first release of this project: 3 changes', 'epic E0: Walking skeleton (#2)', 'fix BUG-1: Snooze is ignored (#4)', '0.1.0 or 1.0.0', 'RESULT: waits for the owner']);
+    expect('the first release, the owner\'s version', rel(base, ['--plan', '--version', '0.1.0']), 0, ['RESULT: v0.1.0', 'chore: tidy: a commit on main that is no merge of the loop'], ['Merge the plan from', 'epic E2']);
+    const json = JSON.parse(rel(base, ['--plan', '--version', '1.0.0', '--json']).stdout || '{}');
+    if (json.version !== '1.0.0' || (json.items ?? []).map((i) => i.id).join(',') !== 'E0,E1,BUG-1' || !json.first) report(`release.mjs --plan --json: ${JSON.stringify(json)}`);
+    expect('a bad version', rel(base, ['--plan', '--version', '1.0']), 2, ['--version takes x.y.z']);
+    // A blocking bug open, one waiting in the git directory and unconfirmed: no release.
+    const blocked = fresh((p) => bugs(p, bugInput()));
+    expect('a blocking bug waits', rel(blocked, ['--plan', '--version', '0.1.0']), 1, ['a blocking bug is open', 'BUG-2 (The icon is gone): blocking, unconfirmed']);
+    // BUG-1 is blocking and in review, its fix merged: not open. A bug that is not blocking stops nothing.
+    const notBlocking = fresh((p) => bugs(p, bugInput({ severity: 'not blocking', confirmed: 'yes' })));
+    expect('a bug that is not blocking', rel(notBlocking, ['--plan', '--version', '0.1.0']), 0, ['RESULT: v0.1.0']);
+
+    // --write and --check on the release branch.
+    const good = fresh();
+    expect('write', branched(good), 0, ['CHANGELOG.md: the section v0.1.0', 'docs/EPICS.md: E0, E1 released (v0.1.0)', 'docs/BUGS.md: BUG-1 fixed (#4)', 'RESULT: written']);
+    const log = readFileSync(join(good, 'CHANGELOG.md'), 'utf8');
+    const date = /## v0\.1\.0 - (\d{4}-\d{2}-\d{2})/.exec(log)?.[1];
+    if (!log.startsWith('# Changelog\n') || !log.includes(section.replace('DATE', date ?? '?'))) report(`release.mjs --write: CHANGELOG.md is\n${log}`);
+    const epicsAfter = readFileSync(join(good, 'docs', 'EPICS.md'), 'utf8');
+    if (!/\| \[E0\][^\n]*\| released \(v0\.1\.0\) \|$/m.test(epicsAfter) || !/\| \[E1\][^\n]*\| released \(v0\.1\.0\) \|$/m.test(epicsAfter) || !/\| \[E2\][^\n]*\| planned \|$/m.test(epicsAfter)) report(`release.mjs --write: docs/EPICS.md is\n${epicsAfter}`);
+    if (!/^\| BUG-1 \|[^\n]*\| fixed \| #4 \|$/m.test(readFileSync(join(good, 'docs', 'BUGS.md'), 'utf8'))) report('release.mjs --write: BUG-1 is not fixed with #4 in docs/BUGS.md');
+    expect('check', rel(good, ['--check']), 0, ['ok: it changes only CHANGELOG.md and docs/', 'ok: CHANGELOG.md holds the section v0.1.0, 3 lines', 'RESULT: pass']);
+    expect('write on main', rel(base, ['--write']), 1, ['runs on the branch of a release']);
+    const handEdited = fresh((p) => {
+      branched(p);
+      writeFileSync(join(p, 'CHANGELOG.md'), readFileSync(join(p, 'CHANGELOG.md'), 'utf8').replace('- E1: The reminder (#3)\n', ''));
+    });
+    expect('check: a changelog edited by hand', rel(handEdited, ['--check']), 1, ['is not what the merges make', 'RESULT: fail']);
+    const codeToo = fresh((p) => {
+      branched(p);
+      writeFileSync(join(p, 'src', 'reminder.js'), 'export const minutes = 40;\n');
+      gitIn(p, 'commit', '-qam', 'fix: a change on the release');
+    });
+    expect('check: code on the release branch', rel(codeToo, ['--check']), 1, ['changes more than CHANGELOG.md and docs/: src/reminder.js']);
+    // The next change merged on main, as the loop would merge it.
+    const next = (p, branch, subject) => {
+      gitIn(p, 'switch', '-q', 'main');
+      gitIn(p, 'switch', '-qc', branch);
+      writeFileSync(join(p, 'src', `${branch.replace(/\W/g, '-')}.js`), 'export {};\n');
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'work');
+      gitIn(p, 'switch', '-q', 'main');
+      gitIn(p, 'merge', '-q', '--no-ff', branch, '-m', subject);
+    };
+    const moved = fresh((p) => {
+      branched(p);
+      next(p, 'fix/BUG-9', 'fix(BUG-9): Other (#6)');
+      gitIn(p, 'switch', '-q', 'release/v0.1.0');
+    });
+    expect('check: main moved', rel(moved, ['--check']), 1, ['main moved since release/v0.1.0 left it']);
+    const late = fresh((p) => {
+      branched(p);
+      bugs(p, bugInput());
+    });
+    expect('check: a blocking bug filed by QA', rel(late, ['--check']), 1, ['a blocking bug is open: BUG-2 (The icon is gone)']);
+
+    // --build: the project's scripts/build, its artifacts, the tree left clean.
+    expect('build', rel(good, ['--build']), 0, ['bash scripts/build 0.1.0', 'artifact: out/app.txt', 'RESULT: built']);
+    const recordFile = join(good, '.git', 'pitwall', 'release', 'v0.1.0.json');
+    const record = existsSync(recordFile) ? JSON.parse(readFileSync(recordFile, 'utf8')) : {};
+    if (record.built !== gitIn(good, 'rev-parse', 'HEAD').stdout.trim() || record.artifacts?.[0]?.path !== 'out/app.txt') report(`release.mjs --build recorded ${JSON.stringify(record)}`);
+    const variant = (label, script, says, prepare) => {
+      const p = fresh((q) => {
+        branched(q);
+        if (script !== null) writeFileSync(join(q, 'scripts', 'build'), script);
+        else gitIn(q, 'rm', '-q', 'scripts/build');
+        gitIn(q, 'commit', '-qam', 'a build of the test');
+        prepare?.(q);
+      });
+      expect(`build: ${label}`, rel(p, ['--build']), 1, says);
+    };
+    variant('the template\'s stub', readFileSync(join(plugin, 'template', 'scripts', 'build'), 'utf8'), ['scripts/build failed (exit 1)', 'the template\'s stub']);
+    variant('no artifact named', '#!/usr/bin/env bash\necho built\n', ['printed no "ARTIFACT: <path>" line']);
+    variant('an artifact not there', '#!/usr/bin/env bash\necho "ARTIFACT: out/none.txt"\n', ['out/none.txt: not there']);
+    variant('a tracked file changed', '#!/usr/bin/env bash\necho x >> README.md\nmkdir -p out\necho a > out/a.txt\necho "ARTIFACT: out/a.txt"\n', ['changed the tree']);
+    variant('no scripts/build', null, ['no scripts/build in git', 'laid out before pitwall 0.9.0']);
+    variant('a dirty tree', '#!/usr/bin/env bash\necho "ARTIFACT: README.md"\n', ['the tree is not clean'], (q) => writeFileSync(join(q, 'notes.txt'), 'x\n'));
+
+    // --tag: the commands for the owner, never a tag of its own; then the tag the owner makes ends the release.
+    const tagged = fresh((p) => {
+      branched(p);
+      rel(p, ['--build']);
+      mergeRelease(p);
+      gitIn(p, 'remote', 'add', 'origin', join(dir, 'nowhere.git'));
+    });
+    expect('plan with a release not tagged', rel(tagged, ['--plan']), 1, ['v0.1.0 is merged as', 'not tagged yet', '--tag --project']);
+    const handed = expect('tag', rel(tagged, ['--tag']), 3, ['HANDOFF: v0.1.0 is merged as', 'git push origin v0.1.0', 'gh release create v0.1.0 "out/app.txt" --title v0.1.0 --notes-file', 'RESULT: handed to the owner']);
+    const cmds = checkHandoff(handed, (m) => report(`release.mjs --tag: ${m}`));
+    if (gitIn(tagged, 'tag', '--list').stdout.trim()) report('release.mjs --tag made a tag itself');
+    const make = cmds.find((c) => c.startsWith('git tag -a v0.1.0 '));
+    const mergeSha = gitIn(tagged, 'rev-parse', 'main').stdout.trim();
+    if (!make || !make.includes(mergeSha) || !make.includes('--cleanup=verbatim')) report(`release.mjs --tag: the tag command is "${make}"`);
+    else {
+      // The owner runs it as handed, in their own terminal.
+      const words = make.match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ''));
+      const made = spawnSync(words[0], words.slice(1), { cwd: tagged, env, encoding: 'utf8' });
+      if (made.status !== 0) report(`the handed tag command failed: ${made.stderr}`);
+      const message = gitIn(tagged, 'tag', '-l', '--format=%(contents)', 'v0.1.0').stdout;
+      const on = gitIn(tagged, 'rev-list', '-n', '1', 'v0.1.0').stdout.trim();
+      if (!message.startsWith('## v0.1.0 - ') || !message.includes('### Fixed') || on !== mergeSha) report(`the tag the owner makes: on ${on}, message\n${message}`);
+    }
+    expect('tag once tagged', rel(tagged, ['--tag', '--version', '0.1.0']), 0, ['is already the tag of']);
+    expect('nothing after the tag', rel(tagged, ['--plan']), 1, ['nothing to release', 'since v0.1.0']);
+    // The next releases: fixes alone a patch, an epic a minor, the owner's major above it, nothing below.
+    next(tagged, 'fix/BUG-2', 'fix(BUG-2): The icon is gone (#6)');
+    expect('a patch', rel(tagged, ['--plan']), 0, ['v0.1.1, after v0.1.0', 'RESULT: v0.1.1'], ['epic E0']);
+    next(tagged, 'epic/E2-release', 'feat(E2): A release on GitHub (#7)');
+    expect('a minor', rel(tagged, ['--plan']), 0, ['RESULT: v0.2.0']);
+    expect('the owner\'s major', rel(tagged, ['--plan', '--version', '1.0.0']), 0, ['the version the owner named', 'RESULT: v1.0.0']);
+    expect('a version below', rel(tagged, ['--plan', '--version', '0.1.1']), 1, ['below v0.2.0']);
+    const noRecord = fresh((p) => {
+      branched(p);
+      mergeRelease(p);
+    });
+    expect('tag with no build recorded', rel(noRecord, ['--tag']), 1, ['no build of v0.1.0 is recorded']);
+    const movedUnder = fresh((p) => {
+      branched(p);
+      rel(p, ['--build']);
+      next(p, 'fix/BUG-3', 'fix(BUG-3): Under (#6)');
+      mergeRelease(p, '0.1.0', 7);
+    });
+    expect('tag over code nobody built', rel(movedUnder, ['--tag']), 1, ['differs from the code the qa agent built', 'src/fix-BUG-3.js']);
+    const other = fresh((p) => {
+      branched(p);
+      rel(p, ['--build']);
+      mergeRelease(p);
+      gitIn(p, 'tag', '-a', 'v0.1.0', '-m', 'elsewhere', 'main~1');
+    });
+    expect('a tag that exists elsewhere', rel(other, ['--tag', '--version', '0.1.0']), 1, ['v0.1.0 already exists']);
+    const oc = runScript('owner-calls.mjs', ['--project', noRecord, '--no-github'], { env, cwd: noRecord });
+    if (!/v0\.1\.0 is merged as \w+ and not tagged/.test(oc.stdout) || !oc.stdout.includes('release.mjs" --tag')) report(`owner-calls does not list the release not tagged:\n${oc.stdout}`);
+
+    // docs-check --stage release: the qa agent's file, every criterion of every closed epic and every fixed bug.
+    const qaRows = [['E0-AC1', '`scripts/gate`, gate green'], ['E0-AC2', '`.github/workflows/ci.yml`'], ['E0-AC3', 'QA-E0-1, the owner\'s checklist'], ['E0-AC4', '`scripts/build`, release.mjs --build'], ['E0-AC5', 'QA-E0-2, the owner\'s checklist'], ['E1-AC1', '`src/reminder.test.js`, gate green'], ['E1-AC2', 'QA-E1-1, the owner\'s checklist'], ['BUG-1', '`src/reminder.test.js`, gate green']];
+    const qaReview = (p, { rows = qaRows, findings = [] } = {}) => writeFileSync(join(p, 'docs', 'reviews', 'release-v0.1.0.md'), reviewText({ change: 'release-v0.1.0', reviewed: gitIn(p, 'rev-parse', 'HEAD').stdout.trim(), round: 1, criteria: rows, findings }));
+    const releaseCheck = (label, prepare, says) => {
+      const p = fresh((q) => {
+        branched(q);
+        prepare(q);
+      });
+      const r = docsCheck(p, ['--stage', 'release']);
+      const out = `${r.stdout}${r.stderr}`;
+      if (says.length === 0 && r.status !== 0) report(`docs-check --stage release, ${label}: expected a pass\n${out}`);
+      if (says.length && r.status !== 1) report(`docs-check --stage release, ${label}: expected a fail\n${out}`);
+      for (const w of says) if (!out.includes(w)) report(`docs-check --stage release, ${label}: output lacks "${w}"\n${out}`);
+    };
+    releaseCheck('the qa agent\'s file', (q) => qaReview(q), []);
+    releaseCheck('no file', () => {}, ['docs/reviews/release-v0.1.0.md: missing: the qa agent writes it']);
+    releaseCheck('a criterion left out', (q) => qaReview(q, { rows: qaRows.filter(([c]) => c !== 'E1-AC2') }), ['E1-AC2 is not in "## Acceptance criteria"']);
+    releaseCheck('a planned epic\'s criterion', (q) => qaReview(q, { rows: [...qaRows, ['E2-AC1', 'QA']] }), ['"E2-AC1" is neither a criterion of a merged or released epic nor a fixed bug']);
+    releaseCheck('a finding', (q) => qaReview(q, { findings: [['The gate fails', 'blocking', 'open: BUG-2']] }), ['a failure of a release is a bug']);
+    releaseCheck('a blocking bug open', (q) => {
+      qaReview(q);
+      bugs(q, bugInput());
+    }, ['BUG-2 (The icon is gone) is a blocking bug, open']);
+    releaseCheck('not on a release', (q) => {
+      qaReview(q);
+      gitIn(q, 'switch', '-q', 'main');
+    }, ['not on the branch of a release']);
+
+    // review-status.mjs --review release, and merge.mjs --change on a release branch, against the fake gh.
+    const branch = 'release/v0.1.0';
+    const okReview = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN' }, pr: { head: 'local', branch }, status: 'ok' };
+    const withOrigin = (p) => {
+      const origin = `${p}-origin.git`;
+      gitIn(dir, 'init', '-q', '--bare', origin);
+      gitIn(p, 'remote', 'add', 'origin', origin);
+      gitIn(p, 'push', '-q', 'origin', 'main', branch);
+    };
+    const status = (label, { args = ['--review', 'release', '--state', 'success'], prepare, code, posts, subject, says = [] }) => {
+      const p = fresh((q) => {
+        branched(q);
+        withOrigin(q);
+        prepare?.(q);
+      });
+      const { r, calls } = withFakeGh('review-status.mjs', p, okReview, [...args, '--project', p], { ...identity, GIT_CEILING_DIRECTORIES: dir });
+      const fail = (m) => report(`review-status --review release, ${label}: ${m}\n${r.stdout}${r.stderr}`);
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      const writes = calls.filter((c) => c.args.includes('POST'));
+      if (writes.length !== posts) fail(`${writes.length} status writes, expected ${posts}`);
+      const said = gitIn(p, 'log', '-1', '--format=%s').stdout.trim();
+      if (subject && said !== subject) fail(`the commit says "${said}"`);
+      for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+    };
+    status('approved', { prepare: (q) => qaReview(q), code: 0, posts: 1, subject: 'docs: qa of release-v0.1.0, approved', says: ['release.mjs --check passes'] });
+    status('a release that fails its check', {
+      prepare: (q) => {
+        qaReview(q);
+        bugs(q, bugInput());
+      },
+      code: 1,
+      posts: 0,
+      says: ['REFUSED'],
+    });
+    status('failure', { args: ['--review', 'release', '--state', 'failure', '--description', 'qa: 1 failing'], prepare: (q) => qaReview(q, { findings: [['The gate fails', 'blocking', 'open: BUG-2']] }), code: 0, posts: 1, subject: 'docs: qa of release-v0.1.0, changes requested' });
+    status('a code review of a release', { args: ['--review', 'code', '--state', 'success'], prepare: (q) => qaReview(q), code: 1, posts: 0, says: ['is a release: the qa agent reviews it, with --review release'] });
+    status('a release review of an epic', { prepare: (q) => gitIn(q, 'switch', '-qc', 'epic/E2-release'), code: 1, posts: 0, says: ['the release review sets its status on release/v<x.y.z>'] });
+
+    const green = { auth: true, repo: { nameWithOwner: 'o/r', viewerPermission: 'ADMIN', mergeCommitAllowed: true }, pr: { head: 'local', branch, number: 5, title: 'Release v0.1.0' }, statuses: { 'ai-review': 'success' }, gate: 'success', merge: 'ok' };
+    const merge = (label, { args = ['--change'], prepare, code, merges, says = [] }) => {
+      const p = fresh((q) => {
+        branched(q);
+        prepare?.(q);
+      });
+      const { r, calls } = withFakeGh('merge.mjs', p, green, [...args, '--project', p, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir });
+      const fail = (m) => report(`merge.mjs, ${label}: ${m}\n${r.stdout}${r.stderr}`);
+      if (r.status !== code) fail(`exit ${r.status}, expected ${code}`);
+      const merged = calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'merge');
+      if (merged.length !== merges) fail(`${merged.length} merges, expected ${merges}`);
+      for (const m of merged) {
+        const subject = m.args[m.args.indexOf('--subject') + 1];
+        const body = m.args[m.args.indexOf('--body') + 1];
+        if (subject !== 'release: v0.1.0 (#5)' || !/^A release, approved by the owner as every release is \(pitwall ADR-0013\)\. Approved by the owner, /.test(body)) fail(`merged as "${subject}" / "${body}"`);
+      }
+      for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
+    };
+    merge('a release without the owner\'s yes', { code: 4, merges: 0, says: ['v0.1.0 is a release: it merges only after the owner\'s yes', 'RESULT: waits for the owner'] });
+    merge('a release after the owner\'s yes', { args: ['--change', '--owner-approved'], code: 0, merges: 1, says: ['RESULT: merged'] });
+    merge('a release with a blocking bug open', { args: ['--change', '--owner-approved'], prepare: (q) => bugs(q, bugInput()), code: 1, merges: 0, says: ['a blocking bug is open, so the release does not merge', 'BUG-2 (The icon is gone), unconfirmed'] });
+  });
+});
+
 // 6l. T3b-AC7: the fake GitHub of the headless loop runs (scripts/fake-github.mjs) answers like GitHub,
 // as `node scripts/e2e.mjs --github <owner/repo>` recorded GitHub's answers in scripts/github-responses/:
 // every field the fake gives, GitHub gave with the same type, and its refusals read the same.
@@ -2918,6 +3232,41 @@ slowStep('hooks (recorded payloads)', (report) => {
     expect('implementer-pre-tool-use-bash', 'implementer commits', { input: { tool_input: { command: 'git commit -m "feat: the reminder"' } } }, 'allow');
     expect('implementer-pre-tool-use-write', 'implementer writes code', { input: { tool_input: { file_path: join(project, 'src', 'b.js'), content: 'x' } } }, 'allow');
     expect('implementer-pre-tool-use-write', 'implementer writes a review file', { input: { tool_input: { file_path: join(project, 'docs', 'reviews', 'E1-x.md'), content: 'x' } } }, 'allow');
+
+    // T4c-AC5, AC8, ADR-0013: the qa agent's limits (hooks.agents), on the code reviewer's recorded calls with the qa
+    // agent's type: a plugin agent's call carries its type and nothing else of its own (ADR-0007). It sets ai-review
+    // only on a release, gives bugs.mjs a bug in a quoted heredoc, and runs nothing else but read-only git and the gate.
+    const qaBash = (what, command, want) => expect('code-reviewer-pre-tool-use-bash', `qa agent: ${what}`, { input: { agent_type: 'pitwall:qa', tool_input: { command } } }, want);
+    const qaWrite = (what, file, want) => expect('code-reviewer-pre-tool-use-write', `qa agent: ${what}`, { input: { agent_type: 'pitwall:qa', tool_input: { file_path: file, content: '# Review\n' } } }, want);
+    const releaseStatus = `node "${P}/scripts/review-status.mjs" --review release --state success --project "${fwd(project)}"`;
+    qaBash('review-status.mjs on a release', releaseStatus, 'allow');
+    qaBash('review-status.mjs with failure', `node "${P}/scripts/review-status.mjs" --review release --state failure --description "qa: 2 failing" --project "${fwd(project)}"`, 'allow');
+    qaBash('review-status.mjs on code', codeStatus, 'deny:review');
+    qaBash('review-status.mjs on the plan', `node "${P}/scripts/review-status.mjs" --review plan --state success`, 'deny:review');
+    qaBash('review-status.mjs with no review named', `node "${P}/scripts/review-status.mjs" --state success`, 'deny:review');
+    qaBash('the release check', `node "${P}/scripts/release.mjs" --check --project "${fwd(project)}"`, 'allow');
+    qaBash('the release build', `node "${P}/scripts/release.mjs" --build --project "${fwd(project)}"`, 'allow');
+    qaBash('the docs check', `node "${P}/scripts/docs-check.mjs" --root "${fwd(project)}" --stage release`, 'allow');
+    qaBash('the gate', 'bash scripts/gate --full', 'allow');
+    qaBash('read-only git', 'git ls-files src/reminder.test.js', 'allow');
+    const filing = `node "${P}/scripts/bugs.mjs" file --project "${fwd(project)}" <<'EOF'\ntitle: The gate fails\nfound in: QA\nsteps: bash scripts/gate --full; then $(echo x) | tee\nexpected: green\nactual: red\nseverity: blocking\nrisk: normal\nconfirmed: no\nEOF`;
+    qaBash('a bug in a quoted heredoc', filing, 'allow');
+    qaBash('a heredoc that expands', filing.replace("<<'EOF'", '<<EOF'), 'deny:agent');
+    qaBash('a heredoc into git', `git log <<'EOF'\nx\nEOF`, 'deny:agent');
+    qaBash('a heredoc and a second command', `node "${P}/scripts/bugs.mjs" file <<'EOF' && git push\ntitle: x\nEOF`, 'deny:agent');
+    qaBash('the build itself', 'bash scripts/build 0.1.0', 'deny:agent');
+    qaBash('a tag', 'git tag -a v0.1.0 -m x', 'deny:agent');
+    qaBash('a push of a tag', 'git push origin v0.1.0', 'deny:agent');
+    qaBash('merge.mjs', `node "${P}/scripts/merge.mjs" --change`, 'deny:agent');
+    qaWrite('its release review', join(project, 'docs', 'reviews', 'release-v0.1.0.md'), 'allow');
+    qaWrite('an epic\'s review', join(project, 'docs', 'reviews', 'E1-x.md'), 'deny:agent');
+    qaWrite('the changelog', join(project, 'CHANGELOG.md'), 'deny:agent');
+    // Each reviewer sets its own kind only: the code reviewer is not the release's reviewer, and no other agent runs
+    // review-status.mjs --review release.
+    crBash('review-status.mjs on a release', releaseStatus, 'deny:review');
+    crBash('review-status.mjs on the plan', `node "${P}/scripts/review-status.mjs" --review plan --state success`, 'deny:review');
+    expect('implementer-pre-tool-use-bash', 'implementer runs review-status.mjs on a release', { input: { tool_input: { command: releaseStatus } } }, 'deny:review');
+    bash(releaseStatus, 'deny:review');
 
     // T3b-AC6: merge-choice.mjs records the owner's choice, so no agent runs it, the main conversation included.
     const choice = `node "${P}/scripts/merge-choice.mjs" --allow`;

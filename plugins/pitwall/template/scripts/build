@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# The release build of a pitwall project (pitwall ADR-0013).
+#
+#   scripts/build <version>
+#
+# Builds what the owner runs or installs, from the tree as it is: an installer,
+# a package, a binary, a folder of static files. It may stamp <version> (x.y.z)
+# into what it builds, and never into a tracked file: a build that changes the
+# tree is refused. It prints one line per thing it built, so the release can
+# check it and hand it to the owner:
+#
+#   ARTIFACT: <path, relative to the project root>
+#
+# Exit 0 is a build, anything else a failure. pitwall never assumes a stack:
+# its release only calls this script, through its release.mjs --build.
+#
+# This is the stub from the template. It fails until epic E0 replaces the body
+# below with the real build for the chosen stack (E0-AC4).
+set -euo pipefail
+
+version="${1:-}"
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "usage: scripts/build <x.y.z>" >&2
+  exit 2
+fi
+
+echo "build: FAIL - this is the template's stub: E0 writes the build of the chosen stack here (E0-AC4)." >&2
+exit 1

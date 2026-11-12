@@ -15,6 +15,7 @@ E0 fills this section in. Never list a command here that has not been run succes
 - All checks, as CI runs them: `scripts/gate --full`
 - Inner loop: `scripts/gate --fast`
 - Changed packages only: `scripts/gate --changed`
+- The release build, which `/pitwall:release` runs: `scripts/build <version>`, printing an `ARTIFACT: <path>` line per thing it built
 - Once in a new clone, so that `scripts/gate --fast` runs before every commit: `git config core.hooksPath .githooks`
 
 ## Architecture boundaries
