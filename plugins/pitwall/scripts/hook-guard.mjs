@@ -580,7 +580,9 @@ export function hooksPathChange(args) {
   if (!/^core\.hookspath$/i.test(words[0] ?? '')) return null;
   if (sub === 'unset' || action === 'unset') return 'unsets core.hooksPath';
   if (sub === 'get' || sub === 'list' || action === 'read' || words.length < 2) return null;
-  return words[1] === HOOKS_PATH ? null : `sets core.hooksPath to "${words[1]}"`;
+  // The same folder however it is spelled: "./.githooks", ".githooks/" (review round 1).
+  const folder = words[1].replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
+  return folder === HOOKS_PATH ? null : `sets core.hooksPath to "${words[1]}"`;
 }
 
 // ---- The guard ----

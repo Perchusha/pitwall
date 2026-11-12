@@ -22,14 +22,16 @@
 // commit (T4d-AC2): /pitwall:continue runs it on a new branch, right after the
 // branch's first commit. It writes .githooks/pre-commit, commits it alone and
 // executable (git on Windows drops the executable bit of a new file in a commit
-// that names its paths), and then sets core.hooksPath to .githooks: after the
-// commit, since the stub gate of such a project counts the hook as code. Where
+// that names its paths), without running a hook on it, since the stub gate of
+// such a project counts the hook as code and a red main may wait for the fix the
+// branch is for; then it sets core.hooksPath to .githooks. A failure leaves the
+// hook neither in the index nor, when this run wrote it, in the tree. Where
 // the hook is in the index already, it only sets core.hooksPath. It refuses a
 // hook that differs from the template, other staged changes, the branch the
 // merge protection guards, and a core.hooksPath the owner set to another folder.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { config, listFiles, parseArgs, pluginVersion, projectPath, requireNode, templateRoot } from './lib.mjs';
 
@@ -97,14 +99,24 @@ if (args.hook) {
   if (staged.length) fail(`other changes are staged, and the hook's commit holds only the hook:\n  ${staged.slice(0, 20).join('\n  ')}`);
   const body = readFileSync(join(templateRoot, '.githooks', 'pre-commit'));
   const file = join(target, '.githooks', 'pre-commit');
-  if (existsSync(file) && !readFileSync(file).equals(body)) fail(`${HOOK} exists and differs from pitwall's template; pitwall never overwrites a file`);
+  const had = existsSync(file);
+  if (had && !readFileSync(file).equals(body)) fail(`${HOOK} exists and differs from pitwall's template; pitwall never overwrites a file`);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, body);
   chmodSync(file, 0o755);
+  // A failure leaves nothing behind for the next commit to take: the hook leaves the index, and the file
+  // too when this run wrote it.
+  const undo = (msg) => {
+    git('rm', '-q', '--cached', '--ignore-unmatch', '--', HOOK);
+    if (!had) rmSync(file, { force: true });
+    fail(msg);
+  };
   const add = git('add', '--chmod=+x', '--', HOOK);
-  if (add.status !== 0) fail(`git add ${HOOK} failed: ${add.stderr.trim()}`);
-  const commit = git('commit', '-q', '-m', `chore: the gate before every commit, from pitwall ${pluginVersion()}`);
-  if (commit.status !== 0) fail(`git could not commit ${HOOK}: ${(commit.stderr || commit.stdout).trim()}`);
+  if (add.status !== 0) undo(`git add ${HOOK} failed: ${add.stderr.trim()}`);
+  // Without the hook it adds: this commit holds only the template's own file, and a gate that cannot pass yet
+  // (the old stub counts the hook as code, or a red main waits for its fix) would refuse it (review round 1).
+  const commit = git('commit', '-q', '--no-verify', '-m', `chore: the gate before every commit, from pitwall ${pluginVersion()}`);
+  if (commit.status !== 0) undo(`git could not commit ${HOOK}: ${(commit.stderr || commit.stdout).trim()}`);
   console.log(`layout --hook: committed ${HOOK}, executable, on ${branch}: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
   setPath();
   process.exit(0);

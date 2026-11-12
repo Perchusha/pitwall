@@ -22,15 +22,15 @@ L-14: a commit ran after the check before it had failed, because the check and t
 
 - The template gives every project `.githooks/pre-commit`, a bash script executable in the git index. It runs `bash scripts/gate --fast` from the project root and refuses the commit when the gate fails, with the last lines of its output (owner, 2026-11-11).
 - It runs nothing on a `spike/*` branch, where a prototype is committed while the gate is still the template's stub: the one branch exception, so that a branch with a new name is checked by default (owner, 2026-11-11).
-- It runs nothing for a commit that changes only Markdown under `docs/` and `.claude/pitwall.json`: such a commit cannot turn the gate red, and it must land while the gate is red, as the first commit of the fix for a red `main` does (proposed by the agent, accepted by the owner, 2026-11-12).
+- It runs nothing for a commit that changes only Markdown under `docs/` and `.claude/pitwall.json`: such a commit cannot turn the code's checks red (a gate that also checks `docs/` is caught by CI), and it must land while the gate is red, as the first commit of the fix for a red `main` does (proposed by the agent, accepted by the owner, 2026-11-12).
 - `/pitwall:kickoff` sets `core.hooksPath` to `.githooks` before the skeleton commit; `/pitwall:continue` sets it in a clone where the hook is tracked, and lays the hook out in a project laid out before T4d.
 - The hooks' guard refuses `git commit` with `--no-verify` or `-n`, and `git config` that sets `core.hooksPath` to anything but `.githooks` or unsets it. Nothing else: the rule is narrow, and what it does not read is R-5 (owner, 2026-11-12).
 - pitwall's own repository has a hook of its own that runs `node scripts/check.mjs --fast` (owner, 2026-11-12).
 
 ## Consequences
 
-- The hook checks the work tree, not what is committed: a partial commit can still be red when the rest of the tree is green, and a commit that leaves out a red file is green. CI's `gate`, required on every PR, catches it.
+- The hook checks the work tree, not what is committed. A partial commit can be red on its own while the whole tree is green: CI's `gate`, required on every PR, catches it. A commit that leaves out a red file is refused although what it commits is green: the red file is fixed, or put aside first (`git stash push -- <file>`).
 - git makes some commits without `pre-commit`: a merge with no conflict, a cherry-pick, a revert, a rebase. CI catches these too.
 - The gate runs as from a terminal: the hook clears the variables git sets for the commit's own index (`git rev-parse --local-env-vars`), or a gate whose tests make scratch repositories would write into the commit.
 - `.githooks/pre-commit` joins the contract of ADR-0006. Every commit of an implementer waits for `scripts/gate --fast`, so a slow fast mode slows every commit.
-- Revisiting costs the template file, two steps of the skills, one guard rule and their cases in `scripts/check.mjs`; `git config --unset core.hooksPath`, run by the owner, turns it off in one clone.
+- Revisiting costs the template file, two steps of the skills, one guard rule and their cases in `scripts/check.mjs`; `git config --unset core.hooksPath`, run by the owner, turns it off in one clone until the next `/pitwall:continue`, which reads an empty setting as a new clone and sets it again; to keep it off, the owner points `core.hooksPath` at another folder, which `continue` asks about each session.

@@ -46,4 +46,4 @@ A task is done when all of these hold:
 - Set the `ai-review` status outside the review flow.
 - Merge a PR whose `gate` or `ai-review` check is not green.
 - Weaken a check, a hook or a test to make it pass. Fix the cause.
-- Skip the gate before every commit: no `git commit --no-verify`, no change of `core.hooksPath`.
+- Skip the gate before every commit: no `git commit --no-verify`, and `core.hooksPath` stays `.githooks`.
