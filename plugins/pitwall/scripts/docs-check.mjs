@@ -4,7 +4,9 @@
 //   node docs-check.mjs [--root <dir>] [--stage <stage>[,<stage>...]] [--change <id>] [--only sections,ids,size]
 //
 // Stages: kickoff, discovery, decide, spike-criterion (before the criterion is committed), spike, plan, plan-review,
-// code-review (T3b-AC4, ADR-0011: the review file of the change on the current branch, or of --change).
+// code-review (T3b-AC4, ADR-0011: the review file of the change on the current branch, or of --change; for a
+// bug, the file of its regression test or QA scenario at the reviewed commit, T4b-AC1), bug (the rows of
+// docs/BUGS.md, T4b-AC2) and lesson (the rows of docs/LESSONS.md, T4b-AC1).
 //
 // Always, unless --only narrows it:
 //   sections  every "## " heading of a template document is in the project's copy,
@@ -21,13 +23,13 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { changeOf, config, gitRunner, listFiles, parseArgs, projectPath, requireNode, templateRoot } from './lib.mjs';
+import { bugFacts, bugTable, changeOf, config, gitRunner, listFiles, parseArgs, projectPath, requireNode, riskOrder, templateRoot } from './lib.mjs';
 
 requireNode();
-const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review|code-review[,...]] [--change <id>] [--only sections,ids,size]';
+const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review|code-review|bug|lesson[,...]] [--change <id>] [--only sections,ids,size]';
 const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', change: 'value', only: 'value' }, usage);
 const KINDS = ['sections', 'ids', 'size'];
-const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review', 'code-review'];
+const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review', 'code-review', 'bug', 'lesson'];
 const kinds = args.only ? args.only.split(',').map((k) => k.trim()) : KINDS;
 const stages = args.stage ? args.stage.split(',').map((s) => s.trim()) : [];
 if (kinds.some((k) => !KINDS.includes(k)) || stages.some((s) => !STAGES.includes(s))) {
@@ -1267,6 +1269,19 @@ function checkCodeReview() {
   // Every finding is closed: by a commit of this change's branch, or by a risk the owner accepted.
   const accepted = risksAccepted();
   const main = cfg.mergeProtection.branch;
+  // T4b-AC1: a bug closes only with a regression test, or a QA scenario in a file where no test can drive the
+  // behaviour, and then the cell says why there is none (owner, 2026-11-11). Either way the cell names the
+  // file, in a code span or a link, and the file is in the reviewed commit.
+  const bugRow = !epic ? covered.get(id) : null;
+  if (bugRow && !nothing(bugRow[1]) && /^[0-9a-f]{40}$/.test(reviewed) && git('rev-parse', '--verify', '-q', `${reviewed}^{commit}`).ok) {
+    const cell = String(bugRow[1] ?? '');
+    const spans = [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    const links = [...cell.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => join(cfg.loop.reviews, m[1]).split('\\').join('/'));
+    const paths = [...spans, ...links].map((p) => p.trim().replace(/^\.\//, '').replace(/:\d+(?::\d+)?$/, '')).filter(Boolean);
+    const inCommit = paths.filter((p) => git('cat-file', '-e', `${reviewed}:${p}`).ok);
+    if (inCommit.length === 0) report(rel, `${id} is covered by no file of the reviewed commit ${reviewed.slice(0, 7)}: a bug closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour; name its path in a code span`);
+    else if (/\bqa scenario\b/i.test(cell) && !/\bno automated test\b\s*(?::|because|since|as)\s*\S/i.test(cell)) report(rel, `${id} is covered by a QA scenario: the same cell says why no automated test can drive it, as "no automated test: <why>"`);
+  }
   const mainRef = [`refs/heads/${main}`, `refs/remotes/origin/${main}`].find((r) => git('rev-parse', '--verify', '-q', r).ok);
   tableRows(s.get('Findings') ?? []).forEach(([n, finding, severity, by], i) => {
     const num = bareCell(n);
@@ -1288,7 +1303,68 @@ function checkCodeReview() {
   });
 }
 
-const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview };
+// ---------- bugs and lessons (T4b-AC1, AC2) ----------
+
+// docs/BUGS.md, read by its header. A table of seven columns from before T4b passes: /pitwall:continue gives
+// it the new columns. In the new one every row is a bug the loop can act on.
+function checkBugs() {
+  // Risks the owner accepted, from a review round or in place of a fix: one number each (review round 1).
+  const risks = has('docs/RISKS.md') ? tableRows(read('docs/RISKS.md').split('\n')).map((r) => bareCell(r[0])) : [];
+  for (const r of new Set(risks.filter((x, i) => /^R-\d+$/.test(x) && risks.indexOf(x) !== i))) report('docs/RISKS.md', `${r} is in the table twice: number the later one anew`);
+  const rel = 'docs/BUGS.md';
+  if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
+  const table = bugTable(read(rel));
+  if (!table.header) return report(rel, 'holds no table');
+  if (table.old) return;
+  const want = tableHeader(readTemplate('docs/BUGS.md').split('\n'));
+  if (table.header.join('|').toLowerCase() !== want.join('|').toLowerCase()) return report(rel, `the table must keep the template's columns: | ${want.join(' | ')} |`);
+  const mark = cfg.bugs.unconfirmed.mark;
+  const severities = Object.keys(cfg.bugs.severities);
+  const accepted = risksAccepted();
+  const seen = new Set();
+  for (const row of table.rows) {
+    const b = bugFacts(row, cfg);
+    const at = `${rel}: ${b.id || 'a row'}`;
+    if (!/^BUG-\d+$/.test(b.id)) report(rel, `"${row.id}" is not a bug ID, BUG-<n>`);
+    else if (seen.has(b.id)) report(rel, `${b.id} is in the table twice`);
+    seen.add(b.id);
+    if (!b.title) report(at, 'has no title: the short name plans and RISKS give it beside its ID');
+    else if (b.title.length > 60) report(at, `its title is ${b.title.length} characters: a short name of at most 60`);
+    if (!cfg.bugs.foundIn.some((x) => same(x, row.found))) report(at, `found in "${row.found ?? ''}" is not one of ${cfg.bugs.foundIn.join(', ')}`);
+    for (const k of ['steps', 'expected', 'actual']) if (!cellText(row[k])) report(at, `says nothing under "${k[0].toUpperCase()}${k.slice(1)}"`);
+    if (!b.severity) report(at, `severity "${row.severity ?? ''}" is not one of ${severities.join(', ')}`);
+    if (!b.risk) report(at, `risk "${row.risk ?? ''}" is not one of ${riskOrder(cfg).join(', ')}`);
+    // Not confirmed by the owner: blocking, marked so, until they answer (owner, 2026-11-11). The class is never
+    // marked: it only picks the implementer, and every fix waits for the owner's yes anyway.
+    if (b.unconfirmed && b.severity !== cfg.bugs.unconfirmed.severity) report(at, `a bug the owner has not confirmed is "${cfg.bugs.unconfirmed.severity} (${mark})" until they answer`);
+    const status = cfg.bugs.statuses.find((x) => b.status.toLowerCase() === x || (x === 'accepted' && b.accepted));
+    if (!status) report(at, `status "${b.status}" is not one of ${cfg.bugs.statuses.map((x) => (x === 'accepted' ? 'accepted (R-n)' : x)).join(', ')}`);
+    else if (b.accepted && !accepted.get(b.accepted)) report(at, `is accepted as ${b.accepted}, which is not a risk the owner accepted in docs/RISKS.md`);
+    const fix = bareCell(row.fix);
+    if (!/^(#\d+|-?)$/.test(fix)) report(at, `fix PR "${row.fix ?? ''}" is not a PR, #<n>, or "-"`);
+    if (status === 'fixed' && !/^#\d+$/.test(fix)) report(at, 'is fixed, and names no fix PR: #<n>');
+  }
+}
+
+// docs/LESSONS.md: every lesson says its rule, why, when, and what checks it (T4b-AC1).
+function checkLessons() {
+  const rel = 'docs/LESSONS.md';
+  if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
+  const seen = new Set();
+  for (const [lid, rule, why, date, by] of tableRows(read(rel).split('\n'))) {
+    const id = bareCell(lid);
+    const at = `${rel}: ${id || 'a row'}`;
+    if (!/^L-\d+$/.test(id)) report(rel, `"${lid}" is not a lesson ID, L-<n>`);
+    else if (seen.has(id)) report(rel, `${id} is in the table twice`);
+    seen.add(id);
+    if (!cellText(rule)) report(at, 'states no rule');
+    if (!cellText(why)) report(at, 'says not why: the bug, PR or finding it comes from');
+    if (!DATE_FIRST.test(bareCell(date))) report(at, `date "${date ?? ''}" is not a date, YYYY-MM-DD`);
+    if (!cellText(by) || /^-+$/.test(bareCell(by))) report(at, 'says nothing under "Checked by": the tool that checks it, "Not by a tool until" the bug that builds one, or who checks it by hand');
+  }
+}
+
+const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview, bug: checkBugs, lesson: checkLessons };
 for (const s of stages) checks[s]();
 
 const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;

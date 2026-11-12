@@ -2,6 +2,33 @@
 
 One entry per epic, newest first.
 
+## T4b - Bugs and lessons (2026-11-12)
+
+`/pitwall:bug` files a defect of merged work as the next BUG-n with a title, a severity and a risk class the owner confirms, and `/pitwall:lesson` records L-n with what checks it; a rule a tool could check but none does is filed as a bug. `bugs.mjs` keeps a new row, an accepted risk and a lesson in the git directory, outside the work tree, until the first commit of the next branch takes it, and lets it go once a commit holds it. A blocking bug's fix goes right after the change in flight, never interrupting it, and a bug that is not blocking waits until no epic is ready. Every fix merges after the owner's yes at any class; the class only picks the implementer. A table of `docs/BUGS.md` from before T4b gains its columns in a project's next first commit. The guard's corpus and the gate before every commit, drafted here, went to T4d and then partly to T7, after T5 (owner).
+
+**Numbers.** `scripts/check.mjs` grew from 25 to 26 steps: `bugs.mjs` on scratch projects in the order the conductor runs it (file, set, accept, risk, lesson, list, flush, an old table, a table with a column of its own), the docs check's stages `bug` and `lesson`, a bug's review without a file of the reviewed commit, and every fix waiting for the owner's yes. The branch adds 1,345 lines and removes 135 over 34 files, after the owner's simplification removed 508 lines of what the first build had.
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| bug, fake GitHub, plugin dbe78d5 | 2 | 3.8 | $3.60 | fail: told by the session brief that it ran unattended, `/pitwall:bug` filed the bug unconfirmed without asking, then handed the owner the `bugs.mjs set` command to run |
+| bug, fake GitHub, plugin 59b16c2 | 4 | 12.1 | $13.10 | pass: the bug filed after the owner confirmed it blocking and normal, fixed before the planned E2 with six regression tests, the old table given its columns in the fix's first commit, merged after the owner's yes, which was asked before the merge; the next branch's flush left the bug as the fix left it |
+
+**What only the work showed:**
+- A plan the owner reads as "a spaceship for one owner" is cut, not reviewed: after round one the owner removed the choice for fixes of their own, the class read in four places, the stash before a fix and the return to an interrupted change, about 500 lines, and a review round on them was stopped.
+- Each review round's fix opened the next round's finding twice, as in T4a: round two found that the flush let rows go before a commit held them, and the fix of that kept a new bug waiting forever and reopened it once fixed (round three). The test followed an order the skill does not, so it passed.
+- A session brief that says "unattended" is read as "no owner": the skill filed the bug without asking. Only a headless run showed it.
+- The guard refused `node -e` reading the plugin's config, a false refusal of the kind L-9 names; the model read it with `grep` instead. It goes to T7 with the guard's other gaps.
+
+**What the review found.** Three fresh-context rounds, the cap the owner set for pitwall's own epics. Round one: three blocking findings (the owner-calls skill not updated for unconfirmed bugs, a lesson on the branch naming a waiting bug failing the change's docs check, a fix branch without its bug's row) and seven to fix. Round two, after the simplification: none blocking, seven to fix. Round three: one blocking, a regression of round two's fix, and free text in double-quoted arguments expanded by bash; both fixed without a further round, the first checked by the headless stage. What stayed open: R-4, accepted, and one bug filed after the merge (`bugs.mjs flush` drops a cell of a hand-written row with a `|` not escaped).
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | 3 | 238,076 | 49 | 12.2 |
+| 2, after the simplification | none | 237,758 | 46 | 12.7 |
+| 3 | 1 (a regression of round 2's fix) | 213,694 | 34 | 10.6 |
+
+**Next:** T4d, the gate before every commit, then a smaller T4c and T5 on the reminder.
+
 ## T4a - Guards and process follow-ups (2026-11-10)
 
 T4 was split in three at the owner's call: T4a, the guards and the loop's follow-ups, T4b, bugs and lessons, and T4c, releases and QA, each high risk and merged by the owner. In T4a the PreToolUse guard refuses a git command that would throw uncommitted work away (rule `uncommitted`, L-12), in the main conversation and in every agent, and only when it would: it reads the tree with `git status` before the command, follows `cd`, `git -C`, `$CLAUDE_PROJECT_DIR`, a variable the line sets to one plain path, and what earlier commands of the line stashed, committed, staged or unstaged, and its refusal names the files with the `git stash push` that keeps them, or a merge's `--abort`. `/pitwall:owner-calls` lists what waits for the owner from a read-only script, each item with what happens if they say nothing, asks one question at a time, commits the answers only on a branch with no open PR, and merges last. The conductor keeps the owner's choice of ADR-0010 in `.claude/pitwall.json` alone. A `--github` run restores the remote state of its snapshot after it checks the repository's id, and a scripted owner's answer that overrode a stop turns PASS into "PASS, stops overridden: N". The owner accepted the two-way list with edits: the refusal offers the safe way, `git checkout <path>` without `--` and Windows paths among the cases, owner-calls hands the owner's switches over as commands, the id check before anything is deleted, and GitHub's answers to a closed PR and a deleted branch recorded at the next run on real GitHub. What the guard cannot read before a command runs is R-3, which the owner accepted.

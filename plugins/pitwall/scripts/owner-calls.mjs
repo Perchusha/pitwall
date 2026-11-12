@@ -6,11 +6,15 @@
 // Read-only. It gathers, grouped, each with what happens if the owner says nothing:
 //   switches   the switches only the owner sets, each with the command to run in a terminal:
 //              merge protection still pending, the choice of ADR-0010 not made;
-//   questions  the open questions of every epic not merged yet, and while the plan is made the
-//              open items of docs/PLAN-REVIEW.md;
+//   questions  the open questions of every epic not merged yet, while the plan is made the open
+//              items of docs/PLAN-REVIEW.md, and every bug filed without the owner's answer on its
+//              severity (T4b);
 //   merges     the PRs of the loop that are ready, gate and ai-review green on their head, and
-//              wait for the owner's yes: high risk, a bug fix, or no yes to merges without them;
-//   bugs       the open rows of docs/BUGS.md.
+//              wait for the owner's yes: high risk, a bug fix at any class, or no yes to merges
+//              without them;
+//   bugs       the open bugs, docs/BUGS.md with the rows that wait in the git directory over it (T4b):
+//              a blocking one's fix goes right after the change in flight, one that is not blocking
+//              waits until no epic is ready.
 // GitHub is read through gh, as merge.mjs reads it; --no-github, or a gh that cannot read, leaves
 // the merges out and says why. --json prints { groups: [{ name, title, items: [{ what, default, run? }] }], notes },
 // run being the commands for the owner, each on a line of its own in the text output. An open question
@@ -21,7 +25,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
+import { bugsView, changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, readGate, readReview, requireNode, riskClassAt } from './lib.mjs';
 
 requireNode();
 const usage = 'node owner-calls.mjs [--project <dir>] [--json] [--no-github]';
@@ -92,11 +96,19 @@ if (!planMerged) {
   }
 }
 
-// The open bugs.
-for (const r of rows(read('docs/BUGS.md')).slice(1)) {
-  if (!/^BUG-\d+$/.test(r[0] ?? '') || /^(fixed|closed)\b/i.test(r[5] ?? '')) continue;
-  groups.bugs.push({ what: `${r[0]} (${r[5] || 'open'}), found in ${r[1]}: ${r[4]}`, default: 'its fix goes first in the next /pitwall:continue' });
+// The open bugs, docs/BUGS.md with what waits in the git directory over it. A bug nobody confirmed is a
+// question: it is blocking until the owner answers (owner, 2026-11-11).
+const view = bugsView(project, cfg);
+const blocking = Object.keys(cfg.bugs.severities)[0];
+for (const b of view.rows.filter((x) => x.open)) {
+  const waits = `${b.row.branch ? `, its row on ${b.row.branch}, not merged yet` : ''}${b.row.waiting ? ', waiting in the git directory for the next branch' : ''}`;
+  if (b.unconfirmed) {
+    groups.questions.push({ what: `${b.id} (${b.title}) was filed without your answer: confirm its severity, now ${b.severity}, and its class, ${b.risk}${waits}`, default: `it stays ${b.severity}: its fix goes right after the change in flight` });
+  } else {
+    groups.bugs.push({ what: `${b.id} (${b.title}): ${b.severity}, ${b.risk} risk, ${b.status || 'open'}${waits}`, default: /^in (progress|review)$/i.test(b.status) ? 'its fix is in flight, and merges after your yes' : b.severity === blocking ? 'its fix goes right after the change in flight, before the next epic' : 'it waits until no epic is ready' });
+  }
 }
+if (view.tree.old) notes.push(`docs/BUGS.md has the table of seven columns from before T4b: each open bug in it counts as ${cfg.bugs.oldTable.severity} and ${cfg.bugs.oldTable.risk} until /pitwall:continue gives it the new columns`);
 
 // The PRs of the loop that are ready and wait for the owner's yes.
 if (args['no-github']) notes.push('GitHub was not read (--no-github): PRs waiting for your yes are not listed');
@@ -120,6 +132,7 @@ else {
     // The class merge.mjs will read: at the PR's head, here or as fetched, and where it left main.
     const head = c.epic ? [pr.headRefOid, `refs/remotes/origin/${pr.headRefName}`].find((x) => git('rev-parse', '--verify', '-q', `${x}^{commit}`).ok) : null;
     const risk = head ? riskClassAt(git, c.epic, head, cfg.mergeProtection.branch, cfg) : null;
+    // Every bug fix waits for the owner's yes, at any class (ADR-0010; owner, 2026-11-11).
     const waits = !c.epic
       ? 'a bug fix'
       : !risk

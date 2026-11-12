@@ -6,7 +6,7 @@
 
 ## Acceptance criteria
 
-One row per acceptance criterion of the epic, or one row for a bug, its ID: the test that covers it (its file and name) or the QA scenario that checks it.
+One row per acceptance criterion of the epic, or one row for a bug, its ID: the test that covers it (its file and name) or the QA scenario that checks it. A bug is covered by its regression test, the path in a code span; only where no test can drive the behaviour, by a QA scenario in a file, its path in a code span and `no automated test: <why>` in the same cell.
 
 | Criterion | Covered by |
 | --- | --- |

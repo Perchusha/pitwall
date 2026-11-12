@@ -45,21 +45,22 @@ Project docs are tens or hundreds of kilobytes and change with almost every comm
 
 ## 6. The epic loop
 
-1. **Clarify.** `/pitwall:continue` takes one change at a time: an open bug's fix first, then the change in flight, then the next epic whose dependencies are merged. It rereads the change, its acceptance criteria and ADRs. Questions go to the owner one at a time, before any code.
+1. **Clarify.** `/pitwall:continue` takes one change at a time and never interrupts it: the change in flight first, then a blocking bug's fix, then the next epic whose dependencies are merged, then a fix of a bug that is not blocking. It rereads the change, its acceptance criteria and ADRs. Questions go to the owner one at a time, before any code.
 2. **Implement.** One implementer sub-agent per change on `epic/E<n>-<slug>` or `fix/BUG-<n>`, with a call budget. The risk class picks `implementer` or `implementer-deep`; a PARTIAL report gets a fresh one with the handoff.
 3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping.
 4. **Gate.** `scripts/gate --full`. Red gate: no PR.
 5. **PR** with the acceptance criteria, ADR links and what was not done. CI runs the gate as the check `gate`.
 6. **Review** by `code-reviewer` in the local session with a fresh context each round: the diff, the change, its ADRs and `docs/LESSONS.md`. It writes `docs/reviews/E<n>-<slug>.md` or `docs/reviews/BUG-<n>.md`, its only file: the commit it reviewed, what covers each criterion and the findings, each closed by a commit or an accepted risk (ADR-0011). Its verdict is the commit status `ai-review` (ADR-0002, ADR-0007), set only while nothing but that file changed after the reviewed commit. When rejects on one change reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides, and rounds stop at `review.maxRounds` (L-8).
-7. **Merge** by risk class, at every process level, with a merge commit `feat(E<n>): ...` or `fix(BUG-<n>): ...` that records who approved it: low and normal merge themselves when `gate` and `ai-review` are green and the project's owner chose that (ADR-0010); otherwise, and always for high risk, the owner says yes. A merged change is recorded in the first commit of the next branch, since `main` is protected.
-8. **Release and QA.** A semver tag with a changelog, a deploy to staging, QA against the acceptance criteria of every closed epic plus an exploratory pass, then production and a smoke check. Red QA files a bug and makes its fix the first item of the next loop.
+7. **Merge** by risk class, at every process level, with a merge commit `feat(E<n>): ...` or `fix(BUG-<n>): ...` that records who approved it: low and normal merge themselves when `gate` and `ai-review` are green and the project's owner chose that, for epics only (ADR-0010); otherwise, always for high risk and for every bug fix, the owner says yes. A merged change is recorded in the first commit of the next branch, since `main` is protected.
+8. **Release and QA.** A semver tag with a changelog, a deploy to staging, QA against the acceptance criteria of every closed epic plus an exploratory pass, then production and a smoke check. Red QA files a bug, whose severity gives its place in the queue: a blocking one right after the change in flight.
 
 Staging defaults: web, a separate environment with its own database and URL; desktop, a built installer, and for Steam a closed beta branch; mobile, TestFlight and Google Play internal testing; lite level, a local build.
 
 ## 7. Bugs, lessons and memory
 
-- `docs/BUGS.md`: BUG-n with where it was found, steps, expected, actual, status and fix PR. A bug closes only with a regression test.
-- `docs/LESSONS.md`: L-n, the rule, why, the date and how it is checked. The implementer and the reviewer read it first; this, not a fresh context alone, is what stops the same mistake twice. A rule a tool can check becomes a guard.
+- `docs/BUGS.md`: BUG-n with a title, where it was found, steps, expected, actual, a severity, a risk class, status and fix PR, filed by `/pitwall:bug`. Only a blocking bug, whose defect itself does harm in ordinary work, goes before the next epic, right after the change in flight; a bug filed without the owner's answer is blocking until they confirm it. Its risk class picks the implementer of the fix, which merges after the owner's yes. A bug closes only with a regression test, or a QA scenario in a file where no test can drive the behaviour; the owner's no to a fix makes it an accepted risk. A defect of the branch in flight is a finding of its review, not a bug.
+- `docs/LESSONS.md`: L-n, the rule, why, the date and how it is checked, recorded by `/pitwall:lesson`. The implementer and the reviewer read it first; this, not a fresh context alone, is what stops the same mistake twice. A rule a tool can check becomes a guard; until one is built, the missing check is a bug, and the lesson names it.
+- New rows of these files, and changes to a bug not fixed yet, wait in the git directory, outside the work tree, until the first commit of the next branch holds them, so that no implementer commits them into another change; a risk or a lesson of the review of the change in flight goes on its branch.
 - `docs/JOURNAL.md`: one entry per epic with numbers and cost.
 
 ## 8. Agents

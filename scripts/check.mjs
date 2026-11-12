@@ -433,7 +433,7 @@ function fillStages(project) {
 // 6e. T1-AC5: the docs check passes on a fresh layout and on pitwall's own docs, and reports
 // a missing section, a broken ID, an oversized file and every stage Check it is given (L-2).
 step('docs check', (report) => {
-  const own = docsCheck(root, ['--only', 'ids,size']);
+  const own = docsCheck(root, ['--only', 'ids,size', '--stage', 'bug,lesson']);
   if (own.status !== 0) report(`pitwall's own docs:\n${own.stdout}${own.stderr}`);
 
   scratch('pitwall-docs-', (dir) => {
@@ -1392,15 +1392,28 @@ step('code review check', (report) => {
     run('on main', { prepare: (p) => { gitIn(p, 'stash', '-q', '-u'); gitIn(p, 'switch', '-q', 'main'); }, says: ['not on the branch of a change'] });
     run('a branch that names no change', { prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'epic/reminder'), says: ['"epic/reminder" names no change'] });
     run('--change names the review', { args: ['--change', 'E1-reminder'], prepare: (p) => gitIn(p, 'branch', '-q', '-m', 'work'), pass: true });
-    const bug = (p) => {
+    const bug = (p, covered = '`src/reminder.test.js` "shows the tray icon"', extra) => {
       gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
       const bugs = join(p, 'docs', 'BUGS.md');
-      writeFileSync(bugs, readFileSync(bugs, 'utf8').replace(/(\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n)/, '$1| BUG-1 | QA | Open the app | A tray icon | Nothing | in progress | - |\n'));
-      gitIn(p, 'commit', '-qam', 'docs: BUG-1');
+      writeFileSync(bugs, `${readFileSync(bugs, 'utf8').trimEnd()}\n| BUG-1 | No tray icon | QA | Open the app | A tray icon | Nothing | blocking | normal | in progress | - |\n`);
+      extra?.(p);
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'docs: BUG-1');
       const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
-      writeFileSync(join(p, 'docs', 'reviews', 'BUG-1.md'), reviewText({ change: 'BUG-1', reviewed: head, criteria: [['BUG-1', '`src/reminder.test.js` "shows the tray icon"']], findings: [['x', 'blocking', fix.slice(0, 9)]] }));
+      writeFileSync(join(p, 'docs', 'reviews', 'BUG-1.md'), reviewText({ change: 'BUG-1', reviewed: head, criteria: [['BUG-1', covered]], findings: [['x', 'blocking', fix.slice(0, 9)]] }));
     };
     run('a bug fix\'s review', { review: null, prepare: bug, pass: true });
+    // T4b-AC1: a bug closes only with a regression test, or a QA scenario in a file where no test can drive it, saying why.
+    run('a bug covered by words alone', { review: null, prepare: (p) => bug(p, 'the tray test'), says: ['BUG-1 is covered by no file of the reviewed commit'] });
+    run('a bug covered by a file that is not in the reviewed commit', { review: null, prepare: (p) => bug(p, '`src/tray.test.js`'), says: ['BUG-1 is covered by no file of the reviewed commit'] });
+    run('a bug covered by a test named with its line', { review: null, prepare: (p) => bug(p, '`src/reminder.test.js:1`'), pass: true });
+    run('a bug covered by a test named in a link', { review: null, prepare: (p) => bug(p, '[the test](../../src/reminder.test.js)'), pass: true });
+    const scenario = (p) => {
+      mkdirSync(join(p, 'docs', 'qa'), { recursive: true });
+      writeFileSync(join(p, 'docs', 'qa', 'tray.md'), '# The tray icon\n\n1. Log in.\n2. See the icon.\n');
+    };
+    run('a bug covered by a QA scenario that says why no test can', { review: null, prepare: (p) => bug(p, 'QA scenario `docs/qa/tray.md`: no automated test: the tray of the desktop is out of reach of the tests', scenario), pass: true });
+    run('a bug covered by a QA scenario that does not say why', { review: null, prepare: (p) => bug(p, 'QA scenario `docs/qa/tray.md`', scenario), says: ['BUG-1 is covered by a QA scenario: the same cell says why'] });
     run('a bug fix\'s review without its row in BUGS.md', {
       review: null,
       prepare: (p) => {
@@ -1507,7 +1520,7 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
       checkHandoff(r.stdout, fail);
     };
     const without = new RegExp(`^Risk class: normal\\. Merged without the owner, .*\\(pitwall ADR-0010\\), at [0-9a-f]{40}\\.$`);
-    const byOwner = (cls) => new RegExp(`^${cls ? `Risk class: ${cls}\\.` : 'A bug fix, approved by the owner as every fix is until bugs carry a risk class\\.'} Approved by the owner, \\d{4}-\\d{2}-\\d{2}, at [0-9a-f]{40}\\.$`);
+    const byOwner = (cls) => new RegExp(`^${cls ? `Risk class: ${cls}\\.` : 'A bug fix, approved by the owner as every fix is \\(pitwall ADR-0010\\)\\.'} Approved by the owner, \\d{4}-\\d{2}-\\d{2}, at [0-9a-f]{40}\\.$`);
     merge('normal risk, the owner allowed it', { code: 0, result: 'merged', merges: 1, subject: 'feat(E1): The reminder (#7)', body: without });
     merge('normal risk, the owner said no', { autoMerge: false, code: 4, result: 'waits for the owner', merges: 0, says: ['every merge waits for them'] });
     merge('normal risk, the owner not asked yet', { autoMerge: null, code: 4, result: 'waits for the owner', merges: 0, says: ['has not chosen yet'] });
@@ -1528,9 +1541,10 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
     };
     merge('high on main, lowered on the branch', { prepare: lowered, code: 4, result: 'waits for the owner', merges: 0, says: ['E1 is high risk'] });
     merge('a class read from the commit, not the tree', { prepare: (p) => writeFileSync(join(p, 'docs', 'EPICS.md'), readFileSync(join(p, 'docs', 'EPICS.md'), 'utf8').replace('| The reminder | normal | E0 | in progress |', '| The reminder | high | E0 | in progress |')), code: 0, result: 'merged', merges: 1, body: without });
+    // A bug fix waits for the owner's yes at any class: merges without the owner cover epics only (ADR-0010; owner, 2026-11-11).
     const toFix = (p) => gitIn(p, 'branch', '-q', '-m', 'fix/BUG-1');
     const fixPr = { ...green, pr: { head: 'local', branch: 'fix/BUG-1', title: 'BUG-1: no tray icon after login' } };
-    merge('a bug fix, the owner allowed low and normal', { prepare: toFix, scenario: fixPr, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is a bug fix'] });
+    merge('a bug fix, the owner allowed low and normal', { prepare: toFix, scenario: fixPr, code: 4, result: 'waits for the owner', merges: 0, says: ['BUG-1 is a bug fix: every fix merges after the owner\'s yes'] });
     merge('a bug fix, the owner said yes', { prepare: toFix, scenario: fixPr, args: ['--change', '--owner-approved'], code: 0, result: 'merged', merges: 1, subject: 'fix(BUG-1): no tray icon after login (#7)', body: byOwner(null) });
     merge('ai-review red', { scenario: { ...green, statuses: { 'ai-review': 'failure' } }, code: 1, merges: 0, says: ['ai-review is failure', 'the code reviewer sets it'] });
     merge('gate red', { scenario: { ...green, gate: 'failure' }, code: 1, merges: 0, says: ['gate is failure'] });
@@ -1685,12 +1699,26 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     if (!items(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout ? JSON.parse(runScript('owner-calls.mjs', ['--project', planning, '--json', '--no-github']).stdout) : { groups: [] }, 'questions').some((q) => /^plan review: 2 \| Full-screen games hide it/.test(q))) report('owner-calls does not list an open item of the plan review while the plan is made');
     if (items(out, 'questions').some((q) => /^plan review/.test(q))) report('owner-calls lists the plan review once the plan is merged');
 
-    // Bugs: open ones only.
+    // Bugs (T4b): the open ones, with what waits in the git directory over docs/BUGS.md, each with the default
+    // of its severity; one filed without the owner's answer is a question.
+    const bugRow = (cells) => `| ${cells.join(' | ')} |`;
     p = fresh((q) => {
       const f = join(q, 'docs', 'BUGS.md');
-      writeFileSync(f, readFileSync(f, 'utf8').replace(/(\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n)/, '$1| BUG-1 | QA | Open the app | A tray icon | Nothing | open | - |\n| BUG-2 | owner | Snooze | 10 minutes | 5 | fixed | #4 |\n'));
+      writeFileSync(f, [readFileSync(f, 'utf8').trimEnd(), bugRow(['BUG-1', 'No tray icon', 'QA', 'Open the app', 'A tray icon', 'Nothing', 'blocking', 'normal', 'open', '-']), bugRow(['BUG-2', 'Snooze is short', 'owner', 'Snooze', '10 minutes', '5', 'not blocking', 'low', 'fixed', '#4']), bugRow(['BUG-3', 'Count resets', 'QA', 'Lock the screen', 'The count stays', 'It resets', 'not blocking', 'low', 'in progress', '-']), ''].join('\n'));
+      const filed = runScript('bugs.mjs', ['file', '--project', q], { input: 'title: Window behind\nfound in: production\nsteps: Open a game\nexpected: The reminder in front\nactual: Behind the game\nseverity: not blocking\nrisk: normal\nconfirmed: no\n' });
+      if (filed.status !== 0) report(`bugs.mjs file: exit ${filed.status}\n${filed.stdout}${filed.stderr}`);
     });
-    if (JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs')) !== JSON.stringify(['BUG-1 (open), found in QA: Nothing'])) report(`owner-calls: bugs ${JSON.stringify(items(calls(p, ['--no-github']).out, 'bugs'))}, expected BUG-1 only`);
+    out = calls(p, ['--no-github']).out;
+    const bugItems = out.groups.find((g) => g.name === 'bugs')?.items ?? [];
+    if (JSON.stringify(bugItems.map((i) => i.what)) !== JSON.stringify(['BUG-1 (No tray icon): blocking, normal risk, open', 'BUG-3 (Count resets): not blocking, low risk, in progress'])) report(`owner-calls: bugs ${JSON.stringify(bugItems.map((i) => i.what))}, expected BUG-1 and BUG-3`);
+    if (!/right after the change in flight/.test(bugItems[0]?.default) || !/its fix is in flight/.test(bugItems[1]?.default)) report(`owner-calls: the defaults of a blocking and a not blocking bug: ${JSON.stringify(bugItems.map((i) => i.default))}`);
+    if (!items(out, 'questions').some((q) => /^BUG-4 \(Window behind\) was filed without your answer: confirm its severity, now blocking, and its class, normal, waiting in the git directory/.test(q))) report(`owner-calls does not ask about a bug nobody confirmed: ${JSON.stringify(items(out, 'questions'))}`);
+    p = fresh((q) => {
+      const f = join(q, 'docs', 'BUGS.md');
+      writeFileSync(f, '# Bugs\n\n| ID | Found in | Steps | Expected | Actual | Status | Fix PR |\n| --- | --- | --- | --- | --- | --- | --- |\n| BUG-1 | QA | Open the app | A tray icon | Nothing | open | - |\n| BUG-2 | owner | Snooze | 10 minutes | 5 | fixed | #4 |\n');
+    });
+    out = calls(p, ['--no-github']).out;
+    if (JSON.stringify(items(out, 'bugs')) !== JSON.stringify(['BUG-1 (Nothing): blocking, high risk, open']) || !out.notes.some((x) => /seven columns from before T4b/.test(x))) report(`owner-calls on a table from before T4b: ${JSON.stringify(out)}`);
 
     // Merges: a green PR waits for the owner when the epic is high risk, when it is a fix, or without the owner's yes to merges.
     // The template's stub gate passes on docs only, so the green PR's branch holds docs alone.
@@ -1708,6 +1736,7 @@ step('owner calls, snapshots and unscripted stops', (report) => {
     if (items(calls(p).out, 'merges').length !== 0) report(`owner-calls lists a green normal-risk PR the owner allowed to merge by itself: ${JSON.stringify(items(calls(p).out, 'merges'))}`);
     setSettings(p, (s) => ({ ...s, autoMerge: false }));
     if (!items(calls(p).out, 'merges').some((m) => /^PR #1 \(E1-reminder\) is ready.*you have not allowed merges without you/.test(m))) report(`owner-calls does not list a green PR that waits for the owner's yes: ${JSON.stringify(calls(p).out)}`);
+    // A fix waits for the owner's yes at any class (ADR-0010; owner, 2026-11-11), with the owner's yes to merges given.
     gitIn(p, 'switch', '-q', '-c', 'fix/BUG-1', 'main');
     gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'fix: BUG-1');
     greenPr(p, 'fix/BUG-1');
@@ -1779,6 +1808,195 @@ step('owner calls, snapshots and unscripted stops', (report) => {
         spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
       }
     }
+  });
+});
+
+// 6n. T4b-AC1, AC2: bugs.mjs as the bug and lesson skills and the conductor use it, on a scratch project:
+// rows wait in the git directory until a branch's first commit, numbers count every branch, a change to a
+// bug whose row is on the change in flight waits for the branch after it, and a table from before T4b
+// gains its columns; then docs-check --stage bug and lesson on each kind of gap.
+step('bugs and lessons', (report) => {
+  scratch('pitwall-bugs-', (dir) => {
+    const p = join(dir, 'p');
+    if (layOut(p).status !== 0) return report('layout failed');
+    gitIn(p, 'init', '-q', '-b', 'main');
+    gitIn(p, 'add', '-A');
+    gitIn(p, 'commit', '-qm', 'skeleton');
+    const bugs = (args, input) => runScript('bugs.mjs', [...args, '--project', p], { input: input ?? '' });
+    const expect = (label, r, code, says = []) => {
+      const out = `${r.stdout}${r.stderr}`;
+      if (r.status !== code) report(`bugs.mjs, ${label}: exit ${r.status}, expected ${code}\n${out}`);
+      for (const w of says) if (!out.includes(w)) report(`bugs.mjs, ${label}: output lacks "${w}"\n${out}`);
+      return out;
+    };
+    const bug = (fields = {}) => Object.entries({ title: 'No tray icon', 'found in': 'QA', steps: 'Open the app', expected: 'A tray icon', actual: 'Nothing', severity: 'blocking', risk: 'normal', confirmed: 'yes', ...fields }).filter(([, v]) => v !== null).map(([k, v]) => `${k}: ${v}`).join('\n') + '\n';
+    const waiting = join(p, '.git', 'pitwall', 'bugs.md');
+    const doc = (rel) => readFileSync(join(p, rel), 'utf8');
+    const rowOf = (id) => doc('docs/BUGS.md').split('\n').find((l) => l.startsWith(`| ${id} |`)) ?? '';
+    const listed = () => JSON.parse(bugs(['list', '--json', '--all']).stdout).bugs;
+
+    // Filing: the next number, the row waits in the git directory and the work tree stays clean.
+    expect('file a bug', bugs(['file'], bug()), 0, ['FILED: BUG-1 (No tray icon), blocking, normal']);
+    if (!existsSync(waiting) || /BUG-1/.test(doc('docs/BUGS.md'))) report('bugs.mjs: a filed bug must wait in the git directory, not in docs/BUGS.md');
+    if (gitIn(p, 'status', '--porcelain').stdout.trim()) report(`bugs.mjs: filing a bug changed the work tree: ${gitIn(p, 'status', '--porcelain').stdout}`);
+    expect('an unconfirmed bug', bugs(['file'], bug({ title: 'Snooze is short', severity: 'not blocking', risk: 'low', confirmed: 'no' })), 0, ['FILED: BUG-2 (Snooze is short), blocking (unconfirmed), low']);
+    expect('a cell with a pipe and a dollar sign', bugs(['file'], bug({ title: 'Pipes', actual: "a | b, and $r = 'x' ran" })), 0, ['FILED: BUG-3']);
+    if (!readFileSync(waiting, 'utf8').includes("a \\| b, and $r = 'x' ran")) report('bugs.mjs: a pipe in a cell must be escaped, and the rest kept as written');
+    expect('a field missing', bugs(['file'], bug({ steps: null })), 1, ['lacks steps']);
+    expect('no bug on stdin', bugs(['file'], ''), 1, ['lacks title']);
+    expect('a severity of its own', bugs(['file'], bug({ severity: 'critical' })), 1, ['severity "critical" is not one of blocking, not blocking']);
+    expect('a class of its own', bugs(['file'], bug({ risk: 'medium' })), 1, ['risk "medium" is not one of low, normal, high']);
+    expect('a place of its own', bugs(['file'], bug({ 'found in': 'lab' })), 1, ['found in "lab" is not one of']);
+    expect('a title too long', bugs(['file'], bug({ title: 'x'.repeat(61) })), 1, ['at most 60']);
+    expect('a line before any field', bugs(['file'], `and more\n${bug()}`), 1, ['names no field']);
+    expect('confirmed left out', bugs(['file'], bug({ confirmed: null })), 1, ['lacks confirmed']);
+
+    // Changes: an unconfirmed bug is confirmed by its severity; the owner's no makes a risk.
+    expect('a confirmation', bugs(['set', 'BUG-2', '--severity', 'not blocking']), 0, ['SET: BUG-2 severity']);
+    const two = listed().find((b) => b.id === 'BUG-2');
+    if (two?.unconfirmed !== false || two?.severity !== 'not blocking' || two?.risk !== 'low') report(`bugs.mjs: BUG-2 after its confirmation: ${JSON.stringify(two)}`);
+    expect('a bug that does not exist', bugs(['set', 'BUG-9', '--risk', 'high']), 1, ['BUG-9 is not a bug']);
+    expect('acceptance through set', bugs(['set', 'BUG-1', '--status', 'accepted']), 1, ['becomes a risk']);
+    expect('a fix PR that is no number', bugs(['set', 'BUG-1', '--fix-pr', '12']), 1, ['is not a PR number']);
+    expect('the owner says no to a fix', bugs(['accept', 'BUG-3'], 'fallback: Live with it\n'), 0, ['ACCEPTED: BUG-3 becomes R-1']);
+    expect('a lesson', bugs(['lesson'], 'rule: Never x\nwhy: BUG-1\nchecked by: Not by a tool until BUG-1\n'), 0, ['RECORDED: L-1']);
+    expect('a lesson without what checks it', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\n'), 1, ['lacks checked by']);
+    expect('a lesson checked by a dash', bugs(['lesson'], 'rule: Never y\nwhy: BUG-1\nchecked by: -\n'), 1, ['"checked by" says nothing']);
+    // Review round 1: a risk of a review round is numbered past one that waits.
+    expect('a risk while another waits', bugs(['risk'], 'risk: A game in full screen hides it\nfallback: Look at the tray\n'), 0, ['ACCEPTED: R-2']);
+    expect('what waits never lands on main', bugs(['flush']), 1, ['protected']);
+    expect('nor a lesson in the tree of main', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: c\n'), 1, ['protected']);
+
+    // The first commit of the next branch takes everything that waits; the docs check passes on it.
+    gitIn(p, 'switch', '-qc', 'fix/BUG-1');
+    expect('flush', bugs(['flush']), 0, ['BUG-1 (new)', 'BUG-2 (new)', 'BUG-3 (new)', 'R-1 into docs/RISKS.md', 'R-2 into docs/RISKS.md', 'L-1 into docs/LESSONS.md']);
+    // Review round 2: what waits stays until a commit holds it, and a second flush before that commit writes nothing twice.
+    if (!existsSync(waiting)) report('bugs.mjs flush let what waits go before a commit holds it');
+    expect('a second flush before the commit', bugs(['flush']), 0, ['nothing new to move']);
+    if ((doc('docs/RISKS.md').match(/^\| R-1 \|/gm) ?? []).length !== 1 || (doc('docs/BUGS.md').match(/^\| BUG-1 \|/gm) ?? []).length !== 1) report('bugs.mjs: a second flush wrote a row twice');
+    if (!rowOf('BUG-3').includes('accepted (R-1)') || !/\| R-1 \| BUG-3 \(Pipes\), not fixed: /.test(doc('docs/RISKS.md'))) report(`bugs.mjs: the accepted bug and its risk: ${rowOf('BUG-3')}`);
+    // Review round 3: as continue's step 4 runs it, the status goes into the same first commit; the bug that waits
+    // is never laid over the row the flush wrote, and a change without --tree to it is refused until the commit.
+    expect("the conductor's own status", bugs(['set', 'BUG-1', '--status', 'in progress', '--tree']), 0, ['SET: BUG-1 status in docs/BUGS.md']);
+    expect('a change to a bug just written, without --tree', bugs(['set', 'BUG-1', '--title', 'Tray icon gone']), 1, ['set it with --tree']);
+    if (listed().find((b) => b.id === 'BUG-1')?.status !== 'in progress') report(`bugs.mjs list: the waiting new row was laid over the flushed one: ${JSON.stringify(listed())}`);
+    expect('a flush after the status', bugs(['flush']), 0, ['nothing new to move']);
+    if (!rowOf('BUG-1').includes('| in progress |')) report(`bugs.mjs flush wrote the waiting row over the status the branch set: ${rowOf('BUG-1')}`);
+    let dc = docsCheck(p, ['--stage', 'bug,lesson']);
+    if (dc.status !== 0) report(`docs-check --stage bug,lesson after a flush:\n${dc.stdout}`);
+    gitIn(p, 'commit', '-qam', 'docs: start BUG-1');
+    bugs(['list']);
+    if (existsSync(waiting) || existsSync(join(p, '.git', 'pitwall', 'risks.md')) || existsSync(join(p, '.git', 'pitwall', 'lessons.md'))) report('bugs.mjs: what the commit holds still waits in the git directory after the next run');
+    // Review round 1: a lesson in the tree names only bugs whose row is there; one naming a waiting bug waits with it.
+    expect('a lesson in the tree naming a bug that waits', bugs(['lesson', '--tree'], 'rule: r\nwhy: w\nchecked by: Not by a tool until BUG-7\n'), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
+    expect('a lesson in the tree naming a bug that is here', bugs(['lesson', '--tree'], 'rule: Check the tray\nwhy: BUG-1\nchecked by: a test\n'), 0, ['RECORDED: L-2 in docs/LESSONS.md']);
+    expect('a risk in the tree naming a bug that waits', bugs(['risk', '--tree'], 'risk: Slow until BUG-7 is fixed\nfallback: Plug it in\n'), 1, ['BUG-7 is not a row of docs/BUGS.md on this branch']);
+    expect('a risk in the tree naming that bug in a code span', bugs(['risk', '--tree'], 'risk: Slow until `BUG-7` is fixed, as $r = `run` would say\nfallback: Plug it in\n'), 0, ['ACCEPTED: R-3 in docs/RISKS.md']);
+    if (!doc('docs/RISKS.md').includes('Slow until `BUG-7` is fixed, as $r = `run` would say')) report('bugs.mjs risk: the text on stdin must reach docs/RISKS.md as written');
+    mkdirSync(join(p, 'docs', 'archive'), { recursive: true });
+    writeFileSync(join(p, 'docs', 'archive', 'bugs-1.md'), '# Bugs, archived\n\n| ID | Title |\n| --- | --- |\n| BUG-50 | Old one |\n');
+    expect('a lesson in the tree naming an archived bug', bugs(['lesson', '--tree'], 'rule: Keep the tray\nwhy: BUG-50\nchecked by: a test\n'), 0, ['RECORDED: L-3 in docs/LESSONS.md']);
+    gitIn(p, 'add', 'docs/archive/bugs-1.md');
+    expect('where it was found, put right', bugs(['set', 'BUG-1', '--found', 'owner', '--tree']), 0, ['SET: BUG-1 found']);
+    if (!rowOf('BUG-1').includes('| in progress |')) report(`bugs.mjs set --tree: ${rowOf('BUG-1')}`);
+    gitIn(p, 'commit', '-qam', 'docs: BUG-1 in progress');
+
+    // While fix/BUG-1 is in flight, the owner raises BUG-2, whose row is on that branch only, and files BUG-4; the
+    // next number counts that branch. A lesson naming a bug that is nowhere waits.
+    gitIn(p, 'switch', '-q', 'main');
+    expect('a change to a bug whose row is on the change in flight', bugs(['set', 'BUG-2', '--risk', 'high']), 0, ['SET: BUG-2 risk']);
+    if (listed().find((b) => b.id === 'BUG-2')?.risk !== 'high') report(`bugs.mjs list: BUG-2 raised, as seen from main: ${JSON.stringify(listed())}`);
+    expect('the next number counts every branch', bugs(['file'], bug({ title: 'Fourth' })), 0, ['FILED: BUG-4']);
+    expect('a lesson naming a bug that is nowhere', bugs(['lesson'], 'rule: r\nwhy: w\nchecked by: Not by a tool until BUG-99\n'), 0, ['RECORDED: L-4']);
+    // A branch that started before the fix merged: the change to BUG-2 keeps waiting (a copy, which the loop never makes).
+    const early = join(dir, 'early');
+    cpSync(p, early, { recursive: true });
+    gitIn(early, 'switch', '-qc', 'epic/E1-x');
+    const earlyFlush = runScript('bugs.mjs', ['flush', '--project', early]);
+    if (earlyFlush.status !== 0 || !/BUG-4 \(new\)/.test(earlyFlush.stdout) || !/Still waiting for the branch after the change in flight, which holds their row: BUG-2/.test(earlyFlush.stdout)) report(`bugs.mjs flush before the fix merged: exit ${earlyFlush.status}\n${earlyFlush.stdout}${earlyFlush.stderr}`);
+    // The fix merges; the next branch takes everything that waits, from main, which holds BUG-2's row now.
+    gitIn(p, 'switch', '-q', 'fix/BUG-1');
+    bugs(['set', 'BUG-1', '--status', 'in review', '--tree']);
+    gitIn(p, 'commit', '-qam', 'docs: BUG-1 in review');
+    gitIn(p, 'switch', '-q', 'main');
+    gitIn(p, 'merge', '-q', '--no-ff', 'fix/BUG-1', '-m', 'fix(BUG-1): no tray icon (#2)');
+    gitIn(p, 'switch', '-qc', 'epic/E1-x');
+    expect('flush after the fix merged', bugs(['flush']), 0, ['BUG-2 (risk)', 'BUG-4 (new)', 'Still waiting for the bugs they name: L-4']);
+    if (/\| L-4 \|/.test(doc('docs/LESSONS.md')) || !/\| L-4 \|/.test(readFileSync(join(p, '.git', 'pitwall', 'lessons.md'), 'utf8'))) report('bugs.mjs flush: a lesson naming a bug that is nowhere must keep waiting');
+    rmSync(join(p, '.git', 'pitwall', 'lessons.md'));
+    const rows = ['BUG-1', 'BUG-2', 'BUG-3', 'BUG-4'].map(rowOf);
+    if (!rows[0].includes('| owner |') || !rows[0].includes('| in review |') || !/\| Snooze is short \|.*\| not blocking \| high \| open \|/.test(rows[1]) || !rows[2].includes('accepted (R-1)') || !rows[3].includes('| Fourth |')) report(`bugs.mjs flush after the fix merged: ${JSON.stringify(rows)}`);
+    gitIn(p, 'commit', '-qam', 'docs: start E1-x');
+    expect('the fix recorded on the next branch', bugs(['set', 'BUG-1', '--status', 'fixed', '--fix-pr', '#2', '--tree']), 0, ['SET: BUG-1 status, fix']);
+    gitIn(p, 'commit', '-qam', 'docs: BUG-1 fixed');
+    expect('a later flush', bugs(['flush']), 0, []);
+    if (!/\| fixed \| #2 \|/.test(rowOf('BUG-1'))) report(`bugs.mjs: a later flush reopened a fixed bug: ${rowOf('BUG-1')}`);
+    if (listed().some((b) => b.branch)) report(`bugs.mjs list: a branch merged into main still adds its rows: ${JSON.stringify(listed())}`);
+    dc = docsCheck(p, ['--stage', 'bug,lesson']);
+    if (dc.status !== 0) report(`docs-check --stage bug,lesson after the second flush:\n${dc.stdout}`);
+    // A table with a column of its own is never rewritten: the column would be lost.
+    writeFileSync(join(p, 'docs', 'BUGS.md'), doc('docs/BUGS.md').replace('| Fix PR |', '| Fix PR | Notes |'));
+    expect('a column of its own', bugs(['set', 'BUG-2', '--title', 'x', '--tree']), 1, ['neither the template']);
+    expect('a column of its own, flushed', (bugs(['file'], bug({ title: 'Fifth' })), bugs(['flush'])), 1, ['nothing was written']);
+
+    // A table from before T4b: it reads, blocking and high; the first flush gives it the new columns.
+    const old = join(dir, 'old');
+    if (layOut(old).status !== 0) return report('layout failed');
+    writeFileSync(join(old, 'docs', 'BUGS.md'), '# Bugs\n\n| ID | Found in | Steps | Expected | Actual | Status | Fix PR |\n| --- | --- | --- | --- | --- | --- | --- |\n| BUG-1 | QA | Open the app | A tray icon | Nothing | open | - |\n| BUG-2 | owner | Snooze | 10 minutes | 5 | fixed | #4 |\n');
+    gitIn(old, 'init', '-q', '-b', 'main');
+    gitIn(old, 'add', '-A');
+    gitIn(old, 'commit', '-qm', 'an older layout');
+    dc = docsCheck(old, ['--stage', 'bug']);
+    if (dc.status !== 0) report(`docs-check --stage bug on a table from before T4b:\n${dc.stdout}`);
+    const oldList = JSON.parse(runScript('bugs.mjs', ['list', '--json', '--project', old]).stdout);
+    if (!oldList.old || JSON.stringify(oldList.bugs.map((b) => [b.id, b.severity, b.risk])) !== JSON.stringify([['BUG-1', 'blocking', 'high']])) report(`bugs.mjs list on a table from before T4b: ${JSON.stringify(oldList)}`);
+    gitIn(old, 'switch', '-qc', 'epic/E1-x');
+    const migrated = runScript('bugs.mjs', ['flush', '--project', old]);
+    if (migrated.status !== 0 || !/gains the columns Title, Severity, Risk/.test(migrated.stdout)) report(`bugs.mjs flush on a table from before T4b: exit ${migrated.status}\n${migrated.stdout}${migrated.stderr}`);
+    if (!readFileSync(join(old, 'docs', 'BUGS.md'), 'utf8').includes('| BUG-1 | Nothing | QA | Open the app | A tray icon | Nothing | blocking | high | open | - |')) report(`bugs.mjs flush: the migrated table\n${readFileSync(join(old, 'docs', 'BUGS.md'), 'utf8')}`);
+    dc = docsCheck(old, ['--stage', 'bug']);
+    if (dc.status !== 0) report(`docs-check --stage bug on the migrated table:\n${dc.stdout}`);
+
+    // docs-check --stage bug and lesson on each kind of gap.
+    const base = join(dir, 'gaps');
+    if (layOut(base).status !== 0) return report('layout failed');
+    let n = 0;
+    const gap = (label, stage, rel, rows, says) => {
+      const c = join(dir, `g${(n += 1)}`);
+      cpSync(base, c, { recursive: true });
+      writeFileSync(join(c, rel), `${readFileSync(join(c, rel), 'utf8').trimEnd()}\n${rows.join('\n')}\n`);
+      const r = docsCheck(c, ['--stage', stage]);
+      const missing = says.filter((w) => !r.stdout.includes(w));
+      if ((says.length ? r.status !== 1 : r.status !== 0) || missing.length) report(`docs-check --stage ${stage}, ${label}: exit ${r.status}${missing.length ? `, lacks "${missing.join('", "')}"` : ''}\n${r.stdout}`);
+    };
+    const B = (cells) => `| ${cells.join(' | ')} |`;
+    const ok = ['BUG-1', 'No tray icon', 'QA', 'Open the app', 'A tray icon', 'Nothing', 'blocking', 'normal', 'open', '-'];
+    const with_ = (i, v) => ok.map((x, j) => (j === i ? v : x));
+    gap('a good row', 'bug', 'docs/BUGS.md', [B(ok), B(with_(0, 'BUG-2').map((x, j) => (j === 6 ? 'blocking (unconfirmed)' : x)))], []);
+    gap('a severity of its own', 'bug', 'docs/BUGS.md', [B(with_(6, 'critical'))], ['severity "critical" is not one of blocking, not blocking']);
+    gap('a class of its own', 'bug', 'docs/BUGS.md', [B(with_(7, 'medium'))], ['risk "medium" is not one of low, normal, high']);
+    gap('unconfirmed but not blocking', 'bug', 'docs/BUGS.md', [B(with_(6, 'not blocking (unconfirmed)'))], ['a bug the owner has not confirmed is "blocking (unconfirmed)" until they answer']);
+    gap('a class marked unconfirmed', 'bug', 'docs/BUGS.md', [B(with_(7, 'high (unconfirmed)'))], ['risk "high (unconfirmed)" is not one of low, normal, high']);
+    gap('no title', 'bug', 'docs/BUGS.md', [B(with_(1, ''))], ['BUG-1: has no title']);
+    gap('a place of its own', 'bug', 'docs/BUGS.md', [B(with_(2, 'lab'))], ['found in "lab"']);
+    gap('no steps', 'bug', 'docs/BUGS.md', [B(with_(3, ''))], ['says nothing under "Steps"']);
+    gap('fixed with no PR', 'bug', 'docs/BUGS.md', [B(with_(8, 'fixed'))], ['is fixed, and names no fix PR']);
+    gap('accepted as a risk nobody accepted', 'bug', 'docs/BUGS.md', [B(with_(8, 'accepted (R-9)'))], ['is accepted as R-9, which is not a risk the owner accepted']);
+    gap('a status of its own', 'bug', 'docs/BUGS.md', [B(with_(8, 'done'))], ['status "done" is not one of']);
+    gap('the same bug twice', 'bug', 'docs/BUGS.md', [B(ok), B(ok)], ['BUG-1 is in the table twice']);
+    const rk = join(dir, 'rk');
+    cpSync(base, rk, { recursive: true });
+    writeFileSync(join(rk, 'docs', 'RISKS.md'), '# Risks\n\n| ID | Risk | Fallback | Accepted on |\n| --- | --- | --- | --- |\n| R-1 | A | B | 2026-11-11 |\n| R-1 | C | D | 2026-11-11 |\n');
+    if (!/R-1 is in the table twice/.test(docsCheck(rk, ['--stage', 'bug']).stdout)) report('docs-check --stage bug does not refuse a risk numbered twice');
+    gap('a lesson the way the skill records it', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A review finding | 2026-11-11 | Not by a tool until the check is built |'], []);
+    gap('a lesson nothing checks', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A finding | 2026-11-11 |  |'], ['says nothing under "Checked by"']);
+    gap('a lesson checked by a dash', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A finding | 2026-11-11 | - |'], ['says nothing under "Checked by"']);
+    gap('a lesson with no date', 'lesson', 'docs/LESSONS.md', ['| L-1 | Never x | A finding | soon | a test |'], ['date "soon" is not a date']);
+    gap('a lesson with no rule', 'lesson', 'docs/LESSONS.md', ['| L-1 |  | A finding | 2026-11-11 | a test |'], ['L-1: states no rule']);
+    const cols = join(dir, 'cols');
+    cpSync(base, cols, { recursive: true });
+    writeFileSync(join(cols, 'docs', 'BUGS.md'), readFileSync(join(cols, 'docs', 'BUGS.md'), 'utf8').replace('| Severity | Risk |', '| Priority | Risk |'));
+    if (!/must keep the template's columns/.test(docsCheck(cols, ['--stage', 'bug']).stdout)) report('docs-check --stage bug does not refuse a table whose columns changed');
   });
 });
 

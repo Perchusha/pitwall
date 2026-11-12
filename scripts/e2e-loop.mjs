@@ -1,5 +1,5 @@
-// The headless runs of the epic loop (T3b-AC7), started by `node scripts/e2e.mjs` with the stages e0
-// and e1. Not part of scripts/check.mjs or CI: it needs a signed-in Claude Code CLI and spends the
+// The headless runs of the epic loop (T3b-AC7), started by `node scripts/e2e.mjs` with the stages e0,
+// e1 and bug. Not part of scripts/check.mjs or CI: it needs a signed-in Claude Code CLI and spends the
 // subscription.
 //
 // e0 starts from the project the plan stage saved: the harness, standing in for GitHub and the
@@ -10,8 +10,12 @@
 // e0 saved: the harness, as the owner, runs merge-choice.mjs --allow first, so E1 merges by its
 // risk class through the allow rules alone. In both, review-status.mjs and merge.mjs are not in the
 // session's allow list: e0 lets them through as the owner would answer the prompts, e1 relies on
-// the rules ADR-0010 writes. A stage passes on what git and GitHub hold afterwards, never on the
-// model's wording, and saves its state and its numbers at once.
+// the rules ADR-0010 writes. bug starts from the state e1 saved (T4b-AC4): the harness, as a careless
+// merge would, breaks the tray menu's Quit on main and drops its tests; one session files the defect with
+// /pitwall:bug, the scripted owner confirming it blocking and normal, and a second runs
+// /pitwall:continue 1, which must fix it before the planned E2 and merge it after the owner's yes, as
+// every fix merges. A stage passes on what git and GitHub hold afterwards, never on the model's wording,
+// and saves its state and its numbers at once.
 //
 // By default GitHub is the fake of scripts/fake-github.mjs, with a local bare repository as origin
 // and a CI that runs the gate job of ci.yml. --github <owner/repo> runs against an empty private
@@ -32,7 +36,11 @@ const plugin = process.env.PITWALL_E2E_PLUGIN ?? join(root, 'plugins', 'pitwall'
 const tools = process.env.PITWALL_E2E_TOOLS ?? join(root, 'scripts');
 const P = plugin.split('\\').join('/');
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-export const LOOP_STAGES = ['e0', 'e1'];
+export const LOOP_STAGES = ['e0', 'e1', 'bug'];
+// The stage each loop stage starts from, after e0.
+const SEEDED_FROM = { e1: 'e0', bug: 'e1' };
+// The defect the bug stage files: the harness breaks it on main before the stage (injectDefect).
+const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1-AC1 says Quit removes the icon and ends them. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
 
 const IDEA = 'A desktop app that reminds me to stand up and move every 45 minutes';
 const SCENARIO = `You are the owner of a project: ${IDEA}. Its plan is merged, and the epic loop builds it now.
@@ -42,10 +50,13 @@ Facts you answer from:
 - The GitHub repository exists and gh is signed in. It is private on GitHub Free, so pitwall's hook guards main (merge protection local-hook).
 - You want the plan built as the epics say. For a choice the epics and ADRs leave open, you take the assistant's recommendation.
 - Every manual QA scenario of a merged epic you are asked about (the test window in front of a full-screen video, the installer, the packaged app), you ran today on both laptops, and it passed: 20 of 20 rounds, or whatever count the scenario asks for. A manual QA scenario of the epic in progress you will run after its merge.`;
+const BUG_FACTS = `- Since the last change merged, picking Quit in the tray menu does nothing on both laptops: ${BUG_REPORT}
+- A QA scenario of the fix you will run after its merge.`;
 // The owner's answer on merges without them differs by stage: no at e0; at e1 the harness ran merge-choice.mjs --allow for them.
 const OWNER_RULES = (stage) => `Answer as this owner, in English, in one to three sentences, and only what was asked.
 - When asked to set up or record merge protection, or to run protect.mjs: yes.
-${stage === 'e0' ? '- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.' : '- When asked whether low and normal risk epics may merge without you: yes, you ran merge-choice.mjs --allow yourself; .claude/pitwall.json records it.'}
+${stage === 'e0' ? '- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.' : '- When asked whether low and normal risk epics may merge without you: yes, you ran merge-choice.mjs --allow yourself; .claude/pitwall.json records it.'}${stage === 'bug' ? `
+- When asked to confirm the severity and the risk class of the bug: blocking and normal.` : ''}
 - When asked whether to merge an epic or a fix now: yes.
 - When asked a question about an epic (clarification, a NEEDS_OWNER question, an option to pick): answer from the facts; when the facts do not say, accept the assistant's recommendation.
 - When asked to accept a risk: accept it with the fallback the assistant proposes.
@@ -158,15 +169,16 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     git('pull', '-q', '--ff-only', 'origin', 'main');
     console.log(`plan merged on ${github ? github : 'the fake GitHub'}: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
   } else {
-    const seed = join(stateDir, `${tag}e0`);
-    if (!existsSync(join(seed, 'project', '.git'))) throw new Error(`no saved e0 at ${seed}: run node scripts/e2e.mjs --from e0${github ? ` --github ${github}` : ''} first`);
+    const before = SEEDED_FROM[first];
+    const seed = join(stateDir, `${tag}${before}`);
+    if (!existsSync(join(seed, 'project', '.git'))) throw new Error(`no saved ${before} at ${seed}: run node scripts/e2e.mjs --from ${before === 'e0' ? 'e0' : `${before} --until ${before}`}${github ? ` --github ${github}` : ''} first`);
     cpSync(join(seed, 'project'), project, { recursive: true });
     if (!github) {
       cpSync(join(seed, 'origin.git'), originDir, { recursive: true });
       cpSync(join(seed, 'github'), ghState, { recursive: true });
       git('remote', 'set-url', 'origin', originDir);
     }
-    const meta = existsSync(join(stateDir, `${tag}e0.json`)) ? readFileSync(join(stateDir, `${tag}e0.json`), 'utf8').trim() : '';
+    const meta = existsSync(join(stateDir, `${tag}${before}.json`)) ? readFileSync(join(stateDir, `${tag}${before}.json`), 'utf8').trim() : '';
     console.log(`seeded from ${seed} at ${git('log', '--oneline', '-1').stdout.trim()} ${meta}`);
     // On GitHub, the remote state of the snapshot first: the same repository, main where it was, nothing left over (T4a-AC4).
     if (github) {
@@ -206,14 +218,86 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (!remote('ls-tree', '--name-only', 'origin/main', 'docs/reviews/').stdout.split('\n').some((f) => /^docs\/reviews\/E1-.+\.md$/.test(f))) unmet.push('no review file of E1 on main');
       return unmet;
     },
+    // T4b-AC4: a blocking bug goes before the planned E2, and its fix merges after the owner's yes.
+    bug: () => {
+      const unmet = [];
+      const m = merges().find((x) => /^fix\(BUG-1\): /.test(x[1]));
+      if (!m) return ['BUG-1 is not merged into origin main with a "fix(BUG-1): ..." merge commit'];
+      // Every fix merges after the owner's yes, at any class (ADR-0010; owner, 2026-11-11).
+      if (!/^A bug fix, approved by the owner as every fix is \(pitwall ADR-0010\)\. Approved by the owner/.test(m[2] ?? '')) unmet.push(`BUG-1's merge commit does not record the owner's yes: "${m[2]}"`);
+      if (merges().some((x) => /^feat\(E2\): /.test(x[1])) || /refs\/heads\/epic\/E2-/.test(git('ls-remote', '--heads', 'origin').stdout)) unmet.push('E2 was started before the blocking bug was fixed');
+      const bugs = shown('docs/BUGS.md').stdout;
+      if (!/^\| ID \| Title \| Found in \| Steps \| Expected \| Actual \| Severity \| Risk \| Status \| Fix PR \|$/m.test(bugs)) unmet.push('docs/BUGS.md on main lacks the columns of T4b: the first commit of the fix did not give the table of seven columns its new ones');
+      if (!/^\| BUG-1 \|[^\n]*\| blocking \| normal \|/m.test(bugs)) unmet.push('docs/BUGS.md on main does not hold BUG-1 as blocking and normal');
+      if (shown('docs/reviews/BUG-1.md').status !== 0) unmet.push('docs/reviews/BUG-1.md is not on main');
+      // The owner was asked about the fix's merge before it happened (owner, 2026-11-11): the merge commit alone
+      // cannot tell a yes the conductor asked for from --owner-approved run without a question.
+      if (!fixAsked.before) unmet.push('the fix merged before the scripted owner was asked about its merge');
+      // The next branch's flush leaves BUG-1 on main as the fix left it (owner, 2026-11-11; review round 3).
+      fixAsked.reopened ??= reopenedAtNextFlush();
+      if (fixAsked.reopened) unmet.push(`the first commit of the next branch would reopen BUG-1: bugs.mjs flush there writes "${fixAsked.reopened}"`);
+      if (existsSync(join(project, '.git', 'pitwall', 'bugs.md'))) unmet.push('rows still wait in the git directory: the first commit of the fix did not take them (bugs.mjs flush)');
+      return unmet;
+    },
+  };
+  // The bug stage: whether the owner was asked about the fix's merge before it happened, and what the next
+  // branch's flush would make of BUG-1's row on main.
+  const fixAsked = { asked: false, merged: false, before: false, reopened: undefined };
+  const fixMerged = () => merges().some((x) => /^fix\(BUG-1\): /.test(x[1]));
+  // A copy of the git directory, with what waits in it, checked out at origin's main on a branch of its own, as
+  // the next branch of the loop starts; the project itself is left as the stage left it.
+  function reopenedAtNextFlush() {
+    const copy = mkdtempSync(join(scratch, 'next-branch-'));
+    try {
+      cpSync(join(project, '.git'), join(copy, '.git'), { recursive: true });
+      const g = (...a) => run('git', a, { cwd: copy, env });
+      g('checkout', '-q', '-f', '-B', 'e2e-next', 'origin/main');
+      const flushed = run(process.execPath, [join(plugin, 'scripts', 'bugs.mjs'), 'flush', '--project', copy], { cwd: copy, env });
+      if (flushed.status !== 0) return `nothing: it refused (${(flushed.stderr || flushed.stdout).trim()})`;
+      const row = readFileSync(join(copy, 'docs', 'BUGS.md'), 'utf8').split('\n').find((l) => l.startsWith('| BUG-1 |')) ?? '';
+      return /\| open \|/.test(row) ? row : '';
+    } finally {
+      rmSync(copy, { recursive: true, force: true });
+    }
+  }
+  // The filing session of the bug stage is done once BUG-1 waits in the git directory, confirmed.
+  const filed = () => {
+    const f = join(project, '.git', 'pitwall', 'bugs.md');
+    return existsSync(f) && /^\| BUG-1 \|[^\n]*\| blocking \| normal \| open \|/m.test(readFileSync(f, 'utf8'));
   };
 
+  // The bug stage's defect, broken on main as a careless merge would break it: Quit no longer quits, and the
+  // tests named for it are gone, so the gate stays green (checked on the saved e1 of 2026-11-10 with
+  // scripts/gate --full). It needs the E1 that e1 run built; another E1 needs another defect.
+  function injectDefect() {
+    const tray = join(project, 'src', 'main', 'tray.ts');
+    const code = existsSync(tray) ? readFileSync(tray, 'utf8') : '';
+    const brokenCode = code.replace(/click: \(\) => \{\s*onQuit\(\);\s*\}/, "click: () => {\n        if (status === '') {\n          onQuit();\n        }\n      }");
+    const dir = join(project, 'tests', 'main');
+    const changed = [];
+    for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith('.test.ts')) : []) {
+      const text = readFileSync(join(dir, f), 'utf8');
+      const without = text.replace(/\n([ \t]*)it\('"Quit"[^'\n]*', (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/g, '');
+      if (without === text) continue;
+      writeFileSync(join(dir, f), without);
+      changed.push(`tests/main/${f}`);
+    }
+    if (brokenCode === code || changed.length === 0) throw new Error('the saved e1 has no Quit item calling onQuit() in src/main/tray.ts, or no test in tests/main/ named for "Quit": E1 was built anew, so give the bug stage a defect of the new code (scripts/e2e-loop.mjs, injectDefect)');
+    writeFileSync(tray, brokenCode);
+    git('switch', '-q', 'main');
+    git('commit', '-q', '-m', 'refactor(E1): the tray menu', '--', 'src/main/tray.ts', ...changed);
+    const p = git('push', '-q', 'origin', 'main');
+    if (p.status !== 0) throw new Error(`push of the broken main failed: ${p.stderr}`);
+    console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
+  }
+
   const allowed = [
-    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`,
+    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`, `Bash(node "${P}/scripts/bugs.mjs" *)`,
     'Bash(git *)', 'Bash(gh *)', 'Bash(npm *)', 'Bash(npx *)', 'Bash(bash scripts/gate *)', 'Bash(scripts/gate *)', 'Bash(ls *)', 'Bash(cd *)', 'Bash(echo *)', 'Bash(cat *)', 'Bash(pwd)', 'Bash(mkdir *)',
     'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent',
   ];
-  // e0: the owner said no to merges without them, so they answer each prompt for the status and the merge; standing in for those answers.
+  // e0: the owner said no to merges without them, so they answer each prompt for the status and the merge; standing in for
+  // those answers. bug: the owner's yes to the fix's merge, which every fix waits for.
   const ownerAnswers = [`Bash(node "${P}/scripts/review-status.mjs" *)`, `Bash(node "${P}/scripts/merge.mjs" *)`];
 
   const results = [];
@@ -225,12 +309,15 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (choice.status !== 0) throw new Error(`merge-choice.mjs --allow: ${choice.stdout}${choice.stderr}`);
       console.log('the owner allowed low and normal risk to merge without them (merge-choice.mjs --allow)');
     }
+    if (stage === 'bug') injectDefect();
+    // The bug stage files the defect in one session, then runs the loop in a second.
+    let filing = stage === 'bug';
     const started = Date.now();
     const history = [];
     let cost = 0;
     let turns = 0;
     let sessionId;
-    let prompt = '/pitwall:continue 1';
+    let prompt = filing ? `/pitwall:bug ${BUG_REPORT}` : '/pitwall:continue 1';
     let unmet = ['not run'];
     let error = '';
     console.log(`\n== ${stage}${github ? ` on ${github}` : ''}`);
@@ -239,7 +326,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         turns += 1;
         const args = ['-p', '--plugin-dir', P, '--output-format', 'json', '--permission-mode', 'auto', '--permission-prompts', 'none', '--strict-mcp-config'];
         if (sessionId) args.push('--resume', sessionId);
-        args.push('--disallowedTools', 'PowerShell', '--allowedTools', ...allowed, ...(stage === 'e0' ? ownerAnswers : []));
+        args.push('--disallowedTools', 'PowerShell', '--allowedTools', ...allowed, ...(stage === 'e0' || stage === 'bug' ? ownerAnswers : []));
         const r = run('claude', args, { cwd: project, env, input: prompt, timeout: 60 * 60 * 1000 });
         let out;
         try {
@@ -252,9 +339,33 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         cost += out.total_cost_usd ?? 0;
         history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
         console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
-        unmet = promises[stage]();
-        if (unmet.length === 0) break;
-        const ask = `${SCENARIO}\n\n${OWNER_RULES(stage)}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
+        if (stage === 'bug' && !filing) {
+          // Merged in this turn: the question had to come in an earlier one. Then this turn's question counts.
+          if (!fixAsked.merged && fixMerged()) {
+            fixAsked.merged = true;
+            fixAsked.before = fixAsked.asked;
+          }
+          if (/\bmerg/i.test(String(out.result ?? '')) && String(out.result ?? '').includes('?')) fixAsked.asked = true;
+          if (fixAsked.merged && !fixAsked.before) {
+            unmet = promises[stage]();
+            error = 'the fix merged before the scripted owner was asked about its merge';
+            break;
+          }
+        }
+        if (filing) {
+          if (filed()) {
+            // Filed: the owner starts the loop in a fresh session.
+            console.log('  BUG-1 waits in the git directory, confirmed; the loop starts');
+            filing = false;
+            sessionId = undefined;
+            prompt = '/pitwall:continue 1';
+            continue;
+          }
+        } else {
+          unmet = promises[stage]();
+          if (unmet.length === 0) break;
+        }
+        const ask = `${SCENARIO}${stage === 'bug' ? `\n${BUG_FACTS}` : ''}\n\n${OWNER_RULES(stage)}\n\nThe conversation so far, oldest first:\n\n${history.slice(-12).map((h) => `${h.who}: ${h.text}`).join('\n\n')}\n\nYour reply as the owner:`;
         const o = run('claude', ['-p', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--disable-slash-commands'], { cwd: ownerDir, input: ask, timeout: 5 * 60 * 1000 });
         const reply = JSON.parse(o.stdout);
         cost += reply.total_cost_usd ?? 0;
@@ -270,6 +381,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         prompt = text;
         console.log(`  owner: ${prompt.split('\n')[0].slice(0, 110)}`);
       }
+      if (filing && !error) error = `BUG-1 was not filed, confirmed blocking and normal, after ${maxTurns} turns`;
       if (unmet.length && !error) error = `not done after ${maxTurns} turns`;
     } catch (e) {
       error = e.message;

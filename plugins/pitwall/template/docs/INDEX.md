@@ -15,7 +15,7 @@ One line per document: what it holds and when to read it. Every entity has an ID
 | `reviews/` | One code review per epic or bug fix: what covers each criterion, the findings and what closed them | Reviewing a change, fixing a finding |
 | `PLAN-REVIEW.md` | The plan reviewer's pre-mortem, checklists, sizing and findings, and how each was closed | Changing the plan |
 | `RISKS.md` | R-n: accepted risks and their fallbacks | Changing the plan or the stack |
-| `BUGS.md` | BUG-n: where found, steps, expected, actual, status, fix PR | Selecting work, fixing a bug |
+| `BUGS.md` | BUG-n: title, where found, steps, expected, actual, severity, risk class, status, fix PR | Selecting work, fixing a bug |
 | `LESSONS.md` | L-n: rules learned from mistakes and how each is checked | Before writing or reviewing code |
 | `JOURNAL.md` | One entry per epic: what shipped, numbers, cost, surprises | Reviewing progress |
 | `archive/` | Closed entries moved out of the state files | Looking up history |

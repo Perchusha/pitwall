@@ -11,8 +11,8 @@
 // it at any risk class; without it only an epic whose risk class merges by itself
 // (riskClasses.<class>.merge "auto": low and normal) in a project whose owner allowed that
 // (autoMerge in .claude/pitwall.json, ADR-0010). Anything else waits for the owner (exit 4):
-// high risk, a bug fix (bugs carry no risk class before T4b), an owner who said no or was not
-// asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
+// high risk, a bug fix at any class (merges without the owner cover epics only: ADR-0010, T4b),
+// an owner who said no or was not asked yet. pitwall's allow rule names "merge.mjs --change" exactly, with no wildcard, so
 // --owner-approved never runs under it (ADR-0010).
 //
 // Before it merges, it checks that it may (L-5): gh is installed and signed in, the account
@@ -112,7 +112,7 @@ if (change && !approved) {
     settings = JSON.parse(readFileSync(join(project, '.claude', 'pitwall.json'), 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
   } catch {}
   const choice = settings?.[cfg.loop.ownerChoice];
-  if (!change.epic) owners(`${change.bug} is a bug fix: a fix merges after the owner's yes until bugs carry a risk class`);
+  if (!change.epic) owners(`${change.bug} is a bug fix: every fix merges after the owner's yes, at any risk class (pitwall ADR-0010)`);
   if (cfg.riskClasses[riskClass].merge !== 'auto') owners(`${change.epic} is ${riskClass} risk: it merges only after the owner's yes (SPEC 6)`);
   if (choice !== true) {
     owners(choice === false
@@ -208,7 +208,7 @@ if (args.plan) {
   const prTitle = plainWords(pr.title).replace(/^(?:fix|feat)\([^)]*\):\s*/i, '').replace(new RegExp(`^${change.bug ?? change.epic}\\b\\s*[-:]?\\s*`), '');
   subject = `${change.epic ? 'feat' : 'fix'}(${change.epic ?? change.bug}): ${plainWords(title) || prTitle || change.id} (#${pr.number})`;
   const who = approved ? `Approved by the owner, ${today()}, at ${sha}.` : `Merged without the owner, who allowed low and normal risk to merge once ${cfg.review.gateContext} and ${cfg.review.statusContext} are green (pitwall ADR-0010), at ${sha}.`;
-  body = `${change.epic ? `Risk class: ${riskClass}.` : 'A bug fix, approved by the owner as every fix is until bugs carry a risk class.'} ${who}`;
+  body = `${change.epic ? `Risk class: ${riskClass}.` : 'A bug fix, approved by the owner as every fix is (pitwall ADR-0010).'} ${who}`;
 }
 const mergeArgs = ['pr', 'merge', String(pr.number), '--merge', '--match-head-commit', sha, '--subject', subject, '--body', body];
 const command = `gh pr merge ${pr.number} --merge --match-head-commit ${sha} --subject "${subject}" --body "${body}"`;
