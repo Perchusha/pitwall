@@ -34,8 +34,23 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const plugin = join(root, 'plugins', 'pitwall');
 const rel = (p) => relative(root, p) || '.';
 
+// --fast runs only the steps that read the repository or lay out scratch projects, about 9 seconds:
+// pitwall's own pre-commit hook runs it (T4d-AC4, L-14). The steps with the fake gh and the hooks'
+// recorded payloads (slowStep) stay in CI and in the full run before a PR.
+const cliArgs = process.argv.slice(2);
+const fast = cliArgs.includes('--fast');
+if (cliArgs.some((a) => a !== '--fast')) {
+  console.error('usage: node scripts/check.mjs [--fast]');
+  process.exit(2);
+}
+
 let failed = 0;
-function step(name, fn) {
+let skipped = 0;
+function step(name, fn, slow = false) {
+  if (slow && fast) {
+    skipped += 1;
+    return;
+  }
   const problems = [];
   try {
     fn((msg) => problems.push(msg));
@@ -50,6 +65,8 @@ function step(name, fn) {
     for (const p of problems) console.log(`  - ${p}`);
   }
 }
+
+const slowStep = (name, fn) => step(name, fn, true);
 
 function files(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -202,6 +219,7 @@ step('template', (report) => {
     '.github/workflows/ci.yml',
     '.github/pull_request_template.md',
     'scripts/gate',
+    '.githooks/pre-commit',
     'docs/INDEX.md',
     'docs/IDEA.md',
     'docs/DISCOVERY.md',
@@ -221,14 +239,23 @@ step('template', (report) => {
   ];
   for (const f of required) if (!existsSync(join(t, f))) report(`template/${f} is missing`);
 
-  // Executable in the git index when there is one (what a clone gets), else on disk.
-  const gate = join(t, 'scripts', 'gate');
-  if (existsSync(gate)) {
-    const staged = spawnSync('git', ['ls-files', '-s', rel(gate)], { cwd: root, encoding: 'utf8' });
+  // Executable in the git index when there is one (what a clone gets), else on disk: the template's gate, its git
+  // hook and pitwall's own (T4d-AC4), since git on macOS and Linux skips a hook that is not executable.
+  for (const f of [join(t, 'scripts', 'gate'), join(t, '.githooks', 'pre-commit'), join(root, '.githooks', 'pre-commit')]) {
+    if (!existsSync(f)) {
+      report(`${rel(f)} is missing`);
+      continue;
+    }
+    const staged = spawnSync('git', ['ls-files', '-s', rel(f)], { cwd: root, encoding: 'utf8' });
     const indexMode = staged.status === 0 ? staged.stdout.trim().split(/\s+/)[0] : '';
-    const executable = indexMode ? indexMode === '100755' : (statSync(gate).mode & 0o111) !== 0;
-    if (!executable) report(`template/scripts/gate is not executable${indexMode ? ` in the git index (${indexMode})` : ''}`);
+    const executable = indexMode ? indexMode === '100755' : (statSync(f).mode & 0o111) !== 0;
+    if (!executable) report(`${rel(f)} is not executable${indexMode ? ` in the git index (${indexMode})` : ''}`);
   }
+  // L-4: the hooks stay LF, in the template and in pitwall, or bash stops at a carriage return.
+  for (const f of [join(t, 'gitattributes.tmpl'), join(root, '.gitattributes')]) {
+    if (!/^\.githooks\/\* text eol=lf$/m.test(readFileSync(f, 'utf8'))) report(`${rel(f)} has no line ".githooks/* text eol=lf" (L-4)`);
+  }
+  if (!/node scripts\/check\.mjs --fast/.test(readFileSync(join(root, '.githooks', 'pre-commit'), 'utf8'))) report('.githooks/pre-commit does not run node scripts/check.mjs --fast (T4d-AC4)');
 
   // L-1: a file a tool loads by name, or anything under .claude/, must carry .tmpl inside this repository.
   const toolLoaded = new Set(['CLAUDE.md', 'AGENTS.md', '.mcp.json', '.gitignore', '.gitattributes', '.editorconfig']);
@@ -273,6 +300,91 @@ step('template gate behaviour', (report) => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 6b2. T4d-AC1, AC2, AC5: the gate before every commit, in a scratch project laid out and set up as kickoff does it.
+// A red gate refuses a commit of code and says why, a green one passes, spike/* and a commit of docs alone pass while
+// it is red, and a gate that commits in a scratch repository of its own leaves the project's commit alone. Then
+// layout.mjs --hook in a project laid out before T4d.
+step('template pre-commit hook', (report) => {
+  scratch('pitwall-hook-', (dir) => {
+    const env = { ...process.env, GIT_CEILING_DIRECTORIES: dir, GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@pitwall', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@pitwall' };
+    const git = (cwd, ...a) => spawnSync('git', a, { cwd, env, encoding: 'utf8' });
+    const commits = (label, cwd, want, args, expectText) => {
+      const r = git(cwd, 'commit', '-q', ...args);
+      if ((r.status === 0) !== want) report(`${label}: the commit ${want ? 'was refused' : 'went through'}\n${r.stdout}${r.stderr}`);
+      if (expectText && !expectText.test(`${r.stdout}${r.stderr}`)) report(`${label}: the refusal does not show ${expectText}\n${r.stdout}${r.stderr}`);
+    };
+    const p = join(dir, 'p');
+    if (layOut(p).status !== 0) return report('layout failed');
+    if (process.platform !== 'win32' && (statSync(join(p, '.githooks', 'pre-commit')).mode & 0o111) === 0) report('layout.mjs left .githooks/pre-commit not executable on disk');
+    git(p, 'init', '-q', '-b', 'main');
+    git(p, 'add', '-A');
+    git(p, 'update-index', '--chmod=+x', 'scripts/gate', '.githooks/pre-commit');
+    git(p, 'config', 'core.hooksPath', '.githooks');
+    commits('the skeleton, the stub green', p, true, ['-m', 'chore: kickoff']);
+    if (git(p, 'ls-tree', 'HEAD', '.githooks/pre-commit').stdout.split(/\s+/)[0] !== '100755') report('the skeleton commit holds .githooks/pre-commit not executable');
+    mkdirSync(join(p, 'src'));
+    writeFileSync(join(p, 'src', 'main.ts'), 'export {};\n');
+    git(p, 'add', 'src/main.ts');
+    commits('code with the stub red', p, false, ['-m', 'feat: code'], /gate: FAIL[\s\S]*pre-commit: scripts\/gate --fast failed/);
+    writeFileSync(join(p, 'docs', 'IDEA.md'), `${readFileSync(join(p, 'docs', 'IDEA.md'), 'utf8')}\nMore.\n`);
+    commits('docs alone with the stub red', p, true, ['-m', 'docs: idea', '--', 'docs/IDEA.md']);
+    writeFileSync(join(p, 'docs', 'tool.ts'), 'export {};\n');
+    git(p, 'add', 'docs/tool.ts');
+    commits('code under docs/ with the stub red', p, false, ['-m', 'docs: a tool', '--', 'docs/tool.ts']);
+    git(p, 'rm', '-q', '--cached', 'docs/tool.ts');
+    rmSync(join(p, 'docs', 'tool.ts'));
+    git(p, 'switch', '-q', '-c', 'spike/probe');
+    commits('code on spike/* with the stub red', p, true, ['-m', 'spike: probe']);
+    git(p, 'switch', '-q', 'main');
+    git(p, 'switch', '-q', '-c', 'epic/E0-skeleton');
+    // A green gate whose test commits in a scratch repository of its own, as a project's tests may.
+    writeFileSync(join(p, 'scripts', 'gate'), '#!/usr/bin/env bash\nset -e\nd="$(mktemp -d)"\ngit -C "$d" init -q\necho x > "$d/stray.txt"\ngit -C "$d" add stray.txt\ngit -C "$d" -c user.email=t@t -c user.name=t commit -qm x\nrm -rf "$d"\necho "gate: PASS"\n');
+    // The spike's commit took src/ along when the switch left it.
+    mkdirSync(join(p, 'src'), { recursive: true });
+    writeFileSync(join(p, 'src', 'main.ts'), 'export const a = 1;\n');
+    git(p, 'add', 'src/main.ts');
+    commits('code with a green gate, everything tracked', p, true, ['-am', 'feat: the real gate']);
+    if (git(p, 'ls-files', 'stray.txt').stdout.trim()) report("the gate's own scratch repository wrote stray.txt into the project's commit");
+    writeFileSync(join(p, 'src', 'main.ts'), 'export const a = 2;\n');
+    commits('a partial commit with a green gate', p, true, ['-m', 'feat: a partial commit', '--', 'src/main.ts']);
+    if (git(p, 'status', '--porcelain').stdout.trim()) report(`the tree is not clean after the commits through the hook:\n${git(p, 'status', '--porcelain').stdout}`);
+
+    // A project laid out before T4d: no hook, the old stub, core.hooksPath unset.
+    const o = join(dir, 'o');
+    if (layOut(o).status !== 0) return report('layout failed');
+    rmSync(join(o, '.githooks'), { recursive: true, force: true });
+    writeFileSync(join(o, 'scripts', 'gate'), readFileSync(join(o, 'scripts', 'gate'), 'utf8').replace('scripts/gate|.githooks/*|', 'scripts/gate|'));
+    git(o, 'init', '-q', '-b', 'main');
+    git(o, 'add', '-A');
+    commits('the old skeleton', o, true, ['-m', 'chore: kickoff']);
+    const hookRun = () => runScript('layout.mjs', ['--hook', '--target', o], { env });
+    const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    let r = hookRun();
+    if (r.status !== 1 || !/merge protection guards/.test(r.stderr)) report(`layout --hook on main: expected a refusal, got exit ${r.status}\n${r.stdout}${r.stderr}`);
+    git(o, 'switch', '-q', '-c', 'epic/E0-skeleton');
+    writeFileSync(join(o, 'docs', 'IDEA.md'), `${readFileSync(join(o, 'docs', 'IDEA.md'), 'utf8')}\nMore.\n`);
+    git(o, 'add', 'docs/IDEA.md');
+    r = hookRun();
+    if (r.status !== 1 || !/other changes are staged/.test(r.stderr)) report(`layout --hook with docs staged: expected a refusal, got exit ${r.status}\n${r.stdout}${r.stderr}`);
+    commits('the first commit of the branch', o, true, ['-m', 'docs: start E0']);
+    r = hookRun();
+    if (r.status !== 0) report(`layout --hook: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    if (git(o, 'ls-tree', 'HEAD', '.githooks/pre-commit').stdout.split(/\s+/)[0] !== '100755') report('layout --hook did not commit .githooks/pre-commit executable');
+    if (git(o, 'config', 'core.hooksPath').stdout.trim() !== '.githooks') report('layout --hook did not set core.hooksPath');
+    if (git(o, 'log', '-1', '--format=%s').stdout.trim() !== `chore: the gate before every commit, from pitwall ${version}`) report(`layout --hook committed "${git(o, 'log', '-1', '--format=%s').stdout.trim()}"`);
+    r = hookRun();
+    if (r.status !== 0 || !/in the index already/.test(r.stdout)) report(`layout --hook a second time: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    mkdirSync(join(o, 'src'));
+    writeFileSync(join(o, 'src', 'main.ts'), 'export {};\n');
+    git(o, 'add', 'src/main.ts');
+    commits('code in the old project, now through the hook', o, false, ['-m', 'feat: code'], /pre-commit: scripts\/gate --fast failed/);
+    git(o, 'config', 'core.hooksPath', '.husky');
+    git(o, 'rm', '-q', '--cached', 'src/main.ts');
+    r = hookRun();
+    if (r.status !== 1 || !/a folder of hooks the owner set/.test(r.stderr)) report(`layout --hook over the owner's own core.hooksPath: expected a refusal, got exit ${r.status}\n${r.stdout}${r.stderr}`);
+  });
 });
 
 // 6c. Every script parses, including the ones only the owner runs (scripts/e2e.mjs).
@@ -730,7 +842,7 @@ function makePlanRepo(dir, { spike = true } = {}) {
 
 // 6g. T2-AC1, T2-AC3, T2-AC4: the spike, plan and plan-review checks pass on a project the way
 // the skills leave it, and report each kind of gap. The spike check reads git (ADR-0009).
-step('plan and spike checks', (report) => {
+slowStep('plan and spike checks', (report) => {
   scratch('pitwall-plan-', (dir) => {
     const ceiling = { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } };
     const check = (project, stages) => runScript('docs-check.mjs', ['--root', project, '--stage', stages], ceiling);
@@ -1147,7 +1259,7 @@ step('plan and spike checks', (report) => {
 // 6h. T2-AC5, ADR-0007: review-status.mjs against the fake gh. It refuses success on a review that
 // does not pass its check, commits only the review file, pushes, and sets the status on the PR head.
 const identity = { GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@pitwall', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@pitwall' };
-step('review status (fake gh)', (report) => {
+slowStep('review status (fake gh)', (report) => {
   scratch('pitwall-review-', (dir) => {
     const { project: base } = makePlanRepo(dir);
     const origin = join(dir, 'origin.git');
@@ -1227,7 +1339,7 @@ step('review status (fake gh)', (report) => {
 
 // 6i. T2-AC5, ADR-0008: merge.mjs against the fake gh. It merges the plan PR with a merge commit that
 // records the owner's approval, and only when both checks are green and a merge commit is possible.
-step('plan merge (fake gh)', (report) => {
+slowStep('plan merge (fake gh)', (report) => {
   scratch('pitwall-merge-', (dir) => {
     const { project: base } = makePlanRepo(dir, { spike: false });
     const sha = gitIn(base, 'rev-parse', 'plan/initial').stdout.trim();
@@ -1329,7 +1441,7 @@ function reviewText({ change = 'E1-reminder', reviewed, round = 2, criteria = [[
 
 // 6j. T3b-AC4, ADR-0011: docs-check --stage code-review on a review the way the code reviewer leaves it,
 // and on each kind of gap: a criterion not covered, a finding not closed, the code changed after the review.
-step('code review check', (report) => {
+slowStep('code review check', (report) => {
   scratch('pitwall-code-review-', (dir) => {
     const { project: base, code, fix, main } = makeChangeRepo(dir);
     const good = { reviewed: fix, findings: [['`src/reminder.js:1` has no test', 'blocking', `${fix.slice(0, 9)} adds it`], ['A game in full screen hides it', 'should fix', 'R-1']] };
@@ -1430,7 +1542,7 @@ step('code review check', (report) => {
 
 // 6k. T3b-AC4, AC5, AC6: review-status.mjs --review code, merge.mjs --change and merge-choice.mjs against
 // the fake gh, on a change the way the loop leaves it.
-step('code review status, merges by risk class, the owner\'s choice (fake gh)', (report) => {
+slowStep('code review status, merges by risk class, the owner\'s choice (fake gh)', (report) => {
   scratch('pitwall-loop-', (dir) => {
     const { project: base, fix } = makeChangeRepo(dir);
     const origin = join(dir, 'origin.git');
@@ -1599,7 +1711,7 @@ step('code review status, merges by risk class, the owner\'s choice (fake gh)', 
 
 // 6m. T4a-AC3, AC4, AC5: owner-calls.mjs on projects the way the loop leaves them, with the live fake
 // GitHub; the headless runs' restore of a snapshot on it; and the scripted owner's marks.
-step('owner calls, snapshots and unscripted stops', (report) => {
+slowStep('owner calls, snapshots and unscripted stops', (report) => {
   // The scripted owner's marks (T3b, T4a-AC5).
   const ask = 'Status: E0 is merged.\n\nShould I hold E1 until you have run QA-E0-2?';
   const cases = [
@@ -1815,7 +1927,7 @@ step('owner calls, snapshots and unscripted stops', (report) => {
 // rows wait in the git directory until a branch's first commit, numbers count every branch, a change to a
 // bug whose row is on the change in flight waits for the branch after it, and a table from before T4b
 // gains its columns; then docs-check --stage bug and lesson on each kind of gap.
-step('bugs and lessons', (report) => {
+slowStep('bugs and lessons', (report) => {
   scratch('pitwall-bugs-', (dir) => {
     const p = join(dir, 'p');
     if (layOut(p).status !== 0) return report('layout failed');
@@ -2005,7 +2117,7 @@ step('bugs and lessons', (report) => {
 // every field the fake gives, GitHub gave with the same type, and its refusals read the same.
 // The kinds a run of the loop makes; a recording of others (pr-list as JSON, a commit) is compared too.
 const GITHUB_KINDS = ['repo-view', 'pr-create', 'pr-list-text', 'pr-view', 'pr-checks', 'pr-comment', 'pr-merge', 'run-list', 'api-status-post', 'api-statuses', 'api-check-runs', 'api-rules', 'api-protection', 'api-branch'];
-step('fake GitHub against GitHub\'s answers', (report) => {
+slowStep('fake GitHub against GitHub\'s answers', (report) => {
   const recDir = join(root, 'scripts', 'github-responses');
   const recs = Object.fromEntries((existsSync(recDir) ? readdirSync(recDir).filter((f) => f.endsWith('.json')) : []).map((f) => [f.slice(0, -5), JSON.parse(readFileSync(join(recDir, f), 'utf8'))]));
   // The recordings came from the owner's private repository into a public one: no node id may stay, since
@@ -2130,7 +2242,7 @@ step('fake GitHub against GitHub\'s answers', (report) => {
 
 // 6f. T1-AC2, T2-AC6: protect.mjs against the fake gh. It checks before it writes (L-5), writes the
 // protection ADR-0005 and ADR-0008 ask for, hands over instead of failing, and a dry run writes nothing.
-step('merge protection (fake gh)', (report) => {
+slowStep('merge protection (fake gh)', (report) => {
   scratch('pitwall-protect-', (dir) => {
     const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
     const expectedBody = {
@@ -2283,7 +2395,7 @@ const PAYLOADS = [
   'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
   'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
 ];
-step('hooks (recorded payloads)', (report) => {
+slowStep('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
   const payloads = {};
   for (const f of existsSync(payloadDir) ? readdirSync(payloadDir).filter((x) => x.endsWith('.json')) : []) {
@@ -2789,6 +2901,28 @@ step('hooks (recorded payloads)', (report) => {
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     crBash('merge-choice.mjs', choice, 'deny:agent');
 
+    // T4d-AC3: the rule gate, narrow by the owner's decision: git commit with --no-verify or -n, and git config that
+    // sets core.hooksPath to anything but .githooks or unsets it. Each form it refuses, and each it lets through.
+    const psCase = (command, want) => expect('main-pre-tool-use-bash', `PowerShell: ${command}`, { tool: 'PowerShell', input: { tool_input: { command } } }, want);
+    for (const c of [
+      'git commit --no-verify -m "wip"', 'git commit -m "wip" --no-verify', 'git commit -n -m "wip"', 'git commit -an -m "wip"', 'git commit -anm "wip"', 'git commit -vn -m "wip"',
+      'git add -A && git commit --no-verify -m "wip"', `git -C "${fwd(project)}" commit -n -m "wip"`, "bash -c 'git commit -n -m wip'", 'git commit --amend --no-edit --no-verify',
+      'git config core.hooksPath /dev/null', 'git config core.hooksPath .git/hooks', 'git config --local core.hooksPath .husky', 'git config --global core.hooksPath ~/hooks', 'git config core.hookspath ""',
+      'git config --unset core.hooksPath', 'git config --unset-all core.hooksPath', 'git config unset core.hooksPath', 'git config set core.hooksPath hooks', 'git config --file .git/config core.hooksPath x', 'git config --add core.hooksPath x',
+    ]) bash(c, 'deny:gate');
+    psCase('git commit -n -m "wip"; if ($?) { git push -u origin epic/E1-x }', 'deny:gate');
+    psCase("git config core.hooksPath ''", 'deny:gate');
+    expect('implementer-pre-tool-use-bash', 'implementer: git commit --no-verify', { input: { tool_input: { command: 'git commit --no-verify -m "feat: x"' } } }, 'deny:gate');
+    for (const c of [
+      'git commit -m "wip"', 'git commit -am "wip"', 'git commit -mn', 'git commit -m -n', 'git commit -m "docs: never use -n or --no-verify"', 'git commit --message=--no-verify', 'git commit -m x -- --no-verify',
+      'git commit --amend --no-edit', 'git commit --no-verify --verify -m "wip"', 'git commit -F msg.txt', 'git log -n 3', 'git add -n .', 'grep -n verify CLAUDE.md', 'git merge --no-verify --no-edit main',
+      'git config core.hooksPath .githooks', 'git config --local core.hooksPath .githooks', 'git config --global core.hooksPath .githooks', 'git config set core.hooksPath .githooks',
+      'git config core.hooksPath', 'git config --get core.hooksPath', 'git config get core.hooksPath', 'git config --list', 'git config user.email "e2e@pitwall.invalid"', 'git config --unset user.signingkey',
+      // R-5: outside the narrow rule on purpose.
+      'git -c core.hooksPath=/dev/null commit -m "wip"', 'git commit --no-veri -m "wip"',
+    ]) bash(c, 'allow');
+    psCase('git config core.hooksPath .githooks', 'allow');
+
     // T4a-AC1, L-12: no git command throws away uncommitted work; the same commands pass on a clean tree.
     const w = makeProject('l12');
     gitIn(w, 'branch', 'other');
@@ -3211,5 +3345,6 @@ step('no model ids in skills or agents', (report) => {
   }
 });
 
-console.log(failed === 0 ? '\nGATE: PASS' : `\nGATE: FAIL (${failed} step${failed === 1 ? '' : 's'})`);
+const left = skipped ? ` (--fast: ${skipped} steps left to the full run)` : '';
+console.log(failed === 0 ? `\nGATE: PASS${left}` : `\nGATE: FAIL (${failed} step${failed === 1 ? '' : 's'})${left}`);
 process.exit(failed === 0 ? 0 : 1);

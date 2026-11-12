@@ -1,5 +1,7 @@
 # Line endings stay LF everywhere, so scripts run and frontmatter parses on Windows too.
 * text=auto eol=lf
+# Git hooks run through bash, which stops at a carriage return (L-4).
+.githooks/* text eol=lf
 
 *.png binary
 *.jpg binary

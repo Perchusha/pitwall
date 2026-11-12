@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# The gate before every commit, from pitwall's template.
+#
+# git runs this before each `git commit` once core.hooksPath is .githooks, which
+# /pitwall:kickoff sets, and /pitwall:continue sets again in a new clone. It runs
+# scripts/gate --fast on the work tree and refuses the commit while the gate is red.
+#
+# Two kinds of commit pass without the gate:
+#   - one on a spike/* branch, where a prototype is committed while scripts/gate
+#     is still the template's stub;
+#   - one that changes nothing but Markdown under docs/ and .claude/pitwall.json:
+#     it cannot turn the gate red, and it must land while the gate is red, as the
+#     first commit of the fix for a red main does.
+#
+# Never skip it with --no-verify: fix what the gate finds, then commit.
+set -uo pipefail
+
+branch="$(git symbolic-ref --short -q HEAD || true)"
+case "$branch" in
+  spike/*) exit 0 ;;
+esac
+
+# What this commit changes, against the empty tree for the first commit. Renames count
+# twice, so that moving a file into docs/ still counts the place it left.
+if git rev-parse --verify -q HEAD >/dev/null; then
+  against=HEAD
+else
+  against="$(git hash-object -t tree /dev/null)"
+fi
+if ! changed="$(git -c core.quotePath=false diff --cached --name-only --no-renames "$against")"; then
+  echo "pre-commit: git could not list what this commit changes; the commit was refused." >&2
+  exit 1
+fi
+docs_only=1
+while IFS= read -r f; do
+  case "$f" in
+    '' | docs/*.md | .claude/pitwall.json) ;;
+    *) docs_only=0 ;;
+  esac
+done <<< "$changed"
+[ "$docs_only" = 1 ] && exit 0
+
+if [ ! -f scripts/gate ]; then
+  echo "pre-commit: scripts/gate is missing, so the gate cannot run; the commit was refused." >&2
+  exit 1
+fi
+
+# The gate runs as it would from a terminal: git's variables for this commit's own index
+# would send the git commands of the gate's tests (a scratch repository) into this commit.
+unset $(git rev-parse --local-env-vars)
+
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+bash scripts/gate --fast >"$out" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+  tail -n 30 "$out" >&2
+  echo "" >&2
+  echo "pre-commit: scripts/gate --fast failed (exit $status), so the commit was refused." >&2
+  echo "Fix what it reports and commit again; never skip this check with --no-verify." >&2
+  exit 1
+fi
+exit 0

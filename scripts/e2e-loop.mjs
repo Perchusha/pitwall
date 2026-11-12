@@ -237,6 +237,9 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       fixAsked.reopened ??= reopenedAtNextFlush();
       if (fixAsked.reopened) unmet.push(`the first commit of the next branch would reopen BUG-1: bugs.mjs flush there writes "${fixAsked.reopened}"`);
       if (existsSync(join(project, '.git', 'pitwall', 'bugs.md'))) unmet.push('rows still wait in the git directory: the first commit of the fix did not take them (bugs.mjs flush)');
+      // T4d-AC2: the saved e1 was laid out before the gate before every commit, so the fix's branch lays the hook out.
+      if (remote('ls-tree', 'origin/main', '.githooks/pre-commit').stdout.split(/\s+/)[0] !== '100755') unmet.push('.githooks/pre-commit is not on main, executable: the fix\'s branch did not lay out the gate before every commit (layout.mjs --hook)');
+      if (git('config', 'core.hooksPath').stdout.trim() !== '.githooks') unmet.push('core.hooksPath is not .githooks in the project after the fix');
       return unmet;
     },
   };
@@ -292,7 +295,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   }
 
   const allowed = [
-    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`, `Bash(node "${P}/scripts/bugs.mjs" *)`,
+    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`, `Bash(node "${P}/scripts/bugs.mjs" *)`, `Bash(node "${P}/scripts/layout.mjs" --hook)`,
     'Bash(git *)', 'Bash(gh *)', 'Bash(npm *)', 'Bash(npx *)', 'Bash(bash scripts/gate *)', 'Bash(scripts/gate *)', 'Bash(ls *)', 'Bash(cd *)', 'Bash(echo *)', 'Bash(cat *)', 'Bash(pwd)', 'Bash(mkdir *)',
     'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent',
   ];
