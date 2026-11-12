@@ -2274,10 +2274,22 @@ slowStep('releases (fake gh)', (report) => {
       gitIn(p, 'add', '-A');
       gitIn(p, 'commit', '-qm', 'work on E2');
       gitIn(p, 'switch', '-q', 'main');
+      gitIn(dir, 'init', '-q', '--bare', `${p}-origin.git`);
+      gitIn(p, 'remote', 'add', 'origin', `${p}-origin.git`);
+      gitIn(p, 'push', '-q', 'origin', 'main', 'epic/E2-release');
     });
-    expect('a change in flight', rel(flying, ['--plan', '--version', '0.1.0']), 1, ['a change of the loop is in flight (epic/E2-release)']);
+    // The refusal names the branch, here and on origin, with the commands that delete it (owner): an abandoned one
+    // would otherwise stop every release.
+    const stuck = expect('a change in flight', rel(flying, ['--plan', '--version', '0.1.0']), 1, ['in flight, or left behind: epic/E2-release holds commits main does not', 'merge each through /pitwall:continue', 'git branch -D epic/E2-release', 'git push origin --delete epic/E2-release', 'git fetch --prune origin']);
+    checkHandoff(stuck, (m) => report(`release.mjs, a change in flight: ${m}`));
     gitIn(flying, 'switch', '-qc', 'release/v0.1.0');
-    expect('write with a change in flight', rel(flying, ['--write']), 1, ['a change of the loop is in flight (epic/E2-release)']);
+    expect('write with a change in flight', rel(flying, ['--write']), 1, ['epic/E2-release holds commits main does not']);
+    gitIn(flying, 'switch', '-q', 'main');
+    gitIn(flying, 'branch', '-q', '-D', 'release/v0.1.0');
+    spawnSync('git', ['branch', '-q', '-D', 'epic/E2-release'], { cwd: flying, env, encoding: 'utf8' });
+    expect('a branch deleted here, still on origin', rel(flying, ['--plan', '--version', '0.1.0']), 1, ['git push origin --delete epic/E2-release'], ['git branch -D']);
+    spawnSync('git', ['push', '-q', 'origin', '--delete', 'epic/E2-release'], { cwd: flying, env, encoding: 'utf8' });
+    expect('the abandoned branch deleted as the refusal says', rel(flying, ['--plan', '--version', '0.1.0']), 0, ['RESULT: v0.1.0']);
     // A project laid out before 0.9.0: no scripts/build on main, so no release starts; it comes through a change.
     const noBuild = fresh((p) => {
       gitIn(p, 'rm', '-q', 'scripts/build');
@@ -2327,6 +2339,16 @@ slowStep('releases (fake gh)', (report) => {
       gitIn(p, 'commit', '-qam', 'fix: a change on the release');
     });
     expect('check: code on the release branch', rel(codeToo, ['--check']), 1, ['changes more than CHANGELOG.md, docs/ and .claude/pitwall.json: src/reminder.js']);
+    const records = (label, change, says) => {
+      const q = fresh((r) => {
+        branched(r);
+        change(r);
+        gitIn(r, 'commit', '-qam', 'docs: a record changed by hand');
+      });
+      expect(`check: ${label}`, rel(q, ['--check']), 1, says);
+    };
+    records('an epic left merged', (r) => writeFileSync(join(r, 'docs', 'EPICS.md'), readFileSync(join(r, 'docs', 'EPICS.md'), 'utf8').replace(/^(\| \[E1\][^\n]*\| )released \(v0\.1\.0\)( \|)$/m, '$1merged (#3)$2')), ['docs/EPICS.md: E1 is "merged (#3)", not "released (v0.1.0)"']);
+    records('a bug fixed with another PR', (r) => writeFileSync(join(r, 'docs', 'BUGS.md'), readFileSync(join(r, 'docs', 'BUGS.md'), 'utf8').replace('| fixed | #4 |', '| fixed | #9 |')), ['docs/BUGS.md: BUG-1 is "fixed" with fix PR "#9", not fixed with #4']);
     // The next change merged on main, as the loop would merge it.
     const next = (p, branch, subject) => {
       gitIn(p, 'switch', '-q', 'main');
@@ -2351,6 +2373,12 @@ slowStep('releases (fake gh)', (report) => {
 
     // --build: the project's scripts/build, its artifacts, the tree left clean.
     expect('build', rel(good, ['--build']), 0, ['bash scripts/build 0.1.0', 'artifact: out/app.txt', 'RESULT: built']);
+    writeFileSync(join(good, 'docs', 'reviews', 'release-v0.1.0.md'), '# Review: release-v0.1.0\n');
+    expect('build again beside the qa agent\'s own review file', rel(good, ['--build']), 0, ['RESULT: built']);
+    writeFileSync(join(good, 'docs', 'reviews', 'E1-reminder.md'), 'changed\n');
+    expect('build beside another change', rel(good, ['--build']), 1, ['the tree is not clean', 'docs/reviews/E1-reminder.md'], ['release-v0.1.0.md']);
+    gitIn(good, 'checkout', '--', 'docs/reviews/E1-reminder.md');
+    rmSync(join(good, 'docs', 'reviews', 'release-v0.1.0.md'));
     const recordFile = join(good, '.git', 'pitwall', 'release', 'v0.1.0.json');
     const record = existsSync(recordFile) ? JSON.parse(readFileSync(recordFile, 'utf8')) : {};
     if (record.built !== gitIn(good, 'rev-parse', 'HEAD').stdout.trim() || record.artifacts?.[0]?.path !== 'out/app.txt') report(`release.mjs --build recorded ${JSON.stringify(record)}`);
@@ -2412,6 +2440,12 @@ slowStep('releases (fake gh)', (report) => {
     expect('a minor', rel(tagged, ['--plan']), 0, ['RESULT: v0.2.0']);
     expect('the owner\'s major', rel(tagged, ['--plan', '--version', '1.0.0']), 0, ['the version the owner named', 'RESULT: v1.0.0']);
     expect('a version below', rel(tagged, ['--plan', '--version', '0.1.1']), 1, ['below v0.2.0']);
+    for (const [version, says] of [['0.0.9', 'v0.0.9 is not above the last release, v0.1.0'], ['0.1.2', 'v0.1.2 is below v0.2.0, what the release holds makes']]) {
+      gitIn(tagged, 'switch', '-q', 'main');
+      gitIn(tagged, 'switch', '-qc', `release/v${version}`);
+      expect(`check: a release named v${version}`, rel(tagged, ['--check']), 1, [says]);
+      gitIn(tagged, 'switch', '-q', 'main');
+    }
     const noRecord = fresh((p) => {
       branched(p);
       mergeRelease(p);
@@ -2564,6 +2598,15 @@ slowStep('releases (fake gh)', (report) => {
       merges: 0,
       says: ['main moved since release/v0.1.0 left it', 'Close it and start it again'],
     });
+    {
+      const p = fresh((q) => {
+        branched(q);
+        next(q, 'fix/BUG-9', 'fix(BUG-9): Other (#6)');
+        gitIn(q, 'switch', '-q', 'release/v0.1.0');
+      });
+      const { r } = withFakeGh('merge.mjs', p, { ...green, pr: { ...green.pr, state: 'MERGED' } }, ['--change', '--owner-approved', '--project', p, '--wait', '0'], { GIT_CEILING_DIRECTORIES: dir });
+      if (r.status !== 0 || !r.stdout.includes('is already merged') || !r.stdout.includes('RESULT: merged')) report(`merge.mjs, a release already merged after main moved: exit ${r.status}, expected 0 and "already merged"\n${r.stdout}${r.stderr}`);
+    }
   });
 });
 
@@ -3366,6 +3409,9 @@ slowStep('hooks (recorded payloads)', (report) => {
     qaBash('a heredoc with a line break after it', `${filing}\n`, 'allow');
     qaBash('a heredoc quoted with double quotes', filing.replace("<<'EOF'", '<<"EOF"'), 'allow');
     qaBash('a heredoc with 2>&1', filing.replace("<<'EOF'", "<<'EOF' 2>&1"), 'allow');
+    qaBash('a heredoc with 2>&1 before it', filing.replace("<<'EOF'", "2>&1 <<'EOF'"), 'allow');
+    qaBash('a heredoc with words after its delimiter', filing.replace(` --project \"${fwd(project)}\" <<'EOF'`, ` <<'EOF' --project \"${fwd(project)}\"`), 'allow');
+    qaBash('a heredoc with a pipe after its delimiter', filing.replace("<<'EOF'", "<<'EOF' | tee x"), 'deny:agent');
     qaBash('review-status.mjs with a second --review', `${releaseStatus} --review code`, 'deny:review');
     crBash('review-status.mjs with --review code, then release', `${codeStatus} --review release`, 'deny:review');
     qaBash('the build itself', 'bash scripts/build 0.1.0', 'deny:agent');

@@ -653,15 +653,16 @@ export function guard(call, ctx) {
       // A quoted heredoc as the input of the command, the way /pitwall:bug gives bugs.mjs a bug: bash expands
       // nothing in it, so it is data for the script, which must then be one of the agent's own (T4c-AC5). The first
       // line that is the delimiter alone ends it, as bash reads it, and only blank lines may follow: a line after it
-      // would run as a command (review round 1).
-      const opener = tool === 'Bash' ? /^([^\n]*?)\s*<<(-?)\s*(['"])([A-Za-z_]\w*)\3((?:[ \t]+2>&1)?)[ \t]*\r?\n/.exec(text) : null;
+      // would run as a command (review round 1). The command's words may also follow the delimiter on its line, and a
+      // "2>&1" may stand before or after it (review round 2); whatever else is there meets the test below.
+      const opener = tool === 'Bash' ? /^([^\n]*?)\s*<<(-?)\s*(['"])([A-Za-z_]\w*)\3([^\n]*?)[ \t]*\r?\n/.exec(text) : null;
       let heredoc = null;
       if (opener) {
         const rest = text.slice(opener[0].length).split(/\r?\n/);
         const end = rest.findIndex((l) => (opener[2] ? l.replace(/^\t+/, '') : l).replace(/[ \t]+$/, '') === opener[4]);
         if (end >= 0 && rest.slice(end + 1).every((l) => !l.trim())) heredoc = opener;
       }
-      if (heredoc) text = heredoc[1];
+      if (heredoc) text = `${heredoc[1]}${heredoc[5]}`.replace(/\s+2>&1(?=\s|$)/g, '');
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
       const one = cmds.length === 1 ? cmds[0] : null;

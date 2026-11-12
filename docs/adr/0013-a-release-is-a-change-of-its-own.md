@@ -31,7 +31,8 @@ SPEC 6 ends the loop with a release: a semver tag with a changelog, a build to c
 ## Consequences
 
 - A release costs one PR, one run of the qa agent, the build and the gate, and one question; the owner's yes covers the merge, and the tag follows from their terminal.
-- The tag holds the code the qa agent built only because the release's commit changes docs and `CHANGELOG.md` alone: `release.mjs --check` holds the branch to that, and `release.mjs --tag` refuses when the merge commit's code differs from the built commit's, as when `main` moved under the release.
+- The tag holds the code the qa agent built only because the release's commit changes docs, `CHANGELOG.md` and the owner's answers in `.claude/pitwall.json` alone: `release.mjs --check` holds the branch to that, and `release.mjs --tag` refuses when the merge commit's code differs from the built commit's, as when `main` moved under the release.
+- A release starts only when no change of the loop is in flight, and merges only while its branch starts at `main`'s tip (review round 1, L-16): an `epic/*` or `fix/*` branch with commits `main` does not hold, abandoned or not, stops every release until it is merged or deleted, and the refusal names each with the commands that delete it.
 - A release merged and not tagged blocks the next one, and `/pitwall:owner-calls` lists it: without the tag, the next release would not know where the last one ended.
 - A project laid out before 0.9.0 has no `scripts/build`, and its first release stops until the owner adds one.
 - The qa agent of T4c reads tests and review files and runs the project's scripts; it neither drives the product nor opens a browser. Staging by type of application and the browser pass are T8's.

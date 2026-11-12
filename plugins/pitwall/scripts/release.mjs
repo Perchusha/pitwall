@@ -19,7 +19,7 @@
 //       branched, the changelog's section and the statuses are what --write writes, and no blocking bug
 //       is open. The qa agent runs it; it writes nothing.
 //   node release.mjs --build [--project <dir>]
-//       On release/v<x.y.z>, with a clean tree: runs bash scripts/build <x.y.z>, which must exit 0, print
+//       On release/v<x.y.z>, with a clean tree but for the qa agent's review file: runs bash scripts/build <x.y.z>, which must exit 0, print
 //       one "ARTIFACT: <path>" line per thing it built, each there and not empty, and leave the tree as
 //       clean as it found it. Records the commit it built and the artifacts in the git directory
 //       (release.pending), where --tag reads them.
@@ -137,15 +137,27 @@ function inFlight() {
   const names = new Map();
   for (const r of refs) {
     if (git('merge-base', '--is-ancestor', r, mainRef).ok) continue;
-    names.set(r.replace(/^origin\//, ''), r);
+    const name = r.replace(/^origin\//, '');
+    const at = names.get(name) ?? { name, local: false, remote: false };
+    if (r.startsWith('origin/')) at.remote = true;
+    else at.local = true;
+    names.set(name, at);
   }
-  return [...names.keys()];
+  return [...names.values()];
 }
 // A project laid out before 0.9.0 has no scripts/build; main is protected, so it comes through a change of the loop.
 const noBuild = () => `this project has no ${cfg.release.build} in git: a project laid out before pitwall 0.9.0 lacks it. It comes through a change of the loop, a bug filed with /pitwall:bug or an epic, since ${main} is protected: a script that builds what the owner runs or installs, prints one "${cfg.release.artifactLine} <path>" line per thing it built, its path relative to the project, and changes no tracked file (pitwall ADR-0013); then the release runs`;
+// Each branch is named, with how to take it out of the way: an abandoned one would otherwise stop every release (owner).
 const busy = () => {
   const flying = inFlight();
-  if (flying.length) refuse(`a change of the loop is in flight (${flying.join(', ')}): a release records the changes merged on ${main}, as that change's next branch would, so it starts once that change is merged, or closed and its branch deleted`);
+  if (!flying.length) return;
+  console.log(`release: REFUSED - a change of the loop is in flight, or left behind: ${flying.map((f) => f.name).join(', ')} ${flying.length === 1 ? 'holds' : 'hold'} commits ${main} does not. A release records the changes merged on ${main}, as that change's next branch would, so it starts once each is merged or deleted.`);
+  printHandoff('merge each through /pitwall:continue; or, when one is abandoned, delete it, here and on GitHub, losing its commits:', [
+    ...flying.flatMap((f) => [...(f.local ? [{ run: `git branch -D ${f.name}` }] : []), ...(f.remote ? [{ run: `git push origin --delete ${f.name}` }] : [])]),
+    { note: 'a branch already deleted on GitHub stays here as origin/<branch> until git fetch --prune origin, which drops it' },
+  ]);
+  console.log('RESULT: refused');
+  process.exit(1);
 };
 // Only these files may change on a release's branch: its changelog, the docs, and the owner's answers in .claude/pitwall.json.
 const releaseFile = (f) => f === cfg.release.changelog || f.startsWith('docs/') || f === '.claude/pitwall.json';
@@ -267,7 +279,7 @@ if (mode === 'check') {
   if (r.history.last && compareVersions(r.version, r.history.last.version) <= 0) fails.push(`${prefix}${r.version} is not above the last release, ${r.history.last.tag}`);
   else if (computed && compareVersions(r.version, computed) < 0) fails.push(`${prefix}${r.version} is below ${prefix}${computed}, what the release holds makes`);
   else pass(`${prefix}${r.version}${computed ? (computed === r.version ? ', as its changes make' : `, the owner's version above ${prefix}${computed}`) : ', the first release, the owner\'s version'}`);
-  // Only CHANGELOG.md and docs/ change: the tag then holds the code the qa agent built.
+  // Only CHANGELOG.md, docs/ and .claude/pitwall.json change: the tag then holds the code the qa agent built.
   const committed = git('-c', 'core.quotePath=false', 'diff', '--name-only', r.base, 'HEAD').out.split('\n').filter(Boolean);
   const working = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all').raw.split('\n').filter(Boolean).map((l) => l.slice(3));
   const others = [...new Set([...committed, ...working])].filter((f) => !releaseFile(f));
@@ -316,7 +328,11 @@ if (mode === 'build') {
   if (!git('ls-files', '--error-unmatch', '--', script).ok) {
     refuse(noBuild());
   }
-  const before = porcelain();
+  // The qa agent's own review file may wait in the tree, as it may for review-status.mjs: a build run again after
+  // a timeout comes after the agent wrote it (review round 2). Nothing else may.
+  const ownReview = `${cfg.loop.reviews}/${r.id}.md`;
+  const porcelainHere = () => porcelain().filter((l) => l.slice(3) !== ownReview);
+  const before = porcelainHere();
   if (before.length) refuse('the tree is not clean: the build runs on the commit the release holds', before.slice(0, 10));
   const sha = git('rev-parse', 'HEAD').out;
   log(`bash ${script} ${r.version}, at ${short(sha)}`);
@@ -340,7 +356,7 @@ if (mode === 'build') {
     else artifacts.push({ path: p.split('\\').join('/'), kind: st.isFile() ? 'file' : 'folder', bytes: st.isFile() ? st.size : null });
   }
   if (missing.length) refuse(`${script} named artifacts that are not there`, missing);
-  const after = porcelain();
+  const after = porcelainHere();
   if (after.join('\n') !== before.join('\n')) refuse(`${script} changed the tree: it may change no tracked file and leave nothing git does not ignore`, after.slice(0, 10));
   if (git('rev-parse', 'HEAD').out !== sha) refuse(`${script} moved HEAD`);
   const record = recordPath(r.version);
@@ -380,7 +396,7 @@ if (mode === 'tag') {
     }
     refuse(`${tag} already exists, on ${short(existing.out)}, not on the release's merge commit ${short(merge)}`);
   }
-  // The tag holds the code the qa agent built: only CHANGELOG.md and docs/ may differ.
+  // The tag holds the code the qa agent built: only CHANGELOG.md, docs/ and .claude/pitwall.json may differ.
   const record = recordPath(version);
   let built = null;
   try {

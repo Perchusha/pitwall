@@ -109,19 +109,9 @@ if (change?.epic) {
   const file = git('show', `${sha}:docs/epics/${change.id}.md`);
   title = (file.ok ? new RegExp(`^# ${change.epic} - (.+)$`, 'm').exec(file.out)?.[1] : '')?.trim() ?? '';
 }
-// A release (ADR-0013): never while a blocking bug is open, one its qa agent has just filed included, and
-// always after the owner's yes.
-if (change?.release) {
-  // The release holds what main held when it branched, and the qa agent built that: main must not have moved since
-  // (review round 1). origin's main when it can be fetched, else the local one.
-  git('fetch', '-q', 'origin', base);
-  const mainRef = [`refs/remotes/origin/${base}`, `refs/heads/${base}`].find((r) => git('rev-parse', '--verify', '-q', r).ok);
-  const tip = mainRef ? git('rev-parse', mainRef).out : '';
-  if (!tip || git('merge-base', sha, mainRef).out !== tip) refuse(`${base} moved since ${branch} left it${tip ? ` (now ${tip.slice(0, 7)})` : ''}: the release holds, and the qa agent built, what ${base} held then. Close it and start it again (pitwall ADR-0013)`);
-  const open = openBlockingBugs(project, cfg, sha);
-  if (open.length) refuse(`a blocking bug is open, so the release does not merge (pitwall ADR-0013): ${open.map((b) => `${b.id} (${b.title})${b.unconfirmed ? `, ${cfg.bugs.unconfirmed.mark}` : ''}`).join(', ')}. Its fix goes first; the release is closed and runs again after it`);
-  if (!approved) owners(`${change.release} is a release: it merges only after the owner's yes, which covers the tag they make after it (pitwall ADR-0013)`);
-}
+// A release (ADR-0013): always after the owner's yes; its checks of main and of the bugs come once its PR reads open
+// (step 4), so a release already merged reads merged (review round 2).
+if (change?.release && !approved) owners(`${change.release} is a release: it merges only after the owner's yes, which covers the tag they make after it (pitwall ADR-0013)`);
 if (change && !approved) {
   let settings = null;
   try {
@@ -170,6 +160,17 @@ if (pr.state === 'MERGED') {
 if (pr.state !== 'OPEN') refuse(`PR #${pr.number} is ${String(pr.state).toLowerCase()}`);
 if (pr.baseRefName !== base) refuse(`PR #${pr.number} goes into ${pr.baseRefName}, not ${base}`);
 if (pr.headRefOid !== sha) refuse(`PR #${pr.number} has head ${String(pr.headRefOid).slice(0, 7)}, and the local ${branch} is ${sha.slice(0, 7)}: ${args.plan ? 'the owner approved what is here' : 'what is here is what merges'}, so push it and review it again`);
+// A release still open (ADR-0013): it holds what main held when it branched, and the qa agent built that, so main must
+// not have moved since (review round 1), origin's main when it can be fetched, else the local one; and no blocking bug
+// may be open, one its qa agent has just filed included.
+if (change?.release) {
+  git('fetch', '-q', 'origin', base);
+  const mainRef = [`refs/remotes/origin/${base}`, `refs/heads/${base}`].find((r) => git('rev-parse', '--verify', '-q', r).ok);
+  const tip = mainRef ? git('rev-parse', mainRef).out : '';
+  if (!tip || git('merge-base', sha, mainRef).out !== tip) refuse(`${base} moved since ${branch} left it${tip ? ` (now ${tip.slice(0, 7)})` : ''}: the release holds, and the qa agent built, what ${base} held then. Close it and start it again (pitwall ADR-0013)`);
+  const open = openBlockingBugs(project, cfg, sha);
+  if (open.length) refuse(`a blocking bug is open, so the release does not merge (pitwall ADR-0013): ${open.map((b) => `${b.id} (${b.title})${b.unconfirmed ? `, ${cfg.bugs.unconfirmed.mark}` : ''}`).join(', ')}. Its fix goes first; the release is closed and runs again after it`);
+}
 
 // 5. Both checks are green on that commit: ai-review from the review flow, gate from GitHub Actions only (ADR-0005).
 // gh prints an error body, a JSON object, on a failed read: a read that fails is handed back, never read as "not set".
