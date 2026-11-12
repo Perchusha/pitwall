@@ -189,8 +189,9 @@ for (const f of plan) {
   const out = join(target, f.dest);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, f.body);
-  // The gate and the git hook run as programs, whatever the mode of the plugin's copy.
-  if (f.mode & 0o111 || f.dest === 'scripts/gate' || f.dest === 'scripts/build' || f.dest === HOOK) chmodSync(out, 0o755);
+  // Every file of scripts/ and .githooks/ (the gate, the build, the git hook) runs as a program, whatever the mode
+  // of the plugin's copy (L-15).
+  if (f.mode & 0o111 || /^(scripts|\.githooks)\//.test(f.dest)) chmodSync(out, 0o755);
 }
 console.log(`layout: wrote ${plan.length} files into ${target}`);
 for (const f of plan.filter((p) => p.rel !== p.dest)) console.log(`  ${f.rel} -> ${f.dest}`);

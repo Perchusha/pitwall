@@ -48,13 +48,17 @@ Two-way, picked by the agent and accepted by the owner as a list on 2026-11-12, 
 | Version | 0.9.0 | A built skill, a built agent, a script and two template files are additions |
 | Size | About 1.5 to 2 thousand lines over 40 to 50 files: 1.2 to 1.5 times T4b, about half of T3b; not split | Below the owner's threshold for a split; and with the qa agent as the release's reviewer, a release without QA would need a review of its own |
 
-Found while building, proposed by the agent, awaiting owner (2026-11-12):
+Found while building, proposed by the agent and accepted by the owner (2026-11-12), with their edit:
 - Each reviewer sets the status of its own kind of review only, not the qa agent alone: `hooks.agents.<agent>.review` is `plan` for the plan reviewer, `code` for the code reviewer and `release` for the qa agent, and the guard refuses any other `--review`. Binding only the qa agent would leave the code reviewer able to set a release's `ai-review`; `review-status.mjs --review code` also refuses a release branch. This is the guard's line the owner asked to see named in the PR.
 - The guard lets an agent with limits give one of its own plugin scripts a quoted heredoc (`<<'EOF'`, which bash does not expand), so that the qa agent files a bug with `bugs.mjs file` the way `/pitwall:bug` does; any other line break, an unquoted heredoc, or a heredoc into git or the gate stays refused.
-- A blocking bug whose fix is merged into `main` (`fix(BUG-<n>): ...` on its first-parent history) is not open, though its row still says `in review` until the first commit of the next branch, or the release, records it fixed: without that, a release after the last fix of a plan would refuse to start over the bug it fixes.
+- A blocking bug whose fix is merged into `main` is not open, read from its merge commit `fix(BUG-<n>): ...` on `main`'s first-parent history (`git log --first-parent main`), never from the PR number in the bug's row (owner's edit), though its row still says `in review` until the first commit of the next branch, or the release, records it fixed: without that, a release after the last fix of a plan would refuse to start over the bug it fixes.
 - The tag's commands carry `--cleanup=verbatim`: `git tag -F` strips every line that starts with `#` by default, which would drop the changelog's headings from the tag's message.
-- `release.mjs --tag` reads the build the qa agent recorded in the git directory, and refuses in a clone where none is recorded, since it cannot tell the tag holds the built code there.
 - The template ships `CHANGELOG.md` with its introduction, and the stub gate counts `CHANGELOG.md` and `scripts/build` as configuration, so a new project's skeleton commit passes; a project laid out earlier gets `CHANGELOG.md` from `release.mjs --write`.
+
+The executable bit, lost by git on Windows for the third time (the gate, the hook, the build), becomes a lesson and a check (owner, 2026-11-12): L-15; `scripts/check.mjs` reads every file of `template/scripts/` and `template/.githooks/` at once and wants each 100755 in the index and named by kickoff's `git update-index --chmod=+x`, whose skeleton commit names no paths; `layout.mjs` marks them all on disk.
+
+Found while building, proposed by the agent, awaiting owner (2026-11-12):
+- `release.mjs --tag` reads the build the qa agent recorded in the git directory, and refuses in a clone where none is recorded, since it cannot tell the tag holds the built code there.
 - `release/*` joins `loop.branches`, so the gate after an edit outside `docs/` and before stopping runs on a release branch too; the release's own files are written by scripts, so it runs only if someone edits code there, which the release's check refuses anyway.
 - The qa agent's hook cases in `scripts/check.mjs` run on the code reviewer's recorded payload with the qa agent's type, until `node scripts/e2e.mjs --hooks --record` records the qa agent's own calls; the hooks run now dispatches the qa agent and expects its `--review code` refused.
 

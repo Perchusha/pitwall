@@ -241,9 +241,13 @@ step('template', (report) => {
   ];
   for (const f of required) if (!existsSync(join(t, f))) report(`template/${f} is missing`);
 
-  // Executable in the git index when there is one (what a clone gets), else on disk: the template's gate, its build
-  // (T4c-AC4), its git hook and pitwall's own (T4d-AC4), since git on macOS and Linux skips a hook that is not executable.
-  for (const f of [join(t, 'scripts', 'gate'), join(t, 'scripts', 'build'), join(t, '.githooks', 'pre-commit'), join(root, '.githooks', 'pre-commit')]) {
+  // L-15: executable in the git index when there is one (what a clone gets), else on disk: every file of the template's
+  // scripts/ and .githooks/ (the gate, the build of T4c-AC4, the git hook), and pitwall's own hook (T4d-AC4), since bash
+  // runs a script that is not executable only when called as "bash <file>" and git skips such a hook. git on Windows
+  // dropped the bit three times, of the gate, the hook and the build, so the folders are read whole, not file by file.
+  const executables = ['scripts', '.githooks'].flatMap((d) => (existsSync(join(t, d)) ? readdirSync(join(t, d)).map((f) => join(t, d, f)) : []));
+  if (executables.length < 3) report(`template/scripts/ and template/.githooks/ hold ${executables.length} files: the gate, the build and the hook at least`);
+  for (const f of [...executables, join(root, '.githooks', 'pre-commit')]) {
     if (!existsSync(f)) {
       report(`${rel(f)} is missing`);
       continue;
@@ -258,6 +262,15 @@ step('template', (report) => {
     const executable = indexMode ? indexMode === '100755' : (statSync(f).mode & 0o111) !== 0;
     if (!executable) report(`${rel(f)} is not executable${indexMode ? ` in the git index (${indexMode})` : ''}`);
   }
+  // L-15: kickoff marks each of them executable in the project's index before the skeleton commit, which names no
+  // paths; layout.mjs marks them on disk.
+  const kickoffSkill = readFileSync(join(plugin, 'skills', 'kickoff', 'SKILL.md'), 'utf8');
+  const marked = /`git update-index --chmod=\+x ([^`]+)`/.exec(kickoffSkill)?.[1].split(/\s+/) ?? [];
+  for (const f of executables) {
+    const dest = relative(t, f).split('\\').join('/');
+    if (!marked.includes(dest)) report(`skills/kickoff/SKILL.md: its git update-index --chmod=+x does not name ${dest} (L-15)`);
+  }
+  if (!/`git commit -m "chore: kickoff from pitwall <templateVersion>"`/.test(kickoffSkill)) report('skills/kickoff/SKILL.md: the skeleton commit names paths, which on Windows drops the executable bit of a new file (L-15)');
   // L-4: the hooks stay LF, in the template and in pitwall, or bash stops at a carriage return.
   for (const f of [join(t, 'gitattributes.tmpl'), join(root, '.gitattributes')]) {
     if (!/^\.githooks\/\* text eol=lf$/m.test(readFileSync(f, 'utf8'))) report(`${rel(f)} has no line ".githooks/* text eol=lf" (L-4)`);
@@ -2248,6 +2261,12 @@ slowStep('releases (fake gh)', (report) => {
     // BUG-1 is blocking and in review, its fix merged: not open. A bug that is not blocking stops nothing.
     const notBlocking = fresh((p) => bugs(p, bugInput({ severity: 'not blocking', confirmed: 'yes' })));
     expect('a bug that is not blocking', rel(notBlocking, ['--plan', '--version', '0.1.0']), 0, ['RESULT: v0.1.0']);
+    // A fix is merged only by its merge commit on main's first-parent history, never by the PR its row names (owner).
+    const prOnly = fresh((p) => {
+      writeFileSync(join(p, 'docs', 'BUGS.md'), `${readFileSync(join(p, 'docs', 'BUGS.md'), 'utf8').trimEnd()}\n| BUG-2 | The icon is gone | QA | Start it | An icon | None | blocking | normal | in review | #9 |\n`);
+      gitIn(p, 'commit', '-qam', 'docs: BUG-2');
+    });
+    expect('a blocking bug whose row names a PR but no merge', rel(prOnly, ['--plan', '--version', '0.1.0']), 1, ['BUG-2 (The icon is gone): blocking, in review']);
 
     // --write and --check on the release branch.
     const good = fresh();
