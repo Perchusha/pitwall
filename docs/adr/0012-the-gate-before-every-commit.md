@@ -29,7 +29,7 @@ L-14: a commit ran after the check before it had failed, because the check and t
 
 ## Consequences
 
-- The hook checks the work tree, not what is committed. A partial commit can be red on its own while the whole tree is green: CI's `gate`, required on every PR, catches it. A commit that leaves out a red file is refused although what it commits is green: the red file is fixed, or put aside first (`git stash push -- <file>`).
+- The hook checks the work tree, not what is committed. A partial commit can be red on its own while the whole tree is green: CI's `gate`, required on every PR, catches it. A commit that leaves out a red file is refused although what it commits is green: the red file is fixed, or put aside first (`git stash push -u -- <file>`, `-u` for a file git does not track yet).
 - git makes some commits without `pre-commit`: a merge with no conflict, a cherry-pick, a revert, a rebase. CI catches these too.
 - The gate runs as from a terminal: the hook clears the variables git sets for the commit's own index (`git rev-parse --local-env-vars`), or a gate whose tests make scratch repositories would write into the commit.
 - `.githooks/pre-commit` joins the contract of ADR-0006. Every commit of an implementer waits for `scripts/gate --fast`, so a slow fast mode slows every commit.

@@ -838,7 +838,7 @@ export function guard(call, ctx) {
     // .githooks or unsets it. What it does not read is R-5.
     if (git?.sub === 'commit') {
       const flag = skipsCommitHook(git.args);
-      if (flag) return refuse('precommit', `git commit ${flag} skips the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Commit without it: when the gate is red, fix what it reports first. A commit that changes only Markdown under docs/ passes the hook even while the gate is red.`);
+      if (flag) return refuse('precommit', `git commit ${flag} skips the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Commit without it: when the gate is red, fix what it reports first. A commit of nothing but Markdown under docs/ and .claude/pitwall.json passes the hook even while the gate is red.`);
     }
     if (git?.sub === 'config') {
       const change = hooksPathChange(git.args);

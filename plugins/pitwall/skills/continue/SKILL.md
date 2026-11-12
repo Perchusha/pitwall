@@ -25,7 +25,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`riskClasses`, 
 - A defect of merged work becomes a bug through `/pitwall:bug`; a defect of the branch in flight is a finding of its review, or a fix within the same change, never a bug (owner, 2026-11-11). On the branch in flight, name a bug that still waits in the git directory in a code span (`` `BUG-<n>` ``): its row reaches `docs/` only with the next branch, and the docs check reads every other `BUG-n` as an ID that must point somewhere.
 - Wait for every agent you dispatch: run it in the foreground and read its report before you go on or end your turn. A turn that ends while an implementer or a reviewer runs in the background can end that agent with it, as a headless session showed.
 - One change in flight at a time, on its own branch: `epic/E<n>-<slug>`, the epic's file name, or `fix/BUG-<n>` (`loop.branches`). Nothing interrupts it, a blocking bug included: the next change starts from `main` once it is merged.
-- When a script hands a step over, show the owner its HANDOFF lines verbatim. Never retry a refused write another way, and never work around a hook: never `git commit --no-verify` or `-n` past the gate before every commit. A commit of Markdown under `docs/` alone passes it even while the gate is red.
+- When a script hands a step over, show the owner its HANDOFF lines verbatim. Never retry a refused write another way, and never work around a hook: never `git commit --no-verify` or `-n` past the gate before every commit. A commit of nothing but Markdown under `docs/` and `.claude/pitwall.json` passes it even while the gate is red.
 - Keep the template's headings and table columns, and write the plain Markdown the docs check reads, as `/pitwall:plan` does.
 
 ## Steps
