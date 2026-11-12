@@ -240,6 +240,9 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       // T4d-AC2: the saved e1 was laid out before the gate before every commit, so the fix's branch lays the hook out.
       if (remote('ls-tree', 'origin/main', '.githooks/pre-commit').stdout.split(/\s+/)[0] !== '100755') unmet.push('.githooks/pre-commit is not on main, executable: the fix\'s branch did not lay out the gate before every commit (layout.mjs --hook)');
       if (git('config', 'core.hooksPath').stdout.trim() !== '.githooks') unmet.push('core.hooksPath is not .githooks in the project after the fix');
+      // The hook layout.mjs --hook brought is pitwall's own commit, which the code reviewer leaves alone (T4d, run of d4f3b55).
+      const findings = (shown('docs/reviews/BUG-1.md').stdout.split(/^## Findings$/m)[1] ?? '').split('\n').filter((l) => /^\| *\d+ *\|/.test(l));
+      if (findings.some((l) => l.includes('.githooks'))) unmet.push('the code review of BUG-1 counted the hook that layout.mjs --hook laid out as a finding');
       return unmet;
     },
   };

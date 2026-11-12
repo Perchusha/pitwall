@@ -45,6 +45,12 @@ Found while building, proposed by the agent and accepted by the owner (2026-11-1
 - The hook clears git's variables for the commit's own index (`git rev-parse --local-env-vars`) before the gate, or the git commands of a gate's tests write into the commit.
 - The template's E0-AC1 asks for a `scripts/gate --fast` that runs in seconds, since it runs before every commit; the loop stage `bug` of `scripts/e2e.mjs` checks that the hook reached `main` executable and that `core.hooksPath` is set.
 
+Found by the loop stage `bug` at d4f3b55, proposed by the agent, awaiting owner (2026-11-12). The stage passed, but the code reviewer counted the commit of `layout.mjs --hook` on the fix's branch as a blocking change to `.githooks/` under AC3's rule, and the scripted owner had to accept it as a risk of the project: every project laid out before 0.8.0 would meet the same finding on its first branch after the upgrade. Proposed:
+- `agents/code-reviewer.md` leaves that one commit alone when it adds only `.githooks/pre-commit` and the file is byte for byte the template's; that `CLAUDE.md` does not name the hook and `templateVersion` keeps its version is no finding either;
+- `continue` says in the PR body that the branch brings the hook;
+- the stage `bug` fails when a finding of the review names `.githooks`;
+- the stage runs again before the PR, about $11.
+
 ## Out of scope
 
 - Bugs and lessons (T4b); releases, staging and QA (T4c); the guard's corpus and its four gaps (T7).
