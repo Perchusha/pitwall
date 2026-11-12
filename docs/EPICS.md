@@ -19,4 +19,6 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T7](epics/T7-guard-corpus.md) | The guard's corpus run before each review round (L-13), its gaps from T4a fixed, pitwall's own pre-commit hook | high | T5b | planned |
 | [T8](epics/T8-staging-and-serving-by-tag.md) | Staging by type of application, QA in a browser, pitwall served by tag | high | T5b | planned |
 
+1.0 ships after T5b; T7 and T8 come after 1.0 (owner, 2026-11-12).
+
 Status: planned, in progress, in review, merged, released.
