@@ -2901,7 +2901,7 @@ slowStep('hooks (recorded payloads)', (report) => {
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     crBash('merge-choice.mjs', choice, 'deny:agent');
 
-    // T4d-AC3: the rule gate, narrow by the owner's decision: git commit with --no-verify or -n, and git config that
+    // T4d-AC3: the rule precommit, narrow by the owner's decision: git commit with --no-verify or -n, and git config that
     // sets core.hooksPath to anything but .githooks or unsets it. Each form it refuses, and each it lets through.
     const psCase = (command, want) => expect('main-pre-tool-use-bash', `PowerShell: ${command}`, { tool: 'PowerShell', input: { tool_input: { command } } }, want);
     for (const c of [
@@ -2909,10 +2909,10 @@ slowStep('hooks (recorded payloads)', (report) => {
       'git add -A && git commit --no-verify -m "wip"', `git -C "${fwd(project)}" commit -n -m "wip"`, "bash -c 'git commit -n -m wip'", 'git commit --amend --no-edit --no-verify',
       'git config core.hooksPath /dev/null', 'git config core.hooksPath .git/hooks', 'git config --local core.hooksPath .husky', 'git config --global core.hooksPath ~/hooks', 'git config core.hookspath ""',
       'git config --unset core.hooksPath', 'git config --unset-all core.hooksPath', 'git config unset core.hooksPath', 'git config set core.hooksPath hooks', 'git config --file .git/config core.hooksPath x', 'git config --add core.hooksPath x',
-    ]) bash(c, 'deny:gate');
-    psCase('git commit -n -m "wip"; if ($?) { git push -u origin epic/E1-x }', 'deny:gate');
-    psCase("git config core.hooksPath ''", 'deny:gate');
-    expect('implementer-pre-tool-use-bash', 'implementer: git commit --no-verify', { input: { tool_input: { command: 'git commit --no-verify -m "feat: x"' } } }, 'deny:gate');
+    ]) bash(c, 'deny:precommit');
+    psCase('git commit -n -m "wip"; if ($?) { git push -u origin epic/E1-x }', 'deny:precommit');
+    psCase("git config core.hooksPath ''", 'deny:precommit');
+    expect('implementer-pre-tool-use-bash', 'implementer: git commit --no-verify', { input: { tool_input: { command: 'git commit --no-verify -m "feat: x"' } } }, 'deny:precommit');
     for (const c of [
       'git commit -m "wip"', 'git commit -am "wip"', 'git commit -mn', 'git commit -m -n', 'git commit -m "docs: never use -n or --no-verify"', 'git commit --message=--no-verify', 'git commit -m x -- --no-verify',
       'git commit --amend --no-edit', 'git commit --no-verify --verify -m "wip"', 'git commit -F msg.txt', 'git log -n 3', 'git add -n .', 'grep -n verify CLAUDE.md', 'git merge --no-verify --no-edit main',

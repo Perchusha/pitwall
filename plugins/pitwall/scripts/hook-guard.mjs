@@ -836,11 +836,11 @@ export function guard(call, ctx) {
     // .githooks or unsets it. What it does not read is R-5.
     if (git?.sub === 'commit') {
       const flag = skipsCommitHook(git.args);
-      if (flag) return refuse('gate', `git commit ${flag} skips the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Commit without it: when the gate is red, fix what it reports first. A commit that changes only Markdown under docs/ passes the hook even while the gate is red.`);
+      if (flag) return refuse('precommit', `git commit ${flag} skips the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Commit without it: when the gate is red, fix what it reports first. A commit that changes only Markdown under docs/ passes the hook even while the gate is red.`);
     }
     if (git?.sub === 'config') {
       const change = hooksPathChange(git.args);
-      if (change) return refuse('gate', `this git config ${change}, the setting that runs the gate before every commit from ${HOOKS_PATH} (pitwall ADR-0012). The only change pitwall makes is git config core.hooksPath ${HOOKS_PATH}; anything else is the owner's, in a terminal.`);
+      if (change) return refuse('precommit', `this git config ${change}, the setting that runs the gate before every commit from ${HOOKS_PATH} (pitwall ADR-0012). The only change pitwall makes is git config core.hooksPath ${HOOKS_PATH}; anything else is the owner's, in a terminal.`);
     }
 
     // T4a-AC1, L-12: a git command that would throw away uncommitted work. What a stash, a commit or git add

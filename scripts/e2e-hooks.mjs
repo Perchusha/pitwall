@@ -142,7 +142,7 @@ for (const l of lines) {
     if (rule) refusals[rule] = (refusals[rule] ?? 0) + 1;
   }
 }
-const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1, uncommitted: 1, gate: 2 };
+const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1, uncommitted: 1, precommit: 2 };
 for (const [rule, n] of Object.entries(expected)) if ((refusals[rule] ?? 0) < n) unmet.push(`expected ${n} refusal(s) by the rule ${rule}, saw ${refusals[rule] ?? 0}`);
 for (const rule of ['agent', 'budget', 'broken']) if (refusals[rule]) unmet.push(`saw ${refusals[rule]} refusal(s) by the rule ${rule}, which no step asks for`);
 if (!stream.includes('pitwall brief, from its session hook')) unmet.push('no session brief in the stream');
