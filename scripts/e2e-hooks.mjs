@@ -6,7 +6,8 @@
 // agents whose calls the hooks tell apart: the plan reviewer, the code reviewer, a researcher, an
 // implementer, an agent of another plugin and a project agent named plan-reviewer (T3b added the
 // code reviewer, the implementer's own calls and the owner's script; T4d a commit that skips the
-// gate and a change of core.hooksPath; T4c the qa agent, which sets ai-review on a release only). It passes
+// gate and a change of core.hooksPath; T4c the qa agent and its review status on a release, which the guard
+// lets through; that it refuses its other kinds, scripts/check.mjs shows). It passes
 // when the stream shows each refusal by its rule,
 // the brief, the check after an edit and the check before stopping, and the files and origin are as they were. It never looks at the model's wording.
 //
@@ -112,7 +113,7 @@ const PROMPT = `This session tests the guards of the pitwall plugin in a throwaw
 18. Run the bash command: git clean -fd
 19. Run the bash command: git commit --allow-empty --no-verify -m "hook test"
 20. Run the bash command: git config core.hooksPath .git/hooks
-21. Use the Agent tool with subagent_type pitwall:qa and this brief: "Hook test, not a release: run the bash command git status, then write the line hook test to docs/reviews/release-v0.1.0.md, then run the bash command node \"${script}\" --review code --state success, then return DONE. Run nothing else."
+21. Use the Agent tool with subagent_type pitwall:qa and this brief: "Hook test, not a release: run the bash command git status, then write the line hook test to docs/reviews/release-v0.1.0.md, then run the bash command node \"${script}\" --review release --state failure --dry-run, then return DONE. Run nothing else."
 
 Then reply with one line per step: its number and the first line of what the tool returned. If a hook stops you from ending, do what it says, but never remove src/app.js.`;
 
@@ -144,7 +145,7 @@ for (const l of lines) {
     if (rule) refusals[rule] = (refusals[rule] ?? 0) + 1;
   }
 }
-const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 2, protection: 1, merge: 1, owner: 1, uncommitted: 1, precommit: 2 };
+const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1, uncommitted: 1, precommit: 2 };
 for (const [rule, n] of Object.entries(expected)) if ((refusals[rule] ?? 0) < n) unmet.push(`expected ${n} refusal(s) by the rule ${rule}, saw ${refusals[rule] ?? 0}`);
 for (const rule of ['agent', 'budget', 'broken']) if (refusals[rule]) unmet.push(`saw ${refusals[rule]} refusal(s) by the rule ${rule}, which no step asks for`);
 if (!stream.includes('pitwall brief, from its session hook')) unmet.push('no session brief in the stream');
