@@ -60,7 +60,17 @@ The executable bit, lost by git on Windows for the third time (the gate, the hoo
 Found while building, proposed by the agent, awaiting owner (2026-11-12):
 - `release.mjs --tag` reads the build the qa agent recorded in the git directory, and refuses in a clone where none is recorded, since it cannot tell the tag holds the built code there.
 - `release/*` joins `loop.branches`, so the gate after an edit outside `docs/` and before stopping runs on a release branch too; the release's own files are written by scripts, so it runs only if someone edits code there, which the release's check refuses anyway.
-- The qa agent's hook cases in `scripts/check.mjs` run on the code reviewer's recorded payload with the qa agent's type, until `node scripts/e2e.mjs --hooks --record` records the qa agent's own calls; the hooks run now dispatches the qa agent and expects its `--review code` refused.
+- The qa agent's hook cases in `scripts/check.mjs` run on the code reviewer's recorded payload with the qa agent's type, until `node scripts/e2e.mjs --hooks --record` records the qa agent's own calls; the hooks run now dispatches the qa agent and expects its `--review release` let through; the refusal of its other kinds is the check's.
+
+Review round 1 (2026-11-12): one blocking finding and two to fix, all fixed on the branch:
+- blocking: a release could start while a change of the loop was in flight, and merge after `main` moved. Then the change's PR conflicted on `docs/EPICS.md` with the release's records, or the release merged over code nobody built and `release.mjs --tag` refused it forever. Now `release.mjs --plan` and `--write` refuse while an `epic/*` or `fix/*` branch holds a commit `main` does not, and `merge.mjs` refuses a release whose branch no longer starts at `main`'s tip;
+- `review-status.mjs --review release --state success` now wants `release.mjs --build`'s record of a build at the reviewed commit, so a build cut short cannot reach the merge;
+- the check's case for `release.mjs --check` inside `review-status.mjs` now fails only on that check.
+Also from its notes: the guard's heredoc ends at the first line that is its delimiter, as bash reads it, and allows `<<"EOF"`, `2>&1` and a line break after it; every `--review` of a reviewer's call counts; a `$` in a title is no replacement pattern; a row of `docs/EPICS.md` with no pipe at its end; `.claude/pitwall.json` may go into a release's commit; `--plan` refuses a project with no `scripts/build` before any branch, and says it comes through a change of the loop; the qa agent names pitwall's IDs in words; SPEC, the template's E0 and the epic's text put right.
+
+Proposed by the agent from the same round, awaiting owner (2026-11-12):
+- A lesson, from its blocking finding: a change that records other changes on `main` (a release, a loop branch's first commit) starts only when no other change of the loop is in flight, and merges only while its branch still starts at `main`'s tip. Checked by `release.mjs` and `merge.mjs` for a release; for the loop's own branches, `continue` already takes one change at a time.
+- A risk, as `R-6`: nothing but the release skill's text keeps the main conversation from running the tag commands `release.mjs --tag` hands the owner (`git tag -a`, `git push origin v<x.y.z>`, `gh release create`), as R-4 item 5 is for `merge.mjs --owner-approved`; the headless run showed the session leave them alone. Fallback: a tag made by mistake is deleted (`git push origin :refs/tags/v<x.y.z>`, `gh release delete`) before anyone installs it.
 
 ## Out of scope
 

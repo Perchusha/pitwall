@@ -5,8 +5,8 @@
 //
 // Only a reviewer runs it: the plan reviewer (--review plan), the code reviewer
 // (--review code, T3b-AC4) and the qa agent, for a release only (--review release, T4c-AC5,
-// ADR-0013); pitwall's hook lets only those three agents run it, the qa agent only with
-// --review release (ADR-0007, T3a-AC4). It commits nothing but the review file, and sets the status on the head of
+// ADR-0013); pitwall's hook lets only those three agents run it, each with its own kind of
+// --review only (ADR-0007, T3a-AC4, T4c). It commits nothing but the review file, and sets the status on the head of
 // the open PR from the review's branch, after it checks that it may (L-5):
 //   - the tree is clean but for the review file, on the review's branch: the planning
 //     branch for the plan; for code, the branch of the change (epic/E<n>-<slug> or
@@ -16,7 +16,8 @@
 //     docs-check --stage plan-review, and spike when there are spikes; for code:
 //     docs-check --stage code-review; for a release: docs-check --stage release and
 //     release.mjs --check), and for code and a release only when nothing but the review
-//     file changed after the commit the review names as reviewed (owner, ADR-0011);
+//     file changed after the commit the review names as reviewed (owner, ADR-0011); a
+//     release's success also wants release.mjs --build's record of a build at that commit;
 //   - gh is installed and signed in, the account may write, the branch is pushed
 //     (it pushes it), and the PR is open with this commit as its head.
 // A failed precondition prints a HANDOFF block with the commands for the owner,
@@ -31,7 +32,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, printHandoff, requireNode, sleep } from './lib.mjs';
+import { changeOf, config, ghRunner, gitRunner, parseArgs, parseJson, pluginRoot, printHandoff, releaseDir, requireNode, sleep } from './lib.mjs';
 
 requireNode();
 const usage = 'node review-status.mjs --review plan|code|release --state success|failure [--description "<text>"] [--project <dir>] [--dry-run]';
@@ -149,6 +150,17 @@ if (state === 'success') {
     if (!after?.ok) refuse(`${review.file} names no reviewed commit that git can read`);
     const moved = after.out.split('\n').filter((f) => f && f !== review.file);
     if (moved.length > 0) refuse(`files changed after the reviewed commit ${reviewed.slice(0, 7)}: a new round reviews the head`, moved.slice(0, 20).join('\n'));
+    // A release's success says it was built (ADR-0013): release.mjs --build recorded a build of this version at the
+    // reviewed commit, which release.mjs --tag reads after the merge (review round 1).
+    if (args.review === 'release') {
+      const record = join(releaseDir(project, cfg) ?? '', `${review.change.release}.json`);
+      let built = null;
+      try {
+        built = JSON.parse(readFileSync(record, 'utf8')).built ?? null;
+      } catch {}
+      if (built !== reviewed) refuse(`no build of ${review.change.release} at the reviewed commit ${reviewed.slice(0, 7)} is recorded (${built ? `the last one was at ${built.slice(0, 7)}` : 'none'}): run release.mjs --build on it, or set failure`);
+      log(`${review.change.release} was built at ${reviewed.slice(0, 7)}`);
+    }
   }
 }
 

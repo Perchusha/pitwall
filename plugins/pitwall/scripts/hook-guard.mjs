@@ -635,7 +635,7 @@ export function guard(call, ctx) {
   const target = FILE_WRITES.has(tool) ? (tool === 'NotebookEdit' ? input.notebook_path : input.file_path) : null;
   const written = tool === 'Write' ? [input.content] : tool === 'Edit' ? [input.new_string] : tool === 'MultiEdit' ? (input.edits ?? []).map((e) => e.new_string) : tool === 'NotebookEdit' ? [input.new_source] : [];
 
-  // 1. An agent with limits of its own (T3a-AC4, T3b-AC4): the plan reviewer and the code reviewer.
+  // 1. An agent with limits of its own (T3a-AC4, T3b-AC4, T4c-AC5): the plan reviewer, the code reviewer and the qa agent.
   if (policy) {
     if (target !== null) {
       const t = norm(String(target), cwd, home);
@@ -651,8 +651,16 @@ export function guard(call, ctx) {
       // Agents add "2>&1" to see errors in the output; it writes nothing (L-9).
       text = text.replace(/\s+2>&1\s*$/, '');
       // A quoted heredoc as the input of the command, the way /pitwall:bug gives bugs.mjs a bug: bash expands
-      // nothing in it, so it is data for the script, which must then be one of the agent's own (T4c-AC5).
-      const heredoc = tool === 'Bash' ? /^([^\n]*?)\s*<<-?\s*'([A-Za-z_]\w*)'[ \t]*\r?\n[\s\S]*?\r?\n\2[ \t]*$/.exec(text) : null;
+      // nothing in it, so it is data for the script, which must then be one of the agent's own (T4c-AC5). The first
+      // line that is the delimiter alone ends it, as bash reads it, and only blank lines may follow: a line after it
+      // would run as a command (review round 1).
+      const opener = tool === 'Bash' ? /^([^\n]*?)\s*<<(-?)\s*(['"])([A-Za-z_]\w*)\3((?:[ \t]+2>&1)?)[ \t]*\r?\n/.exec(text) : null;
+      let heredoc = null;
+      if (opener) {
+        const rest = text.slice(opener[0].length).split(/\r?\n/);
+        const end = rest.findIndex((l) => (opener[2] ? l.replace(/^\t+/, '') : l).replace(/[ \t]+$/, '') === opener[4]);
+        if (end >= 0 && rest.slice(end + 1).every((l) => !l.trim())) heredoc = opener;
+      }
       if (heredoc) text = heredoc[1];
       if (/[;&|<>`\n\r]|\$\(/.test(text)) return refuse('agent', `${agentType} runs one command at a time, with no ; & | < > backtick, $( or line break (a cd to the project root before it is fine).`);
       const cmds = parseCommand(text, tool === 'PowerShell' ? 'powershell' : 'bash', cd ? ctx.root : cwd, home);
@@ -891,7 +899,9 @@ export function guard(call, ctx) {
     if (runsReviewStatus && !reviewer) return refuse('review', `only ${h.reviewers.join(' and ')} run review-status.mjs (pitwall ADR-0007), and this call comes from ${agentId ? agentType || 'a sub-agent' : 'the main conversation'}.`);
     // T4c-AC8: each reviewer sets the status of its own kind of review only (hooks.agents.<agent>.review): the plan
     // reviewer the plan's, the code reviewer a change's, the qa agent a release's (ADR-0007, ADR-0013).
-    if (runsReviewStatus && policy?.review && argv[argv.indexOf('--review') + 1] !== policy.review) return refuse('review', `${agentType} sets ${ctx.cfg.review.statusContext} only through review-status.mjs --review ${policy.review} (pitwall ADR-0007, ADR-0013).`);
+    // Every --review counts: the script reads the last one (review round 1).
+    const kinds = argv.flatMap((a, k) => (a === '--review' ? [argv[k + 1]] : []));
+    if (runsReviewStatus && policy?.review && (kinds.length === 0 || kinds.some((x) => x !== policy.review))) return refuse('review', `${agentType} sets ${ctx.cfg.review.statusContext} only through review-status.mjs --review ${policy.review} (pitwall ADR-0007, ADR-0013).`);
 
     // (e), AC4 and AC7 over the GitHub API: protection, statuses and merges.
     const api = apiCall(p, argv);

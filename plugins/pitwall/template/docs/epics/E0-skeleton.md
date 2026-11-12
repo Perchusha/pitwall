@@ -1,6 +1,6 @@
 # E0 - Walking skeleton
 
-Goal: the empty project builds, tests and reaches staging, so every later epic runs the full loop from its first day.
+Goal: the empty project builds, tests and reaches staging, or a local build at the lite level, so every later epic runs the full loop from its first day.
 Depends on: the stack decisions in `docs/adr/`
 Risk class: normal
 ADR: (the stack ADRs)

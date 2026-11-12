@@ -112,6 +112,12 @@ if (change?.epic) {
 // A release (ADR-0013): never while a blocking bug is open, one its qa agent has just filed included, and
 // always after the owner's yes.
 if (change?.release) {
+  // The release holds what main held when it branched, and the qa agent built that: main must not have moved since
+  // (review round 1). origin's main when it can be fetched, else the local one.
+  git('fetch', '-q', 'origin', base);
+  const mainRef = [`refs/remotes/origin/${base}`, `refs/heads/${base}`].find((r) => git('rev-parse', '--verify', '-q', r).ok);
+  const tip = mainRef ? git('rev-parse', mainRef).out : '';
+  if (!tip || git('merge-base', sha, mainRef).out !== tip) refuse(`${base} moved since ${branch} left it${tip ? ` (now ${tip.slice(0, 7)})` : ''}: the release holds, and the qa agent built, what ${base} held then. Close it and start it again (pitwall ADR-0013)`);
   const open = openBlockingBugs(project, cfg, sha);
   if (open.length) refuse(`a blocking bug is open, so the release does not merge (pitwall ADR-0013): ${open.map((b) => `${b.id} (${b.title})${b.unconfirmed ? `, ${cfg.bugs.unconfirmed.mark}` : ''}`).join(', ')}. Its fix goes first; the release is closed and runs again after it`);
   if (!approved) owners(`${change.release} is a release: it merges only after the owner's yes, which covers the tag they make after it (pitwall ADR-0013)`);

@@ -7,14 +7,15 @@
 //       the version: an epic in it makes a minor, fixes alone a patch, and a major only with --version,
 //       the owner's word. The first release of a project needs --version too: the owner picks 0.1.0 or
 //       1.0.0 (release.firstVersions). It refuses while a blocking bug is open, an unconfirmed one
-//       included, and while a release is merged and not tagged.
+//       included, while a release is merged and not tagged, while a change of the loop is in flight (a
+//       branch epic/* or fix/* with a commit main does not hold), and when main has no scripts/build.
 //   node release.mjs --write [--project <dir>]
-//       On release/v<x.y.z>, branched from main as it is: writes the changelog's section into
+//       On release/v<x.y.z>, branched from main as it is, with no change in flight: writes the changelog's section into
 //       CHANGELOG.md (created when missing), released (v<x.y.z>) as the status of each epic in it in
 //       docs/EPICS.md, and fixed with its PR for each bug in it (bugs.mjs set --tree). The conductor adds
 //       the journal entries and commits.
 //   node release.mjs --check [--project <dir>]
-//       On release/v<x.y.z>: the branch changes only CHANGELOG.md and docs/, main has not moved since it
+//       On release/v<x.y.z>: the branch changes only CHANGELOG.md, docs/ and .claude/pitwall.json, main has not moved since it
 //       branched, the changelog's section and the statuses are what --write writes, and no blocking bug
 //       is open. The qa agent runs it; it writes nothing.
 //   node release.mjs --build [--project <dir>]
@@ -100,17 +101,22 @@ function onRelease() {
   return { branch, version: c.release.slice(prefix.length), id: c.id };
 }
 
+// The cells of a row of docs/EPICS.md and where its status is: the last cell, whether the row ends with a pipe or not.
+const rowCells = (line) => {
+  const cells = line.replace(/\s+$/, '').split(/(?<!\\)\|/);
+  // ['', id, goal, risk, deps, status, ''] for a row that ends with a pipe, without the last '' otherwise.
+  return { cells, statusAt: cells[cells.length - 1].trim() === '' ? cells.length - 2 : cells.length - 1 };
+};
 // The epics' rows of docs/EPICS.md: the status cell of each epic named, set to status.
 function setEpicStatuses(text, ids, status) {
   const done = new Set();
   const lines = text.split('\n').map((line) => {
     const m = /^\|\s*\[?(E\d+)\]?(?:\([^)]*\))?\s*\|/.exec(line);
     if (!m || !ids.includes(m[1])) return line;
-    const cells = line.replace(/\s+$/, '').split(/(?<!\\)\|/);
-    // ['', id, goal, risk, deps, status, ''] for a row that ends with a pipe.
-    const statusAt = cells.length - 2;
-    if (statusAt < 1) return line;
-    cells[statusAt] = ` ${status} `;
+    const { cells, statusAt } = rowCells(line);
+    if (statusAt < 2) return line;
+    // A row with no pipe at its end keeps none, and no space after its status either.
+    cells[statusAt] = statusAt === cells.length - 1 ? ` ${status}` : ` ${status} `;
     done.add(m[1]);
     return cells.join('|');
   });
@@ -119,9 +125,30 @@ function setEpicStatuses(text, ids, status) {
 const epicStatus = (text, id) => {
   const line = text.split('\n').find((l) => new RegExp(`^\\|\\s*\\[?${id}\\]?(?:\\([^)]*\\))?\\s*\\|`).test(l));
   if (!line) return null;
-  const cells = line.replace(/\s+$/, '').split(/(?<!\\)\|/);
-  return (cells[cells.length - 2] ?? '').trim();
+  const { cells, statusAt } = rowCells(line);
+  return (cells[statusAt] ?? '').trim();
 };
+
+// The changes of the loop in flight: a branch epic/* or fix/*, here or fetched, with a commit main does not hold
+// (continue's own reading: merged is reachable from main through its merge commit). A release records the changes
+// on main as that change's next branch would, so it starts only when none is in flight (review round 1).
+function inFlight() {
+  const refs = git('for-each-ref', '--format=%(refname:short)', ...['epic', 'fix'].flatMap((k) => [`refs/heads/${cfg.loop.branches[k]}`, `refs/remotes/origin/${cfg.loop.branches[k]}`])).out.split('\n').filter(Boolean);
+  const names = new Map();
+  for (const r of refs) {
+    if (git('merge-base', '--is-ancestor', r, mainRef).ok) continue;
+    names.set(r.replace(/^origin\//, ''), r);
+  }
+  return [...names.keys()];
+}
+// A project laid out before 0.9.0 has no scripts/build; main is protected, so it comes through a change of the loop.
+const noBuild = () => `this project has no ${cfg.release.build} in git: a project laid out before pitwall 0.9.0 lacks it. It comes through a change of the loop, a bug filed with /pitwall:bug or an epic, since ${main} is protected: a script that builds what the owner runs or installs, prints one "${cfg.release.artifactLine} <path>" line per thing it built, its path relative to the project, and changes no tracked file (pitwall ADR-0013); then the release runs`;
+const busy = () => {
+  const flying = inFlight();
+  if (flying.length) refuse(`a change of the loop is in flight (${flying.join(', ')}): a release records the changes merged on ${main}, as that change's next branch would, so it starts once that change is merged, or closed and its branch deleted`);
+};
+// Only these files may change on a release's branch: its changelog, the docs, and the owner's answers in .claude/pitwall.json.
+const releaseFile = (f) => f === cfg.release.changelog || f.startsWith('docs/') || f === '.claude/pitwall.json';
 
 // ---------- --plan ----------
 if (mode === 'plan') {
@@ -131,6 +158,8 @@ if (mode === 'plan') {
   }
   const stops = blockers();
   if (stops.length) refuse(`a blocking bug is open: no release goes until its fix merges or the owner confirms it is not blocking (pitwall ADR-0013)`, stops);
+  busy();
+  if (!git('cat-file', '-e', `${mainRef}:${cfg.release.build}`).ok) refuse(noBuild());
   const asked = args.version?.replace(/^v/, '') ?? null;
   const out = { since: history.last ? { tag: history.last.tag, sha: history.last.sha } : null, items: history.items, leftOut: history.leftOut, version: null, first: !history.last, named: false };
   if (history.items.length === 0) {
@@ -180,6 +209,7 @@ if (mode === 'write') {
   versionFor(r.history, r.version);
   const stops = blockers();
   if (stops.length) refuse('a blocking bug is open: no release goes until it is fixed or confirmed not blocking (pitwall ADR-0013)', stops);
+  busy();
   // CHANGELOG.md: the section of this version, after the file's introduction and before the versions before it.
   const path = join(project, cfg.release.changelog);
   // A project laid out before 0.9.0 has none: it starts as the template's.
@@ -189,7 +219,8 @@ if (mode === 'write') {
   const lines = text.split('\n');
   const old = changelogSectionOf(text, r.version, cfg);
   let next;
-  if (old !== null) next = text.replace(old, section);
+  // A function, so a "$" in a title is no replacement pattern.
+  if (old !== null) next = text.replace(old, () => section);
   else {
     const first = lines.findIndex((l) => /^## /.test(l));
     const at = first < 0 ? lines.length : first;
@@ -239,9 +270,9 @@ if (mode === 'check') {
   // Only CHANGELOG.md and docs/ change: the tag then holds the code the qa agent built.
   const committed = git('-c', 'core.quotePath=false', 'diff', '--name-only', r.base, 'HEAD').out.split('\n').filter(Boolean);
   const working = git('-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all').raw.split('\n').filter(Boolean).map((l) => l.slice(3));
-  const others = [...new Set([...committed, ...working])].filter((f) => f !== cfg.release.changelog && !f.startsWith('docs/'));
-  if (others.length) fails.push(`the release changes more than ${cfg.release.changelog} and docs/: ${others.slice(0, 10).join(', ')}`);
-  else pass(`it changes only ${cfg.release.changelog} and docs/`);
+  const others = [...new Set([...committed, ...working])].filter((f) => !releaseFile(f));
+  if (others.length) fails.push(`the release changes more than ${cfg.release.changelog}, docs/ and .claude/pitwall.json: ${others.slice(0, 10).join(', ')}`);
+  else pass(`it changes only ${cfg.release.changelog}, docs/ and .claude/pitwall.json`);
   // The changelog's section is the one --write writes from the merges.
   const path = join(project, cfg.release.changelog);
   const have = existsSync(path) ? changelogSectionOf(readFileSync(path, 'utf8'), r.version, cfg) : null;
@@ -283,7 +314,7 @@ if (mode === 'build') {
   const r = onRelease();
   const script = cfg.release.build;
   if (!git('ls-files', '--error-unmatch', '--', script).ok) {
-    refuse(`this project has no ${script} in git: a project laid out before pitwall 0.9.0 lacks it. The owner adds one that builds what they run or install, prints one "${cfg.release.artifactLine} <path>" line per thing it built and changes no tracked file (pitwall ADR-0013), then the release runs again`);
+    refuse(noBuild());
   }
   const before = porcelain();
   if (before.length) refuse('the tree is not clean: the build runs on the commit the release holds', before.slice(0, 10));
@@ -356,7 +387,7 @@ if (mode === 'tag') {
     built = JSON.parse(readFileSync(record, 'utf8'));
   } catch {}
   if (!built?.built) refuse(`no build of ${tag} is recorded in this clone (${String(record).split('\\').join('/')}): the qa agent's build (release.mjs --build) ran elsewhere or not at all, so this clone cannot tell the tag holds the built code`);
-  const code = git('diff', '--name-only', built.built, merge, '--', '.', `:(exclude)docs`, `:(exclude)${cfg.release.changelog}`);
+  const code = git('diff', '--name-only', built.built, merge, '--', '.', `:(exclude)docs`, `:(exclude)${cfg.release.changelog}`, ':(exclude).claude/pitwall.json');
   if (!code.ok) refuse(`git cannot compare the built commit ${short(built.built)} with the merge commit ${short(merge)}: ${code.err}`);
   if (code.out) refuse(`the code of the merge commit ${short(merge)} differs from the code the qa agent built at ${short(built.built)}: ${main} moved under the release, so its tag would hold code nobody built or checked`, code.out.split('\n').slice(0, 10));
   // The message: the changelog's section as the merge commit holds it.

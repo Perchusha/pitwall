@@ -2267,6 +2267,23 @@ slowStep('releases (fake gh)', (report) => {
       gitIn(p, 'commit', '-qam', 'docs: BUG-2');
     });
     expect('a blocking bug whose row names a PR but no merge', rel(prOnly, ['--plan', '--version', '0.1.0']), 1, ['BUG-2 (The icon is gone): blocking, in review']);
+    // A change of the loop in flight: no release starts beside it, since it records the same changes (review round 1).
+    const flying = fresh((p) => {
+      gitIn(p, 'switch', '-qc', 'epic/E2-release');
+      writeFileSync(join(p, 'src', 'release.js'), 'export {};\n');
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'work on E2');
+      gitIn(p, 'switch', '-q', 'main');
+    });
+    expect('a change in flight', rel(flying, ['--plan', '--version', '0.1.0']), 1, ['a change of the loop is in flight (epic/E2-release)']);
+    gitIn(flying, 'switch', '-qc', 'release/v0.1.0');
+    expect('write with a change in flight', rel(flying, ['--write']), 1, ['a change of the loop is in flight (epic/E2-release)']);
+    // A project laid out before 0.9.0: no scripts/build on main, so no release starts; it comes through a change.
+    const noBuild = fresh((p) => {
+      gitIn(p, 'rm', '-q', 'scripts/build');
+      gitIn(p, 'commit', '-qm', 'chore: no build');
+    });
+    expect('no scripts/build on main', rel(noBuild, ['--plan', '--version', '0.1.0']), 1, ['no scripts/build in git', 'a bug filed with /pitwall:bug or an epic']);
 
     // --write and --check on the release branch.
     const good = fresh();
@@ -2277,8 +2294,28 @@ slowStep('releases (fake gh)', (report) => {
     const epicsAfter = readFileSync(join(good, 'docs', 'EPICS.md'), 'utf8');
     if (!/\| \[E0\][^\n]*\| released \(v0\.1\.0\) \|$/m.test(epicsAfter) || !/\| \[E1\][^\n]*\| released \(v0\.1\.0\) \|$/m.test(epicsAfter) || !/\| \[E2\][^\n]*\| planned \|$/m.test(epicsAfter)) report(`release.mjs --write: docs/EPICS.md is\n${epicsAfter}`);
     if (!/^\| BUG-1 \|[^\n]*\| fixed \| #4 \|$/m.test(readFileSync(join(good, 'docs', 'BUGS.md'), 'utf8'))) report('release.mjs --write: BUG-1 is not fixed with #4 in docs/BUGS.md');
-    expect('check', rel(good, ['--check']), 0, ['ok: it changes only CHANGELOG.md and docs/', 'ok: CHANGELOG.md holds the section v0.1.0, 3 lines', 'RESULT: pass']);
+    expect('check', rel(good, ['--check']), 0, ['ok: it changes only CHANGELOG.md, docs/ and .claude/pitwall.json', 'ok: CHANGELOG.md holds the section v0.1.0, 3 lines', 'RESULT: pass']);
     expect('write on main', rel(base, ['--write']), 1, ['runs on the branch of a release']);
+    // A row with no pipe at its end, a "$" in a title written twice, and the owner's answer in .claude/pitwall.json.
+    const odd = fresh((p) => {
+      writeFileSync(join(p, 'docs', 'EPICS.md'), readFileSync(join(p, 'docs', 'EPICS.md'), 'utf8').replace(/^(\| \[E1\][^\n]*\| [^|\n]+) \|$/m, '$1'));
+      gitIn(p, 'commit', '-qam', 'docs: a row without its last pipe');
+      gitIn(p, 'switch', '-qc', 'epic/E2-release');
+      writeFileSync(join(p, 'src', 'costs.js'), 'export {};\n');
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'work');
+      gitIn(p, 'switch', '-q', 'main');
+      gitIn(p, 'merge', '-q', '--no-ff', 'epic/E2-release', '-m', "feat(E2): Costs $' and $& (#5)");
+      branched(p);
+    });
+    const once = readFileSync(join(odd, 'CHANGELOG.md'), 'utf8');
+    expect('write again', rel(odd, ['--write']), 0, ['RESULT: written']);
+    if (readFileSync(join(odd, 'CHANGELOG.md'), 'utf8') !== once || !once.includes("- E2: Costs $' and $& (#5)")) report(`release.mjs --write twice over a title with $' and $&: the changelog is\n${readFileSync(join(odd, 'CHANGELOG.md'), 'utf8')}`);
+    if (!/^\| \[E1\][^\n]*\| released \(v0\.1\.0\)$/m.test(readFileSync(join(odd, 'docs', 'EPICS.md'), 'utf8'))) report('release.mjs --write: a row of docs/EPICS.md with no pipe at its end did not get its status in its last cell');
+    const settingsFile = join(odd, '.claude', 'pitwall.json');
+    writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(readFileSync(settingsFile, 'utf8')), autoMerge: true }, null, 2) + '\n');
+    gitIn(odd, 'commit', '-qam', "chore: record the owner's choice");
+    expect('check with the owner\'s answer and a row without its last pipe', rel(odd, ['--check']), 0, ['RESULT: pass']);
     const handEdited = fresh((p) => {
       branched(p);
       writeFileSync(join(p, 'CHANGELOG.md'), readFileSync(join(p, 'CHANGELOG.md'), 'utf8').replace('- E1: The reminder (#3)\n', ''));
@@ -2289,7 +2326,7 @@ slowStep('releases (fake gh)', (report) => {
       writeFileSync(join(p, 'src', 'reminder.js'), 'export const minutes = 40;\n');
       gitIn(p, 'commit', '-qam', 'fix: a change on the release');
     });
-    expect('check: code on the release branch', rel(codeToo, ['--check']), 1, ['changes more than CHANGELOG.md and docs/: src/reminder.js']);
+    expect('check: code on the release branch', rel(codeToo, ['--check']), 1, ['changes more than CHANGELOG.md, docs/ and .claude/pitwall.json: src/reminder.js']);
     // The next change merged on main, as the loop would merge it.
     const next = (p, branch, subject) => {
       gitIn(p, 'switch', '-q', 'main');
@@ -2360,8 +2397,17 @@ slowStep('releases (fake gh)', (report) => {
     expect('tag once tagged', rel(tagged, ['--tag', '--version', '0.1.0']), 0, ['is already the tag of']);
     expect('nothing after the tag', rel(tagged, ['--plan']), 1, ['nothing to release', 'since v0.1.0']);
     // The next releases: fixes alone a patch, an epic a minor, the owner's major above it, nothing below.
+    // BUG-2's row, as the first commit of its fix's branch would write it.
+    gitIn(tagged, 'switch', '-q', 'main');
+    writeFileSync(join(tagged, 'docs', 'BUGS.md'), `${readFileSync(join(tagged, 'docs', 'BUGS.md'), 'utf8').trimEnd()}\n| BUG-2 | The icon is gone | QA | Start it | An icon | None | not blocking | normal | in review | - |\n`);
+    gitIn(tagged, 'commit', '-qam', 'docs: BUG-2');
     next(tagged, 'fix/BUG-2', 'fix(BUG-2): The icon is gone (#6)');
     expect('a patch', rel(tagged, ['--plan']), 0, ['v0.1.1, after v0.1.0', 'RESULT: v0.1.1'], ['epic E0']);
+    // A second release: its section goes above the first, which stays as it was.
+    branched(tagged, '0.1.1');
+    const second = readFileSync(join(tagged, 'CHANGELOG.md'), 'utf8');
+    if (!(second.indexOf('## v0.1.1 - ') > 0 && second.indexOf('## v0.1.1 - ') < second.indexOf('## v0.1.0 - ')) || !second.includes('- BUG-2: The icon is gone (#6)') || !second.includes('- E1: The reminder (#3)')) report(`release.mjs --write, a second release: the changelog is\n${second}`);
+    expect('check a second release', rel(tagged, ['--check']), 0, ['RESULT: pass']);
     next(tagged, 'epic/E2-release', 'feat(E2): A release on GitHub (#7)');
     expect('a minor', rel(tagged, ['--plan']), 0, ['RESULT: v0.2.0']);
     expect('the owner\'s major', rel(tagged, ['--plan', '--version', '1.0.0']), 0, ['the version the owner named', 'RESULT: v1.0.0']);
@@ -2440,8 +2486,41 @@ slowStep('releases (fake gh)', (report) => {
       if (subject && said !== subject) fail(`the commit says "${said}"`);
       for (const s of says) if (!r.stdout.includes(s)) fail(`output lacks "${s}"`);
     };
-    status('approved', { prepare: (q) => qaReview(q), code: 0, posts: 1, subject: 'docs: qa of release-v0.1.0, approved', says: ['release.mjs --check passes'] });
-    status('a release that fails its check', {
+    // Success wants the build recorded at the reviewed commit (review round 1), and release.mjs --check on its own.
+    const built = (q) => rel(q, ['--build']);
+    status('approved', {
+      prepare: (q) => {
+        built(q);
+        qaReview(q);
+      },
+      code: 0,
+      posts: 1,
+      subject: 'docs: qa of release-v0.1.0, approved',
+      says: ['release.mjs --check passes', 'v0.1.0 was built at'],
+    });
+    status('no build recorded', { prepare: (q) => qaReview(q), code: 1, posts: 0, says: ['no build of v0.1.0 at the reviewed commit', '(none)'] });
+    status('a build of another commit', {
+      prepare: (q) => {
+        built(q);
+        gitIn(q, 'commit', '-q', '--allow-empty', '-m', 'docs: nothing');
+        qaReview(q);
+      },
+      code: 1,
+      posts: 0,
+      says: ['no build of v0.1.0 at the reviewed commit', 'the last one was at'],
+    });
+    status('only release.mjs --check fails', {
+      prepare: (q) => {
+        writeFileSync(join(q, 'CHANGELOG.md'), readFileSync(join(q, 'CHANGELOG.md'), 'utf8').replace('- E1: The reminder (#3)\n', ''));
+        gitIn(q, 'commit', '-qam', 'docs: a changelog edited by hand');
+        built(q);
+        qaReview(q);
+      },
+      code: 1,
+      posts: 0,
+      says: ['does not pass release.mjs --check'],
+    });
+    status('a blocking bug filed by QA', {
       prepare: (q) => {
         qaReview(q);
         bugs(q, bugInput());
@@ -2475,6 +2554,16 @@ slowStep('releases (fake gh)', (report) => {
     merge('a release without the owner\'s yes', { code: 4, merges: 0, says: ['v0.1.0 is a release: it merges only after the owner\'s yes', 'RESULT: waits for the owner'] });
     merge('a release after the owner\'s yes', { args: ['--change', '--owner-approved'], code: 0, merges: 1, says: ['RESULT: merged'] });
     merge('a release with a blocking bug open', { args: ['--change', '--owner-approved'], prepare: (q) => bugs(q, bugInput()), code: 1, merges: 0, says: ['a blocking bug is open, so the release does not merge', 'BUG-2 (The icon is gone), unconfirmed'] });
+    merge('a release after main moved', {
+      args: ['--change', '--owner-approved'],
+      prepare: (q) => {
+        next(q, 'fix/BUG-9', 'fix(BUG-9): Other (#6)');
+        gitIn(q, 'switch', '-q', 'release/v0.1.0');
+      },
+      code: 1,
+      merges: 0,
+      says: ['main moved since release/v0.1.0 left it', 'Close it and start it again'],
+    });
   });
 });
 
@@ -3273,6 +3362,12 @@ slowStep('hooks (recorded payloads)', (report) => {
     qaBash('a heredoc that expands', filing.replace("<<'EOF'", '<<EOF'), 'deny:agent');
     qaBash('a heredoc into git', `git log <<'EOF'\nx\nEOF`, 'deny:agent');
     qaBash('a heredoc and a second command', `node "${P}/scripts/bugs.mjs" file <<'EOF' && git push\ntitle: x\nEOF`, 'deny:agent');
+    qaBash('a command after the heredoc ends', `node "${P}/scripts/bugs.mjs" file <<'EOF'\ntitle: x\nEOF\ngit tag v1\nEOF`, 'deny:agent');
+    qaBash('a heredoc with a line break after it', `${filing}\n`, 'allow');
+    qaBash('a heredoc quoted with double quotes', filing.replace("<<'EOF'", '<<"EOF"'), 'allow');
+    qaBash('a heredoc with 2>&1', filing.replace("<<'EOF'", "<<'EOF' 2>&1"), 'allow');
+    qaBash('review-status.mjs with a second --review', `${releaseStatus} --review code`, 'deny:review');
+    crBash('review-status.mjs with --review code, then release', `${codeStatus} --review release`, 'deny:review');
     qaBash('the build itself', 'bash scripts/build 0.1.0', 'deny:agent');
     qaBash('a tag', 'git tag -a v0.1.0 -m x', 'deny:agent');
     qaBash('a push of a tag', 'git push origin v0.1.0', 'deny:agent');
