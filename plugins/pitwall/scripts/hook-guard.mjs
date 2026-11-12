@@ -519,6 +519,72 @@ function gitCommand(argv) {
   return { sub: argv[i], args: argv.slice(i + 1), dir };
 }
 
+// T4d-AC3: the folder of the gate before every commit (pitwall ADR-0012).
+const HOOKS_PATH = '.githooks';
+
+// The options of git commit that take the next word as their value, unless it is glued on ("-mfix", "--message=x"),
+// and the short ones among them as letters of a bundle ("-am <msg>"). -u and -S take a value only glued on.
+const COMMIT_VALUED = new Set(['-m', '--message', '-F', '--file', '-C', '--reuse-message', '-c', '--reedit-message', '-t', '--template', '--author', '--date', '--cleanup', '--fixup', '--squash', '--trailer', '--pathspec-from-file']);
+const COMMIT_SHORT_VALUED = 'mFCct';
+const COMMIT_SHORT_GLUED = 'uS';
+
+// The flag with which "git commit <args>" skips the pre-commit hook, as written, or null: --no-verify, or -n alone or
+// in a bundle of short flags ("-an", "-anm x"), but not an n that is the value of a flag before it ("-mn"). The last of
+// --no-verify, -n and --verify wins, as in git.
+export function skipsCommitHook(args) {
+  let skip = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--') break;
+    if (a === '--no-verify') skip = a;
+    else if (a === '--verify') skip = null;
+    else if (a.startsWith('--')) {
+      if (COMMIT_VALUED.has(a)) i += 1;
+    } else if (/^-[^-]/.test(a)) {
+      for (let k = 1; k < a.length; k += 1) {
+        const c = a[k];
+        if (c === 'n') skip = a;
+        if (COMMIT_SHORT_VALUED.includes(c)) {
+          if (k === a.length - 1) i += 1;
+          break;
+        }
+        if (COMMIT_SHORT_GLUED.includes(c)) break;
+      }
+    }
+  }
+  return skip;
+}
+
+// The options of git config that take the next word as their value.
+const CONFIG_VALUED = new Set(['-f', '--file', '--blob', '--type', '--default', '--comment', '--value']);
+const CONFIG_SUBCOMMANDS = new Set(['set', 'unset', 'get', 'list', 'edit', 'rename-section', 'remove-section']);
+
+// What "git config <args>" does to core.hooksPath that the gate before every commit does not allow, in words ("unsets
+// core.hooksPath"), or null: a read, another key, or core.hooksPath set to .githooks, at any scope. Reads both forms,
+// "git config [--unset] <key> [<value>]" and "git config set|unset <key> [<value>]" (git 2.46).
+export function hooksPathChange(args) {
+  const words = [];
+  let action = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '--') {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (CONFIG_VALUED.has(a)) i += 1;
+    else if (a === '--unset' || a === '--unset-all') action = 'unset';
+    else if (/^--(get|get-all|get-regexp|get-urlmatch|get-color|get-colorbool|list|edit|rename-section|remove-section)$/.test(a) || a === '-l' || a === '-e') action ??= 'read';
+    else if (!a.startsWith('-')) words.push(a);
+  }
+  const sub = CONFIG_SUBCOMMANDS.has(words[0]) && words.length > 1 ? words.shift() : null;
+  if (!/^core\.hookspath$/i.test(words[0] ?? '')) return null;
+  if (sub === 'unset' || action === 'unset') return 'unsets core.hooksPath';
+  if (sub === 'get' || sub === 'list' || action === 'read' || words.length < 2) return null;
+  // The same folder however it is spelled: "./.githooks", ".githooks/" (review round 1).
+  const folder = words[1].replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
+  return folder === HOOKS_PATH ? null : `sets core.hooksPath to "${words[1]}"`;
+}
+
 // ---- The guard ----
 
 const FILE_WRITES = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -765,6 +831,18 @@ export function guard(call, ctx) {
     if (git?.sub === 'push') {
       const reason = pushChangesMain(git, base, dir, home, ctx, switchedTo);
       if (reason) return refuse('push', reason);
+    }
+
+    // (f) T4d-AC3: the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Narrow by
+    // the owner's decision: git commit with --no-verify or -n, and git config that sets core.hooksPath to anything but
+    // .githooks or unsets it. What it does not read is R-5.
+    if (git?.sub === 'commit') {
+      const flag = skipsCommitHook(git.args);
+      if (flag) return refuse('precommit', `git commit ${flag} skips the gate before every commit, the project's .githooks/pre-commit (pitwall ADR-0012). Commit without it: when the gate is red, fix what it reports first. A commit of nothing but Markdown under docs/ and .claude/pitwall.json passes the hook even while the gate is red.`);
+    }
+    if (git?.sub === 'config') {
+      const change = hooksPathChange(git.args);
+      if (change) return refuse('precommit', `this git config ${change}, the setting that runs the gate before every commit from ${HOOKS_PATH} (pitwall ADR-0012). The only change pitwall makes is git config core.hooksPath ${HOOKS_PATH}; anything else is the owner's, in a terminal.`);
     }
 
     // T4a-AC1, L-12: a git command that would throw away uncommitted work. What a stash, a commit or git add

@@ -39,18 +39,18 @@ Two-way, picked by the agent and accepted by the owner as a list on 2026-11-11, 
 | Version | 0.7.0 | Two skills, a script and a column are additions |
 
 The first bugs (owner, 2026-11-11): once `/pitwall:bug` is built, it files four gaps of the hooks' guard as the first bugs in pitwall's own `docs/BUGS.md`, in the new format, which is the skill's first run on real data. Each is not blocking, and each fix is high risk, since it changes a guard:
-- `git rm -f` over a changed file passes (R-3);
-- `git worktree remove --force` over a work tree with changes passes (R-3);
-- `git reset --merge` is not judged (R-3);
-- a PowerShell assignment of a single word is read as running its value: `$r = 'review-status.mjs'` is refused as `review` (T3a).
+- BUG-1 (`git rm -f`), fixed first;
+- BUG-2 (`git worktree remove --force`);
+- BUG-3 (`git reset --merge`);
+- BUG-4 (the PowerShell single-word assignment).
 
 Once they are filed, the description, the steps and the severity of each live only in `docs/BUGS.md`, so that a gap lives in one file (owner, 2026-11-11):
 - this list keeps each bug as its BUG-n with a short name and its place in the order, so that the decision reads without opening another file: for example "BUG-&lt;n&gt; (`git rm -f`), fixed first", with the number it gets;
 - R-3 names the three it describes the same way, by BUG-n with a short name, and keeps only what was accepted and will not be fixed.
 
-The four are not T4b's criteria. They are fixed after T7, which comes after T5 and builds the script that checks each change of the guard against the corpus, `git rm -f` first, since it throws work away more readily than the others (owner, 2026-11-11).
+The four are not T4b's criteria. They are fixed after T7, which comes after T5b and builds the script that checks each change of the guard against the corpus, `git rm -f` first, since it throws work away more readily than the others (owner, 2026-11-11).
 
-Review rounds stopped after the third (owner, 2026-11-11). What stayed open: R-4, accepted; and a bug filed the same way after the merge, fixed later: `bugs.mjs flush` drops a cell of a row written by hand with a `|` that is not escaped, where a cell too many in a row must be refused as a column too many is (owner).
+Review rounds stopped after the third (owner, 2026-11-11). What stayed open: R-4, accepted; and BUG-5 (`bugs.mjs flush` and a `|` not escaped), filed the same way after the merge and fixed later (owner).
 
 An intermittent failure of the step "fake GitHub against GitHub's answers" of `scripts/check.mjs` (once in about seven runs on 2026-11-11, its message not kept) is filed the same way, with `/pitwall:bug` once it is built, as soon as a failure shows its message (owner, 2026-11-11).
 

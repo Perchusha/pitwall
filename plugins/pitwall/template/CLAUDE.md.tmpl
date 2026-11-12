@@ -15,6 +15,7 @@ E0 fills this section in. Never list a command here that has not been run succes
 - All checks, as CI runs them: `scripts/gate --full`
 - Inner loop: `scripts/gate --fast`
 - Changed packages only: `scripts/gate --changed`
+- Once in a new clone, so that `scripts/gate --fast` runs before every commit: `git config core.hooksPath .githooks`
 
 ## Architecture boundaries
 
@@ -37,7 +38,7 @@ A task is done when all of these hold:
 - One epic, one branch `epic/E<n>-<slug>`, one PR; a bug fix goes on `fix/BUG-<n>`. Never push to `main`. Until the plan is merged, stages 1 to 5 commit on `{{PLANNING_BRANCH}}`.
 - A decision that belongs to the owner is asked one question at a time, with the options compared.
 - Check package versions in the registry, never from memory. Model IDs, prices and API limits live only in the config that `docs/STACK.md` names.
-- Small conventional commits, each green on its own.
+- Small conventional commits, each green on its own: `.githooks/pre-commit` runs `scripts/gate --fast` before every commit and refuses a red one. A commit of nothing but Markdown under `docs/` and `.claude/pitwall.json` passes it, and so does any commit on a `spike/*` branch.
 
 ## Never
 
@@ -45,3 +46,4 @@ A task is done when all of these hold:
 - Set the `ai-review` status outside the review flow.
 - Merge a PR whose `gate` or `ai-review` check is not green.
 - Weaken a check, a hook or a test to make it pass. Fix the cause.
+- Skip the gate before every commit: no `git commit --no-verify`, and `core.hooksPath` stays `.githooks`.

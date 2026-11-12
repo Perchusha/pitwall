@@ -7,7 +7,7 @@ ADR: (the stack ADRs)
 
 ## Acceptance criteria
 
-- [ ] E0-AC1: `scripts/gate --full` runs the real checks for the chosen stack and exits non-zero when a test fails.
+- [ ] E0-AC1: `scripts/gate --full` runs the real checks for the chosen stack and exits non-zero when a test fails; `scripts/gate --fast` runs the quick ones in seconds, since `.githooks/pre-commit` runs it before every commit.
 - [ ] E0-AC2: CI runs the gate on every PR as the check named `gate`.
 - [ ] E0-AC3: Merge protection is on: `.claude/pitwall.json` records `branch-protection` or `local-hook`, not `pending`, and pitwall's `protect.mjs` confirms it.
 - [ ] E0-AC4: A "hello world" build reaches staging, or a local build at the lite level.

@@ -47,7 +47,7 @@ Project docs are tens or hundreds of kilobytes and change with almost every comm
 
 1. **Clarify.** `/pitwall:continue` takes one change at a time and never interrupts it: the change in flight first, then a blocking bug's fix, then the next epic whose dependencies are merged, then a fix of a bug that is not blocking. It rereads the change, its acceptance criteria and ADRs. Questions go to the owner one at a time, before any code.
 2. **Implement.** One implementer sub-agent per change on `epic/E<n>-<slug>` or `fix/BUG-<n>`, with a call budget. The risk class picks `implementer` or `implementer-deep`; a PARTIAL report gets a fresh one with the handoff.
-3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping.
+3. **Test.** Every new module has tests; every acceptance criterion has a test or a QA scenario. Hooks run checks after edits and before stopping, and the project's git hook runs `scripts/gate --fast` before every commit and refuses a red one (ADR-0012).
 4. **Gate.** `scripts/gate --full`. Red gate: no PR.
 5. **PR** with the acceptance criteria, ADR links and what was not done. CI runs the gate as the check `gate`.
 6. **Review** by `code-reviewer` in the local session with a fresh context each round: the diff, the change, its ADRs and `docs/LESSONS.md`. It writes `docs/reviews/E<n>-<slug>.md` or `docs/reviews/BUG-<n>.md`, its only file: the commit it reviewed, what covers each criterion and the findings, each closed by a commit or an accepted risk (ADR-0011). Its verdict is the commit status `ai-review` (ADR-0002, ADR-0007), set only while nothing but that file changed after the reviewed commit. When rejects on one change reach `review.ownerDecidesAtReject` in `config/defaults.json`, the owner decides, and rounds stop at `review.maxRounds` (L-8).
@@ -80,21 +80,22 @@ Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversatio
 
 - **The plugin** holds the process: skills, agents, hooks, scripts and defaults. Improving the process ships as a new plugin version to every project.
 - **The template** (`plugins/pitwall/template/`) is copied into a new project by `kickoff` (ADR-0001). It holds no code; E0 adds the code and the real `scripts/gate` once the stack is chosen.
-- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/reviews/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json` and `scripts/gate --fast|--changed|--full`, plus the `##` headings of the template's documents (ADR-0006, ADR-0011). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, the owner's choice of ADR-0010, which only the owner records, through `merge-choice.mjs` in a terminal.
+- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/reviews/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json`, `.githooks/pre-commit` and `scripts/gate --fast|--changed|--full`, plus the `##` headings of the template's documents (ADR-0006, ADR-0011). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, the owner's choice of ADR-0010, which only the owner records, through `merge-choice.mjs` in a terminal.
 - **Plugin scripts** run on Node.js (ADR-0004): the layout, the docs check, merge protection, the review status, the merge, the owner's choice of merges without them and the hooks. A project's stack needs no Node.
-- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status, the reviewers' limits, the owner's own script, git commands that would throw away uncommitted work (L-12) and their own switch, call budgets, and the gate after edits and before stopping on epic and fix branches (T3a, T3b). On the owner's yes to merges without them, the session-start hook keeps the two narrow allow rules of ADR-0010 in `.claude/settings.local.json` in step with the plugin's path. A guard that cannot run refuses.
+- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status, the reviewers' limits, the owner's own script, git commands that would throw away uncommitted work (L-12), a commit that skips the gate before every commit and a change of `core.hooksPath` (ADR-0012), and their own switch, call budgets, and the gate after edits and before stopping on epic and fix branches (T3a, T3b). On the owner's yes to merges without them, the session-start hook keeps the two narrow allow rules of ADR-0010 in `.claude/settings.local.json` in step with the plugin's path. A guard that cannot run refuses.
 - **MCP** is for data outside the repository: library docs for the stack, GitHub, a browser for QA, hosting and databases. Project state stays in files, and the process stays in skills.
 - **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review`, admins included (ADR-0005), wherever GitHub offers it, and a local hook that refuses the merge on private repositories on GitHub Free.
 - **Planning** happens on one branch: the skeleton is the only direct commit on `main`, stages 1 to 5 commit on `plan/initial`, and the plan reaches `main` in one PR after stage 5, merged with a merge commit once the owner says yes (ADR-0008). Spike code stays on `spike/<topic>`.
 
-## 10. Validation on three systems
+## 10. Validation on two systems
 
-The template is tested like a product: three systems of rising complexity walk the whole path, and the same numbers are taken for each.
+The template is tested like a product: two systems walk the whole path, and the same numbers are taken for each.
 
 | Level | System | What it tests |
 | --- | --- | --- |
-| lite | A desktop move-reminder app for one user | That a small idea does not drown in process |
-| standard | A money tracker rebuilt from scratch: web, database, auth, two users | Decisions, ADRs, staging, merges by risk class, QA |
-| full | Chosen after the standard run | Spike, pre-mortem, many high-risk epics, modules |
+| lite | A desktop move-reminder app for one user, built from scratch | That a small idea does not drown in process |
+| full | Last Ones Down, an existing game project pitwall adopts (T6), with its own path to Steam | Adoption without a second plan, spike, pre-mortem, many high-risk epics, modules |
+
+The standard level is not validated before 1.0: the first real standard project after 1.0 checks it (owner, 2026-11-12).
 
 Measured per system: questions to the owner and how many were unnecessary; interventions outside the questions; calls, tokens and money per epic; blocking review findings and how many repeated a lesson; bugs found by QA after merge and bugs that reached production; what had to change in the plugin, each change released as a version before the next system.

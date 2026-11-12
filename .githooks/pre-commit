@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# pitwall's own gate before every commit (T4d-AC4, L-14): the fast part of scripts/check.mjs,
+# the steps that only read the repository or lay out scratch projects. CI and the full run
+# before a PR run the rest.
+#
+# In a new clone, once: git config core.hooksPath .githooks
+# Never skip it with --no-verify: fix what the check finds, then commit.
+set -uo pipefail
+
+# The check runs as it would from a terminal: git's variables for this commit's own index
+# would send the git commands of its scratch projects into this commit.
+unset $(git rev-parse --local-env-vars)
+
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+node scripts/check.mjs --fast >"$out" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+  grep -v '^PASS ' "$out" | tail -n 40 >&2
+  echo "" >&2
+  echo "pre-commit: node scripts/check.mjs --fast failed (exit $status), so the commit was refused." >&2
+  echo "Fix what it reports and commit again; never skip this check with --no-verify." >&2
+  exit 1
+fi
+exit 0

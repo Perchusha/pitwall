@@ -34,7 +34,7 @@ is_docs() {
     .github/workflows/*.yml|.github/workflows/*.yaml|.github/*.md) return 0 ;;
     .claude/*.json|.claude/*.md) return 0 ;;
     CLAUDE.md|AGENTS.md|README.md|LICENSE|.gitignore|.gitattributes|.editorconfig) return 0 ;;
-    scripts/gate|.vscode/extensions.json) return 0 ;;
+    scripts/gate|.githooks/*|.vscode/extensions.json) return 0 ;;
   esac
   return 1
 }

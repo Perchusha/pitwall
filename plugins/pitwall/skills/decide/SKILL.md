@@ -18,6 +18,7 @@ With an area as the argument (`$ARGUMENTS` names one of `decide.areas`), follow 
 ## Rules
 
 - Run each command in the steps as written, from the project root, one command per call.
+- A commit that holds more than Markdown under `docs/` (`CLAUDE.md` here) runs the gate before every commit, still the template's stub. When it refuses, the stub found a file it counts as code: show the owner the files it names and wait until they move or remove them; never commit past it.
 - One one-way question per message, then wait. Never record a one-way decision the owner did not give.
 - Versions, prices, limits and model IDs come from a page opened at decision time, never from memory. A version is read from the registry's API or package page.
 - "New but proven": a stable release (`maturity.stableReleaseOnly`), a release within `maturity.maxMonthsSinceLastRelease` months, a migration path and compatibility with the rest of the stack. An option that fails it is named in the comparison with the reason, not recommended.
