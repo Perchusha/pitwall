@@ -39,9 +39,11 @@ Two-way, picked by the agent and accepted by the owner as a list on 2026-11-12, 
 | Runs before the PR | `scripts/check.mjs`; `e2e --hooks`, since the guard changes (about $1); the loop stage `bug` from the state E1 saved (about $13), a project laid out before T4d, so the run also installs the hook through `continue` and the implementer commits through it | The two runs that cross what changed |
 | Version | 0.8.0 | A template file, a guard rule and a check option are additions |
 
-Found while building, for the owner to confirm at the PR (2026-11-12, the agent):
+Found while building, proposed by the agent and accepted by the owner (2026-11-12):
 - A commit that changes only Markdown under `docs/` and `.claude/pitwall.json` passes the hook without the gate; any other file under `docs/` runs it, since a project may keep code there. Without it, a red `main` would refuse the first commit of its own fix, which holds only docs, and `/pitwall:owner-calls` could not commit the owner's answers over an implementer's red work in progress.
-- `layout.mjs --hook` commits the hook in a commit of its own: git on Windows drops the executable bit of a new file in a commit that names its paths, which is how `continue` commits. It sets `core.hooksPath` after that commit, since the stub of a project laid out before T4d counts the hook as code.
+- `layout.mjs --hook` commits the hook in a commit of its own: git on Windows drops the executable bit of a new file in a commit that names its paths, which is how `continue` commits. It sets `core.hooksPath` after that commit, since the stub of a project laid out before T4d counts the hook as code, and refuses to replace a folder of hooks the owner set; `continue` asks the owner first.
+- The hook clears git's variables for the commit's own index (`git rev-parse --local-env-vars`) before the gate, or the git commands of a gate's tests write into the commit.
+- The template's E0-AC1 asks for a `scripts/gate --fast` that runs in seconds, since it runs before every commit; the loop stage `bug` of `scripts/e2e.mjs` checks that the hook reached `main` executable and that `core.hooksPath` is set.
 
 ## Out of scope
 
