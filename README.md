@@ -53,6 +53,8 @@ pitwall is built with its own process: epics in [docs/EPICS.md](docs/EPICS.md), 
 node scripts/check.mjs
 ```
 
+`node scripts/check.mjs --fast` runs the steps that only read the repository, about 9 seconds; `.githooks/pre-commit` runs it before every commit once a clone has `git config core.hooksPath .githooks`.
+
 It needs Node 22 and the Claude Code CLI (`claude`) on the PATH. See [CLAUDE.md](CLAUDE.md).
 
 ## License

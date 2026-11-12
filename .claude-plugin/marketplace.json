@@ -7,14 +7,14 @@
   },
   "metadata": {
     "description": "Idea-to-release workflow for Claude Code: you make the calls on the pit wall, agents run the laps.",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "plugins": [
     {
       "name": "pitwall",
       "source": "./plugins/pitwall",
       "description": "Research, decisions recorded as ADRs, a plan in epics, and an epic loop with tests, PRs, a fresh-context reviewer and QA.",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "category": "development",
       "keywords": ["workflow", "planning", "adr", "epics", "code-review", "qa"]
     }

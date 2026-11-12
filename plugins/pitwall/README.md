@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.7.0, stages 0 to 5, the hooks, the epic loop, bugs and lessons.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug` and `/pitwall:lesson` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4c: until then each lap of the loop ends at the merge, and `/pitwall:release` says it is not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.8.0, stages 0 to 5, the hooks, the epic loop, bugs and lessons, the gate before every commit.** `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:continue`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug` and `/pitwall:lesson` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep` and `code-reviewer` agents, and the hooks guard every pitwall project. Releases and QA come in T4c: until then each lap of the loop ends at the merge, and `/pitwall:release` says it is not built yet. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -78,6 +78,7 @@ In a pitwall project, a folder with `.claude/pitwall.json`, the plugin's hooks (
 - **The review status**: only the plan reviewer and the code reviewer run `review-status.mjs`, and no commit status is written any other way. The plan reviewer writes only `docs/PLAN-REVIEW.md` and runs only its two scripts; the code reviewer writes only `docs/reviews/*.md` and runs only those two, read-only git and `scripts/gate`. `merge-choice.mjs` is yours alone: the guard refuses it to every agent.
 - **Call budgets** (`budgets` in the config): a sub-agent is told to wrap up at `warn` and refused past `stop`; the main conversation is told, and refused past `stop` only when nobody attends it (`claude -p`).
 - **The gate**: on an `epic/*` or `fix/*` branch, `scripts/gate --fast` after each edit outside `docs/`, reported to the agent, and `scripts/gate --changed` before the session or an implementer stops, which a red gate blocks a few times (`hooks.stopRetries`).
+- **The gate before every commit**: `git commit --no-verify` or `-n`, and a `git config` that points `core.hooksPath` anywhere but `.githooks` or unsets it, are refused, so that the project's git hook (below) runs on every commit.
 - **Merges without you**: the brief says what you chose, and on yes the session start keeps the two allow rules pointing at the plugin's current folder, so an update needs nothing from you.
 
 A guard that cannot run refuses the call and says why. To turn pitwall off in one project, run `claude plugin disable pitwall@pitwall --scope local` yourself in a terminal: an agent asked to run it is stopped by the guard. The guards catch mistakes, not a command built to hide what it does (`review.threatModel`).
@@ -85,6 +86,8 @@ A guard that cannot run refuses the call and says why. To turn pitwall off in on
 ## The project template
 
 `template/` is laid out in a new project by `/pitwall:kickoff`, through `scripts/layout.mjs`, which never overwrites a file. Files that tools would otherwise pick up inside this plugin carry a `.tmpl` suffix, and kickoff renames them: `CLAUDE.md.tmpl`, `.claude/settings.json.tmpl`, `.claude/pitwall.json.tmpl`, `gitignore.tmpl` (to `.gitignore`), `editorconfig.tmpl` (to `.editorconfig`) and `gitattributes.tmpl` (to `.gitattributes`, which keeps line endings LF so scripts run on Windows too). The template holds no code: the code and the real `scripts/gate` arrive in epic E0, once the stack is chosen.
+
+It also holds `.githooks/pre-commit`, the gate before every commit: kickoff sets `core.hooksPath` to `.githooks`, and from then on git runs `scripts/gate --fast` before each commit and refuses it while the gate is red. A commit of Markdown under `docs/` alone, and any commit on a `spike/*` branch, pass without it. `/pitwall:continue` sets `core.hooksPath` again in a new clone, which does not carry it, and lays the hook out in a project laid out before 0.8.0, in a commit of its own on the next branch. Every commit now waits for `scripts/gate --fast`, so keep that mode fast.
 
 ## Configuration
 
