@@ -1,7 +1,7 @@
 # T7 - The guard's corpus
 
 Goal: every change of a guard that reads commands is checked against its corpus before a reviewer sees it (L-13), the gaps of the guard found in T4a are fixed that way, and pitwall itself refuses a commit on a red check.
-Depends on: T5
+Depends on: T5b
 Risk class: high (the guard refuses tools in every pitwall project: a false refusal stops ordinary work, L-9)
 ADR: ADR-0006
 
@@ -13,7 +13,7 @@ ADR: ADR-0006
 
 ## Decisions
 
-One-way (2026-11-11): moved here from T4d, after T5 (owner). The four gaps of the guard that T4b files as pitwall's first bugs are fixed right after this epic, each change of the guard checked by the script of AC1, `git rm -f` first.
+One-way (2026-11-11): moved here from T4d, after T5 (owner). The four bugs of the guard that T4b filed are fixed right after this epic, each change of the guard checked by the script of AC1: BUG-1 (`git rm -f`) first, then BUG-2 (`git worktree remove --force`), BUG-3 (`git reset --merge`) and BUG-4 (the PowerShell single-word assignment).
 
 ## Out of scope
 

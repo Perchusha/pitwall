@@ -87,14 +87,15 @@ Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversatio
 - **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review`, admins included (ADR-0005), wherever GitHub offers it, and a local hook that refuses the merge on private repositories on GitHub Free.
 - **Planning** happens on one branch: the skeleton is the only direct commit on `main`, stages 1 to 5 commit on `plan/initial`, and the plan reaches `main` in one PR after stage 5, merged with a merge commit once the owner says yes (ADR-0008). Spike code stays on `spike/<topic>`.
 
-## 10. Validation on three systems
+## 10. Validation on two systems
 
-The template is tested like a product: three systems of rising complexity walk the whole path, and the same numbers are taken for each.
+The template is tested like a product: two systems walk the whole path, and the same numbers are taken for each.
 
 | Level | System | What it tests |
 | --- | --- | --- |
-| lite | A desktop move-reminder app for one user | That a small idea does not drown in process |
-| standard | A money tracker rebuilt from scratch: web, database, auth, two users | Decisions, ADRs, staging, merges by risk class, QA |
-| full | Chosen after the standard run | Spike, pre-mortem, many high-risk epics, modules |
+| lite | A desktop move-reminder app for one user, built from scratch | That a small idea does not drown in process |
+| full | Last Ones Down, an existing game project pitwall adopts (T6), with its own path to Steam | Adoption without a second plan, spike, pre-mortem, many high-risk epics, modules |
+
+The standard level is not validated before 1.0: the first real standard project after 1.0 checks it (owner, 2026-11-12).
 
 Measured per system: questions to the owner and how many were unnecessary; interventions outside the questions; calls, tokens and money per epic; blocking review findings and how many repeated a lesson; bugs found by QA after merge and bugs that reached production; what had to change in the plugin, each change released as a version before the next system.
