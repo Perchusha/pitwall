@@ -12,7 +12,7 @@ ADR: ADR-0006
 
 ## Decisions
 
-One-way (2026-11-11): moved here from T4d, after T5 (owner). pitwall's own pre-commit hook, drafted here as `T7-AC3`, went back to T4d as T4d-AC4 on 2026-11-12: it is cheap (owner). The bugs of the guard are fixed right after this epic, each change of the guard checked by the script of AC1: BUG-1 (`git rm -f`) first, then BUG-2 (`git worktree remove --force`), BUG-3 (`git reset --merge`), BUG-4 (the PowerShell single-word assignment), BUG-6 (`node -e` reading the plugin's config) and BUG-8 (`git config --global core.hooksPath .githooks`) (owner, 2026-11-12).
+One-way (2026-11-11): moved here from T4d, after T5 (owner). pitwall's own pre-commit hook, drafted here as `T7-AC3`, went back to T4d as T4d-AC4 on 2026-11-12: it is cheap (owner). The bugs of the guard are fixed right after this epic, each change of the guard checked by the script of AC1: BUG-1 (`git rm -f`) first, then BUG-2 (`git worktree remove --force`), BUG-3 (`git reset --merge`), BUG-4 (the PowerShell single-word assignment), BUG-6 (`node -e` reading the plugin's config), BUG-8 (`git config --global core.hooksPath .githooks`) (owner, 2026-11-12) and BUG-10 (a narrow rule on `git tag -a`, a push of a tag and `gh release create`, R-6) (owner, 2026-11-12).
 
 ## Out of scope
 

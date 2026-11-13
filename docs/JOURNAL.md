@@ -2,6 +2,38 @@
 
 One entry per epic, newest first.
 
+## T4c - Releases and a minimal QA (2026-11-13)
+
+`/pitwall:release` ships what the loop merged since the last release as one version (ADR-0013). `release.mjs` reads the loop's merge commits on `main`, an epic making a minor and fixes alone a patch, the first version and a major by the owner's word, and writes `CHANGELOG.md` on a branch `release/v<x.y.z>` whose one commit also records the changes it holds, the last one of a plan included. The `qa` agent is the release's reviewer: it checks the release, runs the project's new `scripts/build <version>` and the gate, finds a test or a QA scenario behind every criterion of every closed epic and every fixed bug, files a bug per failure, and lists the manual QA for the owner. The release merges after the owner's yes, never while a blocking bug is open or another change is in flight, and the owner makes and pushes the tag from the commands it hands them. ADR-0007 gains the qa agent as a third reviewer, each reviewer bound by the guard to its own kind of review. The owner's three conditions on the qa agent, their additions (the tag is theirs, the first version is one question, the artifacts stay local) and their edits came in two lists; L-15 (the executable bit), L-16 (a change that records others), R-6 and BUG-10 (the tag left to the skill's text) came from the work and the reviews.
+
+**Numbers.** `scripts/check.mjs` grew from 27 to 28 steps, the new one "releases (fake gh)": `release.mjs` on scratch repositories in each of its modes and refusals, `merge.mjs` and `review-status.mjs` on a release branch, and `docs-check --stage release`; the template step now reads `template/scripts/` and `template/.githooks/` whole (L-15). The branch adds 1,838 lines and removes 131 over 47 files.
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| hooks, plugin 2d7d7a8 | 24 | | $1.43 | fail: the qa agent refused on its own to run `review-status.mjs --review code`, as its prompt says, so the guard's refusal the run counted never came |
+| hooks, plugin 4636fb3 | 24 | 3.5 | $1.17 | pass: the qa agent sets a release's status, which the guard lets through |
+| hooks with `--record`, plugin fdfa4c0 | 24 | 3.7 | $1.22 | pass; the qa agent's five payloads kept |
+| release, fake GitHub, plugin 4636fb3 | 2 | | | stopped by the owner: the qa agent set `failure`, rightly, on a journal entry the conductor wrote with pitwall's ADR-0010 as a bare ID; the skill closed the release and started it again |
+| release, fake GitHub, plugin 58c428e | 3 | 9.2 | $4.50 | pass: v0.1.0 with E0, E1 and BUG-1, the owner asked before the merge, no tag from the session, the scripted owner's tag on the release's merge commit |
+| release, fake GitHub, plugin e8acec1 | 3 | 7.2 | $4.58 | pass, the same, at the head that merged |
+
+**What only the work showed:**
+- The qa agent found a real defect in the first release it reviewed: the conductor's journal entry cited one of pitwall's own ADRs as if it were the project's, which the docs check reads as an ID that points nowhere. The skill now names pitwall's IDs in words.
+- A prompt beats a test's design: told to run a status of the wrong kind, the qa agent refused before the guard could. The headless run now checks the call it may make; the check holds the refusal.
+- git on Windows dropped the executable bit of a new file in a commit with pathspecs a third time (the gate, the hook, the build stub); the check before the commit read the index, which still said 100755. L-15 reads both template folders whole.
+- `git tag -F` strips every line that starts with `#`: the tag's commands carry `--cleanup=verbatim` to keep the changelog's headings.
+- A release is a change that records others, like a loop branch's first commit: started beside another change in flight it conflicts with that change's records, and merged after `main` moved it holds code nobody built (L-16).
+
+**What the review found.** Three fresh-context rounds, the cap the owner set, with the guard's corpus replayed after each change of the guard (L-13): of about 103,500 command lines of the local transcripts and T4a's 52 variants, the 9,650 that hold `<<` or `review-status` ran through the guard of `main` and of the branch as three callers, and the same 9 verdicts changed each time, all expected. Round one: one blocking finding, the release beside a change in flight or after `main` moved (L-16), and two to fix (no build wanted at the reviewed commit, a test that passed without its check), with eleven points of its notes. Round two: none blocking, three to fix (a build run again after a timeout refused, the check's records and versions untested, a merged release read as one to close). Round three, a verification round on round two's diff at the owner's word: none; a differential run of `merge.mjs` at three commits over 219 cases showed the merge of epics and fixes unchanged. Its four notes went into T5a's first commit.
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | 335,285 | 75 | 18.9 |
+| 2 | none, 3 to fix | 331,838 | 79 | 20.5 |
+| 3, verification | none | 211,975 | 73 | 12.7 |
+
+**Next:** T5a, the move reminder from scratch to a release, whose first question is a release built on two machines.
+
 ## T4d - The gate before every commit (2026-11-12)
 
 A pitwall project gets `.githooks/pre-commit`, which runs `scripts/gate --fast` before every commit and refuses it while the gate is red (L-14), except on `spike/*` and for a commit of Markdown under `docs/` and `.claude/pitwall.json` alone, which must land while the gate is red: the first commit of a fix for a red `main`, a reviewer's verdict. `/pitwall:kickoff` sets `core.hooksPath` before the skeleton commit, `/pitwall:continue` sets it in a new clone and lays the hook out in a project from before 0.8.0 through `layout.mjs --hook`, a commit of its own. The guard's rule `precommit` refuses `git commit --no-verify` or `-n` and a `git config` that points `core.hooksPath` elsewhere or unsets it; what it does not read is R-5, by the owner's choice of a narrow rule. pitwall itself runs `scripts/check.mjs --fast`, the steps that only read the repository or lay out scratch projects, before each of its own commits. ADR-0012 records the hook and its limits: it checks the work tree, not what is committed, and git makes some commits without it; CI catches both.

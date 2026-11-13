@@ -2892,7 +2892,7 @@ const PAYLOADS = [
   'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
   'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
   'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
-  'qa-pre-tool-use-bash', 'qa-pre-tool-use-write',
+  'qa-pre-tool-use-bash', 'qa-pre-tool-use-write', 'qa-post-tool-use-write', 'qa-pre-tool-use-subagenthandback', 'qa-subagent-stop',
 ];
 slowStep('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -3685,7 +3685,7 @@ slowStep('hooks (recorded payloads)', (report) => {
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
-    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write']) {
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write', 'qa-pre-tool-use-subagenthandback', 'qa-subagent-stop', 'qa-post-tool-use-write']) {
       const r = hook(label);
       if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
     }

@@ -260,7 +260,7 @@ if (mode === 'write') {
     log(`docs/BUGS.md: ${b.id} fixed (#${b.pr})`);
   }
   for (const l of r.history.leftOut) log(`left out: ${short(l.sha)} ${l.subject}: ${l.why}`);
-  log('the conductor adds the journal entries of the changes merged and not recorded yet, then commits CHANGELOG.md and docs/ by name');
+  log('the conductor adds the journal entries of the changes merged and not recorded yet, then commits CHANGELOG.md, docs/ and a .claude/pitwall.json the owner\'s answer changed, by name');
   console.log('RESULT: written');
   process.exit(0);
 }
