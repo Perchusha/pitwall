@@ -1,7 +1,9 @@
 // Helpers shared by the plugin's scripts (ADR-0004). Node only, no dependencies.
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +19,29 @@ export function writeJson(path, value) {
 }
 
 export const config = () => readJson(join(pluginRoot, 'config', 'defaults.json'));
+
+// A name safe as a file name.
+export const safeName = (s) => String(s ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+// The hooks' state: PITWALL_HOOK_STATE, or a folder of the account's own in the system temp folder, so two
+// users of one machine keep apart state.
+export function hookState() {
+  if (process.env.PITWALL_HOOK_STATE) return process.env.PITWALL_HOOK_STATE;
+  let account;
+  try {
+    account = safeName(userInfo().username);
+  } catch {
+    account = safeName(process.getuid?.() ?? 'user');
+  }
+  return join(tmpdir(), `pitwall-${account}`);
+}
+// A folder's path spelled one way: forward slashes, no trailing one, and on Windows one case.
+export const samePath = (dir) => {
+  const p = resolve(String(dir)).split('\\').join('/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+};
+// The note the guard leaves when it sends an owner's script to Claude Code's permission prompt (ADR-0010, T5a),
+// one per project: under Claude Code the script runs only when the note is its own and fresh.
+export const ownerPromptFile = (projectRoot) => join(hookState(), `owner-prompt-${createHash('sha256').update(samePath(projectRoot)).digest('hex').slice(0, 16)}.json`);
 export const pluginVersion = () => readJson(join(pluginRoot, '.claude-plugin', 'plugin.json')).version;
 
 // Stops with a clear message on a Node older than the plugin needs (runtime.nodeMinMajor).

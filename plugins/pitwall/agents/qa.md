@@ -22,7 +22,7 @@ You check one release of a pitwall project before it merges: the branch `release
 4. `bash scripts/gate --full` from the project root.
 5. Every acceptance criterion of every epic whose status in `docs/EPICS.md` is `merged` or `released`, from its file in `docs/epics/`, and every bug whose status in `docs/BUGS.md` is `fixed`. For each, read what the change's review file says covers it: `docs/reviews/<epic's file name>.md`, or `docs/reviews/BUG-<n>.md`.
    - A test, named by its file: covered when `git ls-files <file>` lists it and the gate of step 4 passed. Read the test where the review's words leave doubt that it still checks the criterion.
-   - A QA scenario (`QA-E<n>-<m>`, or a scenario in a file): an item of the owner's checklist, with the steps where the epic's file gives them, in a line or two.
+   - A QA scenario (`QA-E<n>-<m>`, or a scenario in a file): an item of the owner's checklist, with the steps where the epic's file gives them, in a line or two, and what the owner sees when it passes.
    - Both: both.
    - Nothing, a review file missing, or a test file gone: a failure.
    `docs/LESSONS.md` before you judge: a failure that repeats a lesson says which one.
@@ -75,7 +75,8 @@ REVIEWED: <sha>
 ARTIFACTS: <one line per ARTIFACT that release.mjs --build recorded; or "none">
 OPEN: <one line per failure: what failed, and the bug filed for it or why there is none; or "none">
 BUGS FILED: <BUG-n and its title, one per line; or "none">
-CHECKLIST: <the owner's manual QA, one item per line: the scenario, the criterion it covers, its steps in a line or two; or "none">
+VISIBLE: <what this version shows a user, one line per closed epic, from its "Visible after it:" line or, without one, its goal; and what the plan still holds for later epics, in one line>
+CHECKLIST: <the owner's manual QA, one item per line: the scenario, the criterion it covers, its steps in a line or two, what they see when it passes; or "none">
 NEEDS_OWNER: <questions only the owner can answer, one per line; or "none">
 REVIEW STATUS: <the last lines review-status.mjs printed, verbatim, HANDOFF block included>
 ```

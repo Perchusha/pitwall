@@ -31,7 +31,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readOwner, resultWord, UNSCRIPTED_RULE } from './e2e-owner.mjs';
+import { readOwner, resultWord, TEST_PROJECT, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // The copy e2e.mjs made at the start of the run (PITWALL_E2E_PLUGIN), never the checkout itself.
@@ -80,7 +80,7 @@ function run(cmd, args, opts = {}) {
 export async function runLoop({ stages, stateDir, maxTurns, github }) {
   const tag = github ? 'github-' : '';
   const scratch = mkdtempSync(join(tmpdir(), 'pitwall-loop-'));
-  const project = join(scratch, 'move-reminder');
+  const project = join(scratch, TEST_PROJECT);
   const originDir = join(scratch, 'origin.git');
   const ghState = join(scratch, 'github');
   const bin = join(scratch, 'bin');
@@ -101,7 +101,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     PATH: `${bin}${delimiter}${process.env.PATH}`,
     PITWALL_GH: JSON.stringify([process.execPath, ghScript]),
     GIT_CEILING_DIRECTORIES: scratch,
-    ...(github ? { GH_REAL: realGh, GH_RECORD: record } : { FAKE_GH_LIVE: ghState, FAKE_GH_ORIGIN: originDir, FAKE_GH_REPO: 'e2e/move-reminder', GH_CONFIG_DIR: join(scratch, 'gh-config') }),
+    ...(github ? { GH_REAL: realGh, GH_RECORD: record } : { FAKE_GH_LIVE: ghState, FAKE_GH_ORIGIN: originDir, FAKE_GH_REPO: `e2e/${TEST_PROJECT}`, GH_CONFIG_DIR: join(scratch, 'gh-config') }),
   };
   // The session's commands are never Claude Code's own variable: the owner's script refuses under it.
   const ownerEnv = { ...env };
@@ -158,7 +158,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     if (github) waitFor(180, () => (api('actions/workflows')?.workflows ?? []).some((w) => /\/ci\.ya?ml$/.test(w.path)), 'GitHub Actions did not register .github/workflows/ci.yml after the push of main');
     for (const ref of ['plan/initial', ...git('for-each-ref', '--format=%(refname:short)', 'refs/heads/spike/').stdout.split('\n').filter(Boolean)]) pushOne(ref);
     // The world before the epic loop: the plan PR, reviewed, its gate green, merged after the owner's yes.
-    gh('pr', 'create', '--base', 'main', '--head', 'plan/initial', '--title', 'Plan: move-reminder', '--body', 'Stages 1 to 5, from the headless planning run.');
+    gh('pr', 'create', '--base', 'main', '--head', 'plan/initial', '--title', `Plan: ${TEST_PROJECT}`, '--body', 'Stages 1 to 5, from the headless planning run.');
     const planHead = git('rev-parse', 'plan/initial').stdout.trim();
     if (github) waitFor(180, () => (api(`commits/${planHead}/check-suites`)?.check_suites ?? []).some((s) => s.app?.slug === 'github-actions'), `GitHub Actions started no check suite on the plan PR's head ${planHead.slice(0, 7)}`);
     git('switch', '-q', 'plan/initial');

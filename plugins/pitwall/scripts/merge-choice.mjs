@@ -4,9 +4,15 @@
 //
 //   node merge-choice.mjs --allow | --deny [--project <dir>]
 //
-// The owner runs it in a terminal, never an agent: it refuses to run under Claude Code, which sets
-// CLAUDECODE in every command it runs, and pitwall's guard refuses it to every agent, the main
-// conversation included (hooks.ownerOnly). A session that asks the question hands the owner this
+// The answer is the owner's (ADR-0010). The main conversation that asked the question runs this
+// itself, and pitwall's guard sends that one command to Claude Code's permission prompt, whatever the
+// session's mode or allow rules (hooks.ownerOnly): the owner's yes at the prompt is what lets it
+// run, and pitwall never writes an allow rule for it. Under Claude Code, which sets CLAUDECODE in
+// every command it runs, the script therefore runs only when the guard has just left its note of
+// that prompt for this project and this answer (lib.mjs ownerPromptFile), and takes the note away:
+// with the hooks off, or through another command line, it refuses. No sub-agent runs it. In a
+// terminal of the owner's own it runs as it always did, which is the way when nobody can answer a
+// prompt (a headless session, a mode that never asks); the session then hands the owner this
 // command (L-6).
 //
 // It writes the answer into .claude/pitwall.json (loop.ownerChoice, autoMerge). --allow also writes
@@ -17,9 +23,9 @@
 //
 // Exit 0 recorded, 1 refused, 2 usage.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { config, parseArgs, pluginRoot, requireNode, writeJson } from './lib.mjs';
+import { config, ownerPromptFile, parseArgs, pluginRoot, requireNode, samePath, writeJson } from './lib.mjs';
 import { guardWorks, syncRules } from './merge-rules.mjs';
 
 requireNode();
@@ -34,10 +40,24 @@ const refuse = (msg) => {
   console.log('RESULT: not recorded');
   process.exit(1);
 };
-if (process.env.CLAUDECODE) refuse('this records a choice of the owner (pitwall ADR-0010), so it runs in your own terminal, not inside Claude Code: an agent never records it.');
-
 const cfg = config();
 const project = resolve(args.project ?? '.');
+if (process.env.CLAUDECODE) {
+  // The guard's note of the permission prompt: this project, this answer, not long ago, and used once.
+  const noteFile = ownerPromptFile(project);
+  let note = null;
+  try {
+    note = JSON.parse(readFileSync(noteFile, 'utf8'));
+  } catch {}
+  rmSync(noteFile, { force: true });
+  const asked = Boolean(note) && note.project === samePath(project) && Array.isArray(note.flags) && note.flags.includes(args.allow ? '--allow' : '--deny') && !note.flags.includes(args.allow ? '--deny' : '--allow');
+  const age = asked ? Date.now() - Number(note.at) : NaN;
+  if (!asked || !(age >= 0 && age < cfg.hooks.ownerPromptMinutes * 60000)) {
+    refuse(
+      `this records a choice of the owner (pitwall ADR-0010), so inside Claude Code it runs only right after pitwall's guard sent this very command to Claude Code's permission prompt, and ${asked ? `that was more than ${cfg.hooks.ownerPromptMinutes} minutes ago` : 'it did not (the hooks are off, the command was not run alone from the project folder, or it names another answer)'}. Run it again as one command from the project folder, or in your own terminal.`,
+    );
+  }
+}
 const file = join(project, '.claude', 'pitwall.json');
 if (!existsSync(file)) refuse(`${project} is not a pitwall project: there is no .claude/pitwall.json. Run it from the project folder, or pass --project.`);
 let settings;

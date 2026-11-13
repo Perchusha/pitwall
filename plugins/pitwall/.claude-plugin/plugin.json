@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "pitwall",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Idea to release with Claude Code: research, decisions recorded as ADRs, a plan in epics, and an epic loop with tests, PRs, a fresh-context reviewer and QA. You sit on the pit wall and make the calls.",
   "author": {
     "name": "Anton Perch",

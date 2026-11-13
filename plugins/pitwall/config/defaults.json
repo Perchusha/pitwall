@@ -7,7 +7,12 @@
       "when": "one user, no money or personal data, 1 to 3 epics",
       "spike": "optional",
       "spikeRequired": false,
-      "planReview": "short checklist, no pre-mortem",
+      "planReview": "short checklist, no pre-mortem, three review rounds at most",
+      "planReviewRounds": {
+        "ownerDecidesAtReject": 2,
+        "maxRounds": 3
+      },
+      "planReviewNotes": "implementers",
       "preMortemReasons": 0,
       "staging": "local build",
       "productionSmoke": false,
@@ -27,6 +32,7 @@
       "spike": "when an assumption is unproven",
       "spikeRequired": false,
       "planReview": "full checklist, pre-mortem with 5 reasons",
+      "planReviewNotes": "owner",
       "preMortemReasons": 5,
       "staging": "required",
       "productionSmoke": true,
@@ -40,6 +46,7 @@
       "spike": "required",
       "spikeRequired": true,
       "planReview": "full checklist, pre-mortem with 10 reasons",
+      "planReviewNotes": "owner",
       "preMortemReasons": 10,
       "staging": "required",
       "productionSmoke": true,
@@ -154,6 +161,11 @@
     "ownerOnly": [
       "merge-choice.mjs"
     ],
+    "noPromptModes": [
+      "bypassPermissions",
+      "dontAsk"
+    ],
+    "ownerPromptMinutes": 60,
     "handback": [
       "SubagentHandback"
     ],
@@ -567,7 +579,12 @@
       "docs/LESSONS.md",
       "docs/JOURNAL.md",
       "docs/RISKS.md"
-    ]
+    ],
+    "optionalSections": {
+      "docs/PLAN-REVIEW.md": [
+        "Notes for the implementers"
+      ]
+    }
   },
   "rag": {
     "projectDocsThresholdKB": 1024

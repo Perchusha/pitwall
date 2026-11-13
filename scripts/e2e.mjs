@@ -5,7 +5,10 @@
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
 // Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0, e1, bug and release
-// (scripts/e2e-loop.mjs). With no flags it runs e1 from the state e0 saved, the cheap run after a
+// (scripts/e2e-loop.mjs). The planning stages run through the conductor (T5a): kickoff starts as
+// `/pitwall:continue <idea>` in an empty folder, and every later stage as a fresh session whose owner says
+// only "continue", which the template's CLAUDE.md turns into /pitwall:continue; when a stage's check passes,
+// the scripted owner is asked once more, and a conductor that did not ask whether to move on is named in the result. With no flags it runs e1 from the state e0 saved, the cheap run after a
 // change; --from e0 runs E0 and E1, the run before a PR; --from bug runs a blocking bug's fix
 // through the loop from the state e1 saved (T4b-AC4); --from release runs /pitwall:release from the
 // state bug saved (T4c-AC9); --until plan runs the planning stages from
@@ -35,7 +38,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readOwner, resultWord, UNSCRIPTED_RULE } from './e2e-owner.mjs';
+import { readOwner, resultWord, TEST_PROJECT, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,9 +82,19 @@ const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'ut
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 const cliVersion = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim().split(' ')[0] ?? '?';
 console.log(`e2e: pitwall ${version} from ${pluginCommit}${dirty} of ${join(root, 'plugins', 'pitwall').split('\\').join('/')}, copied to ${plugin.split('\\').join('/')} (--plugin-dir), Claude Code ${cliVersion}`);
-const installed = spawnSync('claude', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '';
-if (/\bpitwall@/.test(installed)) {
-  console.error('e2e: pitwall is installed from a marketplace (claude plugin list), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.');
+// A copy of pitwall installed for every project would load beside this checkout in the test project, which
+// enables pitwall@pitwall. One installed for another project alone (scope local or project, with that project's
+// path) does not: there a headless session lists one pitwall, the --plugin-dir copy (probed on 2.1.323, T5a).
+let installed = [];
+try {
+  installed = JSON.parse(spawnSync('claude', ['plugin', 'list', '--json'], { encoding: 'utf8' }).stdout || '[]');
+} catch {
+  console.error('e2e: claude plugin list --json did not answer with JSON, so the run cannot tell whether an installed pitwall would load beside this checkout.');
+  process.exit(2);
+}
+const everywhere = installed.filter((p) => /^pitwall@/.test(p.id ?? '') && !(['local', 'project'].includes(p.scope) && p.projectPath));
+if (everywhere.length) {
+  console.error(`e2e: pitwall is installed from a marketplace for every project (claude plugin list: ${everywhere.map((p) => `${p.id} ${p.version}, scope ${p.scope}`).join('; ')}), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.`);
   process.exit(2);
 }
 // The hooks have a run of their own (T3a-AC8): scripts/e2e-hooks.mjs, which exits when done.
@@ -136,7 +149,7 @@ Facts you answer from:
 - It shows a reminder every 45 minutes of active use, lets you snooze for 10 minutes, and pauses when the computer is idle or locked.
 - Out of scope: phones, teams, statistics dashboards, cloud sync.
 - Monthly budget: zero. Platforms: Windows and macOS desktop. Hosting: none, it is a local app; releases go on GitHub. Personal data: none. Licence: MIT, open source. Time for reviews: about 30 minutes a day.
-- You expect 2 or 3 epics. The project name is move-reminder.
+- You expect 2 or 3 epics. The project name is ${TEST_PROJECT}.
 - Launch: no app stores, the installers are attached to GitHub releases; support is GitHub issues; no domain, no analytics.
 - A spike: yes, run one on the riskiest assumption, even though the lite level makes it optional. Accept the criterion the assistant proposes if it has a number.
 - When asked to measure something by hand, say that you ran it as described today and give numbers that meet the criterion the assistant proposed.`;
@@ -149,6 +162,8 @@ const OWNER_RULES = `Answer as this owner, in English, in one to three sentences
 - When asked whether low and normal risk epics may merge without you, say no: every merge waits for you.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
 - When the assistant has run a command that you are told to run yourself, say you will do it later, and ask it to go on.
+- When the assistant says that a stage is finished in this conversation and asks whether to move on to the next stage (or which of two stages comes next), reply exactly: NEXT
+- When the assistant asks, at the start of a conversation, which stage to run now, answer from the facts.
 ${UNSCRIPTED_RULE}
 - When the assistant asks nothing and reports that the stage is done, reply exactly: DONE`;
 
@@ -160,7 +175,7 @@ function run(cmd, args, opts = {}) {
 
 // Scratch folders: the project, an empty gh config (signed out), an empty folder for the owner.
 const scratch = mkdtempSync(join(tmpdir(), 'pitwall-e2e-'));
-const project = join(scratch, 'move-reminder');
+const project = join(scratch, TEST_PROJECT);
 const ghConfig = join(scratch, 'gh');
 const ownerDir = join(scratch, 'owner');
 for (const d of [ghConfig, ownerDir]) mkdirSync(d, { recursive: true });
@@ -324,13 +339,17 @@ function save(stage, numbers) {
 const results = [];
 // Questions the scripted owner had no answer for (scripts/e2e-owner.mjs): printed at the end.
 const unscripted = [];
+// Stages after which the conductor asks whether to move on (T5a), and the ones where it did not.
+const ASKS_NEXT = ['kickoff', 'discovery', 'decide', 'spike'];
+const unasked = [];
 for (const stage of stages) {
   const started = Date.now();
   const history = [];
   let cost = 0;
   let turns = 0;
   let sessionId;
-  let prompt = stage === 'kickoff' ? `/pitwall:kickoff ${IDEA}` : `/pitwall:${stage}`;
+  // The conductor leads every stage (T5a): in an empty folder by its command, afterwards by the owner's one word.
+  let prompt = stage === 'kickoff' ? `/pitwall:continue ${IDEA}` : 'continue';
   let verdict = { done: false };
   let error = '';
   console.log(`\n== ${stage}`);
@@ -343,9 +362,18 @@ for (const stage of stages) {
       history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
       console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
       verdict = status(stage);
-      if (verdict.done) break;
+      if (verdict.done && !ASKS_NEXT.includes(stage)) break;
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
+      if (verdict.done) {
+        // The stage's check passes: the conductor's message must end by asking whether to move on, which the
+        // scripted owner answers with NEXT. Anything else is named in the result, for a person to read.
+        if (!/^\W*NEXT\b/i.test(reply.text)) {
+          unasked.push(stage);
+          console.log(`  NO QUESTION WHETHER TO MOVE ON: the owner replied "${reply.text.split('\n')[0].slice(0, 110)}" to: ${String(out.result ?? '').trim().split('\n').pop().slice(0, 160)}`);
+        }
+        break;
+      }
       const read = readOwner(reply.text, history[history.length - 1].text);
       reply.text = read.text;
       if (read.question) {
@@ -382,5 +410,5 @@ for (const r of results) {
 for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRIDDEN' : 'QUESTION'} (${u.stage}, turn ${u.turn}): ${u.question}`);
 const passed = results.length === stages.length && results.every((r) => r.pass);
 // A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
-console.log(`\nE2E: ${resultWord(passed, unscripted)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
+console.log(`\nE2E: ${resultWord(passed, unscripted, unasked)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

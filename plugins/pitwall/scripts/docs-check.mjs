@@ -421,7 +421,10 @@ function requireHeadings(rel, templateRel) {
   if (need.length === 0) return;
   if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
   const mine = sections(read(rel));
-  for (const h of need) if (!mine.has(h)) report(rel, `missing section "## ${h}" (template ${templateRel})`);
+  // A section the template gained after projects were laid out from it is no part of the contract of ADR-0006:
+  // a project without it still passes (docsLimits.optionalSections), and the skills that write it add it.
+  const optional = cfg.docsLimits.optionalSections?.[rel] ?? [];
+  for (const h of need) if (!mine.has(h) && !optional.includes(h)) report(rel, `missing section "## ${h}" (template ${templateRel})`);
 }
 
 const filesIn = (rel) => (has(rel) && statSync(join(root, rel)).isDirectory() ? readdirSync(join(root, rel)) : []);
@@ -1128,6 +1131,15 @@ function checkPlanReview() {
     if (!finding) report(rel, `finding ${n} says nothing`);
     if (!r.severities.includes((severity ?? '').toLowerCase())) report(rel, `finding ${n}: severity "${severity ?? ''}" is not one of ${r.severities.join(', ')}`);
     if (!closed(by)) report(rel, `finding ${n} is not closed: start its last cell with the ID of the epic, criterion or ADR that closes it, or of a risk R-n the owner accepted`);
+  }
+  // T5a: the reviewer's notes for the implementers, at a level that sends them there (planReviewNotes): a list, each
+  // item starting with the epic it concerns, so that the conductor can hand it to that epic's implementer. A file
+  // from before the section has none.
+  const planned = new Set((readPlan(true) ?? []).map((x) => x.id).filter(Boolean));
+  for (const l of listItems(s.get('Notes for the implementers') ?? [])) {
+    const id = /^[-*] (E\d+): \S/.exec(l)?.[1];
+    if (!id) report(rel, `"## Notes for the implementers": "${l.slice(0, 60)}" does not start with its epic: "- E<n>: <the note>"`);
+    else if (!planned.has(id)) report(rel, `"## Notes for the implementers": ${id} is not an epic of docs/EPICS.md`);
   }
   // An accepted risk is a row in the one table of docs/RISKS.md with its fallback and the date the owner accepted it.
   for (const id of new Set(plainIds(read(rel), /\bR-\d+\b/g))) if (!accepted.get(id)) report('docs/RISKS.md', `${id} is not an accepted risk: a row in its table with the risk, a fallback and the date in "Accepted on"`);

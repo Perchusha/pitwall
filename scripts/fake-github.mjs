@@ -3,7 +3,7 @@
 //
 //   FAKE_GH_LIVE     the folder that holds its state: github.json (PRs, statuses), ci/ (the gate runs), calls.log
 //   FAKE_GH_ORIGIN   the bare repository the project pushes to
-//   FAKE_GH_REPO     owner/name, e2e/move-reminder by default
+//   FAKE_GH_REPO     owner/name, e2e/pitwall-e2e-reminder by default
 //
 // It answers what pitwall's scripts and a session of the epic loop ask: the repository, PRs from
 // branches (created, listed, viewed, merged with a merge commit into origin), commit statuses, the
@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const dir = process.env.FAKE_GH_LIVE;
 const origin = process.env.FAKE_GH_ORIGIN;
-const [owner, name] = (process.env.FAKE_GH_REPO ?? 'e2e/move-reminder').split('/');
+const [owner, name] = (process.env.FAKE_GH_REPO ?? 'e2e/pitwall-e2e-reminder').split('/');
 const nameWithOwner = `${owner}/${name}`;
 const GITHUB_ACTIONS = 15368;
 const args = process.argv.slice(2);

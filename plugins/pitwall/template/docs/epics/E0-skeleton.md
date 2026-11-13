@@ -1,6 +1,7 @@
 # E0 - Walking skeleton
 
 Goal: the empty project builds, tests and reaches staging, or a local build at the lite level, so every later epic runs the full loop from its first day.
+Visible after it: a bare "hello world" app that starts and stops; no feature of the product yet.
 Depends on: the stack decisions in `docs/adr/`
 Risk class: normal
 ADR: (the stack ADRs)
