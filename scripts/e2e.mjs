@@ -405,6 +405,12 @@ for (const stage of stages) {
           break;
         }
       }
+      // The conductor asked whether to move on while the stage's check does not pass: answering would start the
+      // next stage inside this one, so the stage ends here, failed, with what its check still wants.
+      if (/^\W*NEXT\b/i.test(reply.text)) {
+        error = 'the conductor asked whether to move on, but the stage does not pass its check yet';
+        break;
+      }
       const read = readOwner(reply.text, history[history.length - 1].text);
       reply.text = read.text;
       if (read.question) {
