@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # owner-calls - what waits for the owner
 
-> Status: built in T4a; bugs by severity and unconfirmed bugs since T4b.
+> Status: built in T4a; bugs by severity and unconfirmed bugs since T4b; releases since T4c.
 
 Gathers what waits for the owner with a script, shows it in one message and goes through it with them, one question at a time. Whatever an agent may not write, it hands over as a command for the owner's own terminal.
 
@@ -34,6 +34,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs`, `bugs.mjs` f
 5. Then the ready merges, last, one per message: ask whether to merge it now. On no, it stays open. On yes:
    - `git switch <its branch>`, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/merge.mjs" --change --owner-approved`, and act on its exit as `/pitwall:continue` step 9 says;
    - after a merge, with a remote, `git switch main` and `git pull --ff-only origin main`, as `/pitwall:continue` step 10 does, before the next merge or the end;
+   - after the merge of a release, run `node "${CLAUDE_PLUGIN_ROOT}/scripts/release.mjs" --tag` and show its HANDOFF verbatim: the tag and the GitHub release are the owner's to make (ADR-0013); never run them;
    - answers left in the tree move with these switches; when git refuses a switch or the pull over them, keep them with `git stash push -- <their paths>`, run the step again, then `git stash pop`.
 6. Tell the owner in a few lines what is answered, what they still have to run, and what still waits; an answer about a bug waits in the git directory for the first commit of the next branch.
 

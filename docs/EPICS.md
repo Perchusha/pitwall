@@ -11,8 +11,8 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T3b](epics/T3b-epic-loop.md) | The epic loop: conductor, implementers, code reviewer, bug fixes, merge by risk class, the owner's choice of merges without them | high | T3a | merged (#5) |
 | [T4a](epics/T4a-guards-and-process.md) | Guards and process follow-ups: the hook that keeps uncommitted work, owner calls, the headless runs' snapshots and unscripted stops | high | T3b | merged (#6) |
 | [T4b](epics/T4b-bugs-and-lessons.md) | Bugs and lessons: severity and a queue by it, every fix after the owner's yes, lessons that become guards | high | T4a | merged (#7) |
-| [T4d](epics/T4d-commit-gate.md) | The gate before every commit (L-14), with the guard's rule on skipping it, in projects and in pitwall itself | high | T4b | in progress |
-| [T4c](epics/T4c-release-and-qa.md) | Releases and a minimal QA: tags and changelog from merge commits, the lite level's local build, a qa agent for the closed epics' criteria | high | T4d | planned |
+| [T4d](epics/T4d-commit-gate.md) | The gate before every commit (L-14), with the guard's rule on skipping it, in projects and in pitwall itself | high | T4b | merged (#8) |
+| [T4c](epics/T4c-release-and-qa.md) | Releases and a minimal QA: tags and changelog from merge commits, the lite level's local build, a qa agent for the closed epics' criteria | high | T4d | in progress |
 | [T5a](epics/T5a-lite-reminder.md) | Validation on the lite system: the move reminder, from scratch to a release | normal | T4c | planned |
 | [T6](epics/T6-adopt-existing-project.md) | Adopt an existing project: lay out only what is missing, keep what is there | normal | T1 | planned |
 | [T5b](epics/T5b-full-last-ones-down.md) | Validation on the full system: Last Ones Down, adopted after a dry run, to a release | normal | T5a, T6 | planned |

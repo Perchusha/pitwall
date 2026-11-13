@@ -14,7 +14,10 @@
 // merge would, breaks the tray menu's Quit on main and drops its tests; one session files the defect with
 // /pitwall:bug, the scripted owner confirming it blocking and normal, and a second runs
 // /pitwall:continue 1, which must fix it before the planned E2 and merge it after the owner's yes, as
-// every fix merges. A stage passes on what git and GitHub hold afterwards, never on the model's wording,
+// every fix merges. release starts from the state bug saved (T4c-AC9): the harness, as the owner, adds a
+// scripts/build to main, and one session runs /pitwall:release: the scripted owner picks 0.1.0 and says yes
+// to the merge; the session makes no tag, and the harness, as the owner, then runs the commands it handed
+// over. A stage passes on what git and GitHub hold afterwards, never on the model's wording,
 // and saves its state and its numbers at once.
 //
 // By default GitHub is the fake of scripts/fake-github.mjs, with a local bare repository as origin
@@ -36,9 +39,9 @@ const plugin = process.env.PITWALL_E2E_PLUGIN ?? join(root, 'plugins', 'pitwall'
 const tools = process.env.PITWALL_E2E_TOOLS ?? join(root, 'scripts');
 const P = plugin.split('\\').join('/');
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-export const LOOP_STAGES = ['e0', 'e1', 'bug'];
+export const LOOP_STAGES = ['e0', 'e1', 'bug', 'release'];
 // The stage each loop stage starts from, after e0.
-const SEEDED_FROM = { e1: 'e0', bug: 'e1' };
+const SEEDED_FROM = { e1: 'e0', bug: 'e1', release: 'bug' };
 // The defect the bug stage files: the harness breaks it on main before the stage (injectDefect).
 const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1-AC1 says Quit removes the icon and ends them. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
 
@@ -56,7 +59,10 @@ const BUG_FACTS = `- Since the last change merged, picking Quit in the tray menu
 const OWNER_RULES = (stage) => `Answer as this owner, in English, in one to three sentences, and only what was asked.
 - When asked to set up or record merge protection, or to run protect.mjs: yes.
 ${stage === 'e0' ? '- When asked whether low and normal risk epics may merge without you: no, every merge waits for you.' : '- When asked whether low and normal risk epics may merge without you: yes, you ran merge-choice.mjs --allow yourself; .claude/pitwall.json records it.'}${stage === 'bug' ? `
-- When asked to confirm the severity and the risk class of the bug: blocking and normal.` : ''}
+- When asked to confirm the severity and the risk class of the bug: blocking and normal.` : ''}${stage === 'release' ? `
+- When asked which version the first release is, 0.1.0 or 1.0.0: 0.1.0.
+- When asked whether to merge the release now: yes; you will run its manual checklist on your laptops after the merge.
+- When handed the commands that make and push the tag: say you will run them yourself, and that the release is done for now.` : ''}
 - When asked whether to merge an epic or a fix now: yes.
 - When asked a question about an epic (clarification, a NEEDS_OWNER question, an option to pick): answer from the facts; when the facts do not say, accept the assistant's recommendation.
 - When asked to accept a risk: accept it with the fallback the assistant proposes.
@@ -218,6 +224,38 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       if (!remote('ls-tree', '--name-only', 'origin/main', 'docs/reviews/').stdout.split('\n').some((f) => /^docs\/reviews\/E1-.+\.md$/.test(f))) unmet.push('no review file of E1 on main');
       return unmet;
     },
+    // T4c-AC9: the release of what e0, e1 and bug merged, its records on main, the owner asked before its merge, and
+    // no tag of the session's own; then the harness, as the owner, runs the commands the release handed over.
+    release: () => {
+      const unmet = [];
+      const m = merges().find((x) => /^release: v0\.1\.0 \(#\d+\)$/.test(x[1]));
+      if (!m) return ['the release is not merged into origin main with a "release: v0.1.0 (#n)" merge commit'];
+      if (!/Approved by the owner/.test(m[2] ?? '')) unmet.push("the release's merge commit does not record the owner's yes: " + JSON.stringify(m[2] ?? ''));
+      if (!fixAsked.before) unmet.push('the release merged before the scripted owner was asked about its merge');
+      const log = shown('CHANGELOG.md').stdout;
+      const section = log.split(/^## /m).find((s) => s.startsWith('v0.1.0 - ')) ?? '';
+      if (!/### Added[\s\S]*- E0: [\s\S]*- E1: [\s\S]*### Fixed[\s\S]*- BUG-1: /.test(section) || /refactor\(E1\)/.test(section)) unmet.push('CHANGELOG.md on main has no section v0.1.0 with E0 and E1 under Added and BUG-1 under Fixed, and nothing else:\n' + section);
+      const epics = shown('docs/EPICS.md').stdout;
+      for (const e of ['E0', 'E1']) if (!new RegExp('\\| \\[' + e + '\\]\\([^)]*\\) \\|.*\\| released \\(v0\\.1\\.0\\) \\|').test(epics)) unmet.push('docs/EPICS.md on main does not record ' + e + ' as released (v0.1.0)');
+      if (!/^\| BUG-1 \|[^\n]*\| fixed \| #\d+ \|$/m.test(shown('docs/BUGS.md').stdout)) unmet.push('docs/BUGS.md on main does not record BUG-1 as fixed with its PR');
+      if (shown('docs/reviews/release-v0.1.0.md').status !== 0) unmet.push("docs/reviews/release-v0.1.0.md, the qa agent's file, is not on main");
+      if (unmet.length) return unmet;
+      // The tag is the owner's: none from the session; then the harness runs the handed commands as the owner.
+      if (!released.tagged) {
+        if (git('tag', '--list').stdout.trim() || git('ls-remote', '--tags', 'origin').stdout.trim()) return ['the session made a tag: the release hands its commands to the owner (ADR-0013)'];
+        const handed = script('release.mjs', ['--tag', '--project', project], ownerEnv);
+        const make = handed.stdout.split('\n').map((l) => l.trim()).find((l) => l.startsWith('git tag -a v0.1.0 '));
+        if (handed.status !== 3 || !make) return ['release.mjs --tag handed no tag command (exit ' + handed.status + '):\n' + handed.stdout + handed.stderr];
+        const words = make.match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ''));
+        const made = run(words[0], words.slice(1), { cwd: project, env });
+        const pushed = git('push', '-q', 'origin', 'v0.1.0');
+        if (made.status !== 0 || pushed.status !== 0) return ['the handed tag commands failed: ' + made.stderr + pushed.stderr];
+        released.tagged = true;
+        console.log('  the owner tagged v0.1.0 from the handed commands: ' + git('rev-list', '-n', '1', 'v0.1.0').stdout.trim().slice(0, 7));
+      }
+      if (remote('rev-list', '-n', '1', 'v0.1.0').stdout.trim() !== m[0]) unmet.push("the tag v0.1.0 is not on the release's merge commit");
+      return unmet;
+    },
     // T4b-AC4: a blocking bug goes before the planned E2, and its fix merges after the owner's yes.
     bug: () => {
       const unmet = [];
@@ -250,6 +288,9 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   // branch's flush would make of BUG-1's row on main.
   const fixAsked = { asked: false, merged: false, before: false, reopened: undefined };
   const fixMerged = () => merges().some((x) => /^fix\(BUG-1\): /.test(x[1]));
+  // The release stage: whether the harness, as the owner, has made the tag from the handed commands.
+  const released = { tagged: false };
+  const releaseMerged = () => merges().some((x) => /^release: v0\.1\.0 \(#\d+\)$/.test(x[1]));
   // A copy of the git directory, with what waits in it, checked out at origin's main on a branch of its own, as
   // the next branch of the loop starts; the project itself is left as the stage left it.
   function reopenedAtNextFlush() {
@@ -297,8 +338,22 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
   }
 
+  // The release stage's build: the owner adds scripts/build to a project laid out before 0.9.0 (T4c-AC4), a commit
+  // on main that is no merge of the loop, which the release must name and leave out of the changelog.
+  function addBuild() {
+    git('switch', '-q', 'main');
+    writeFileSync(join(project, 'scripts', 'build'), '#!/usr/bin/env bash\n# The release build: the compiled app, for the release of pitwall\'s headless run.\nset -euo pipefail\nnpm run build >&2\necho "ARTIFACT: dist/main/main.js"\n');
+    git('add', 'scripts/build');
+    git('update-index', '--chmod=+x', 'scripts/build');
+    // No pathspec: git on Windows drops the executable bit of a new file in a commit that names its paths (T4d).
+    git('-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'chore: scripts/build, the release build');
+    const p = git('push', '-q', 'origin', 'main');
+    if (p.status !== 0) throw new Error('push of scripts/build failed: ' + p.stderr);
+    console.log('the owner added scripts/build on main: ' + git('log', '-1', '--format=%h %s').stdout.trim());
+  }
+
   const allowed = [
-    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`, `Bash(node "${P}/scripts/bugs.mjs" *)`, `Bash(node "${P}/scripts/layout.mjs" --hook)`,
+    `Bash(node "${P}/scripts/docs-check.mjs" *)`, `Bash(node "${P}/scripts/release.mjs" *)`, `Bash(node "${P}/scripts/protect.mjs")`, `Bash(node "${P}/scripts/protect.mjs" *)`, `Bash(node "${P}/scripts/bugs.mjs" *)`, `Bash(node "${P}/scripts/layout.mjs" --hook)`,
     'Bash(git *)', 'Bash(gh *)', 'Bash(npm *)', 'Bash(npx *)', 'Bash(bash scripts/gate *)', 'Bash(scripts/gate *)', 'Bash(ls *)', 'Bash(cd *)', 'Bash(echo *)', 'Bash(cat *)', 'Bash(pwd)', 'Bash(mkdir *)',
     'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent',
   ];
@@ -316,6 +371,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       console.log('the owner allowed low and normal risk to merge without them (merge-choice.mjs --allow)');
     }
     if (stage === 'bug') injectDefect();
+    if (stage === 'release') addBuild();
     // The bug stage files the defect in one session, then runs the loop in a second.
     let filing = stage === 'bug';
     const started = Date.now();
@@ -323,7 +379,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     let cost = 0;
     let turns = 0;
     let sessionId;
-    let prompt = filing ? `/pitwall:bug ${BUG_REPORT}` : '/pitwall:continue 1';
+    let prompt = filing ? `/pitwall:bug ${BUG_REPORT}` : stage === 'release' ? '/pitwall:release' : '/pitwall:continue 1';
     let unmet = ['not run'];
     let error = '';
     console.log(`\n== ${stage}${github ? ` on ${github}` : ''}`);
@@ -332,7 +388,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         turns += 1;
         const args = ['-p', '--plugin-dir', P, '--output-format', 'json', '--permission-mode', 'auto', '--permission-prompts', 'none', '--strict-mcp-config'];
         if (sessionId) args.push('--resume', sessionId);
-        args.push('--disallowedTools', 'PowerShell', '--allowedTools', ...allowed, ...(stage === 'e0' || stage === 'bug' ? ownerAnswers : []));
+        args.push('--disallowedTools', 'PowerShell', '--allowedTools', ...allowed, ...(stage === 'e0' || stage === 'bug' || stage === 'release' ? ownerAnswers : []));
         const r = run('claude', args, { cwd: project, env, input: prompt, timeout: 60 * 60 * 1000 });
         let out;
         try {
@@ -345,16 +401,16 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
         cost += out.total_cost_usd ?? 0;
         history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
         console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
-        if (stage === 'bug' && !filing) {
+        if ((stage === 'bug' && !filing) || stage === 'release') {
           // Merged in this turn: the question had to come in an earlier one. Then this turn's question counts.
-          if (!fixAsked.merged && fixMerged()) {
+          if (!fixAsked.merged && (stage === 'release' ? releaseMerged() : fixMerged())) {
             fixAsked.merged = true;
             fixAsked.before = fixAsked.asked;
           }
           if (/\bmerg/i.test(String(out.result ?? '')) && String(out.result ?? '').includes('?')) fixAsked.asked = true;
           if (fixAsked.merged && !fixAsked.before) {
             unmet = promises[stage]();
-            error = 'the fix merged before the scripted owner was asked about its merge';
+            error = `the ${stage === 'release' ? 'release' : 'fix'} merged before the scripted owner was asked about its merge`;
             break;
           }
         }

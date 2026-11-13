@@ -5,7 +5,8 @@
 //
 // Stages: kickoff, discovery, decide, spike-criterion (before the criterion is committed), spike, plan, plan-review,
 // code-review (T3b-AC4, ADR-0011: the review file of the change on the current branch, or of --change; for a
-// bug, the file of its regression test or QA scenario at the reviewed commit, T4b-AC1), bug (the rows of
+// bug, the file of its regression test or QA scenario at the reviewed commit, T4b-AC1), release (the qa agent's
+// review of the release on the current branch or of --change, T4c-AC5, ADR-0013), bug (the rows of
 // docs/BUGS.md, T4b-AC2) and lesson (the rows of docs/LESSONS.md, T4b-AC1).
 //
 // Always, unless --only narrows it:
@@ -23,13 +24,13 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { bugFacts, bugTable, changeOf, config, gitRunner, listFiles, parseArgs, projectPath, requireNode, riskOrder, templateRoot } from './lib.mjs';
+import { bugFacts, bugTable, changeOf, config, gitRunner, listFiles, openBlockingBugs, parseArgs, projectPath, requireNode, riskOrder, templateRoot } from './lib.mjs';
 
 requireNode();
-const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review|code-review|bug|lesson[,...]] [--change <id>] [--only sections,ids,size]';
+const usage = 'node docs-check.mjs [--root <dir>] [--stage kickoff|discovery|decide|spike-criterion|spike|plan|plan-review|code-review|release|bug|lesson[,...]] [--change <id>] [--only sections,ids,size]';
 const args = parseArgs(process.argv.slice(2), { root: 'value', stage: 'value', change: 'value', only: 'value' }, usage);
 const KINDS = ['sections', 'ids', 'size'];
-const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review', 'code-review', 'bug', 'lesson'];
+const STAGES = ['kickoff', 'discovery', 'decide', 'spike-criterion', 'spike', 'plan', 'plan-review', 'code-review', 'release', 'bug', 'lesson'];
 const kinds = args.only ? args.only.split(',').map((k) => k.trim()) : KINDS;
 const stages = args.stage ? args.stage.split(',').map((s) => s.trim()) : [];
 if (kinds.some((k) => !KINDS.includes(k)) || stages.some((s) => !STAGES.includes(s))) {
@@ -1200,6 +1201,13 @@ function checkCodeReview() {
   if (!epic && !/^BUG-\d+$/.test(id)) return report(root, `"${id}" names no change: an epic as its file in docs/epics/ is named (E<n>-<slug>), or a bug BUG-<n>`);
   const rel = `${cfg.loop.reviews}/${id}.md`;
   if (!has(rel)) return report(rel, 'missing: the code reviewer writes it from the template (pitwall ADR-0011)');
+  const { s, reviewed } = reviewBasics(git, id, rel);
+  checkCoverage(git, id, rel, s, reviewed, epic);
+}
+
+// The parts of a review file every reviewer keeps (ADR-0011): the template's sections and columns, which change,
+// which round, the commit the round reviewed, and nothing changed after it but the review file.
+function reviewBasics(git, id, rel) {
   const text = read(rel);
   const TABLED = ['Acceptance criteria', 'Findings'];
   // The rows and fields read here decide the review, so the file keeps to Markdown read as GitHub shows it (L-7).
@@ -1236,11 +1244,15 @@ function checkCodeReview() {
     const changed = [...new Set([...committed, ...working])].filter((f) => f && f !== rel);
     if (changed.length > 0) report(rel, `files changed after the reviewed commit ${reviewed.slice(0, 7)} (${changed.slice(0, 5).join(', ')}${changed.length > 5 ? ', ...' : ''}): the review holds for that commit only, so a new round reviews the head`);
   }
+  return { s, reviewed };
+}
 
+// A test named in a code span (`src/a.test.js`) is a test named: the cell is read with its code spans kept.
+const withCode = (cell) => visible(cell ?? '').replace(/`/g, '').replace(/^[*_\s]+|[*_\s]+$/g, '');
+const nothingIn = (cell) => !withCode(cell) || openCell(cell) || /^(?:-+|n\/a|tbd|todo|pending|none|nothing|\?+)\.?$/i.test(withCode(cell));
+
+function checkCoverage(git, id, rel, s, reviewed, epic) {
   // Every acceptance criterion of the epic, or the bug itself, is covered by a test or a QA scenario.
-  // A test named in a code span (`src/a.test.js`) is a test named: the cell is read with its code spans kept.
-  const withCode = (cell) => visible(cell ?? '').replace(/`/g, '').replace(/^[*_\s]+|[*_\s]+$/g, '');
-  const nothing = (cell) => !withCode(cell) || openCell(cell) || /^(?:-+|n\/a|tbd|todo|pending|none|nothing|\?+)\.?$/i.test(withCode(cell));
   let want = [];
   if (epic) {
     const ef = `docs/epics/${id}.md`;
@@ -1263,7 +1275,7 @@ function checkCodeReview() {
   for (const c of want) {
     const row = covered.get(c);
     if (!row) report(rel, `${c} is not in "## Acceptance criteria": name the test or the QA scenario that covers it`);
-    else if (nothing(row[1])) report(rel, `${c} is not covered: name the test (its file and name) or the QA scenario that checks it`);
+    else if (nothingIn(row[1])) report(rel, `${c} is not covered: name the test (its file and name) or the QA scenario that checks it`);
   }
 
   // Every finding is closed: by a commit of this change's branch, or by a risk the owner accepted.
@@ -1273,7 +1285,7 @@ function checkCodeReview() {
   // behaviour, and then the cell says why there is none (owner, 2026-11-11). Either way the cell names the
   // file, in a code span or a link, and the file is in the reviewed commit.
   const bugRow = !epic ? covered.get(id) : null;
-  if (bugRow && !nothing(bugRow[1]) && /^[0-9a-f]{40}$/.test(reviewed) && git('rev-parse', '--verify', '-q', `${reviewed}^{commit}`).ok) {
+  if (bugRow && !nothingIn(bugRow[1]) && /^[0-9a-f]{40}$/.test(reviewed) && git('rev-parse', '--verify', '-q', `${reviewed}^{commit}`).ok) {
     const cell = String(bugRow[1] ?? '');
     const spans = [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
     const links = [...cell.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => join(cfg.loop.reviews, m[1]).split('\\').join('/'));
@@ -1301,6 +1313,54 @@ function checkCodeReview() {
     else if (!git('merge-base', '--is-ancestor', commit.out, 'HEAD').ok) report(rel, `finding ${num} is closed by ${sha}, which is not in the history of HEAD`);
     else if (mainRef && git('merge-base', '--is-ancestor', commit.out, mainRef).ok) report(rel, `finding ${num} is closed by ${sha}, which is already on ${main}: a commit of this change's branch closes it`);
   });
+}
+
+// ---------- release (T4c-AC5, AC6, ADR-0013) ----------
+
+// The qa agent's review of a release, docs/reviews/release-v<x.y.z>.md: the review template, a row for each
+// criterion of each merged or released epic and for each fixed bug, each covered by a test or a QA scenario,
+// and no finding, since a failure is a bug and a release with one does not go. No blocking bug may be open.
+function checkRelease() {
+  const git = gitRunner(root);
+  if (!git('rev-parse', '--show-toplevel').ok) return report(root, 'not inside a git repository: a release names commits');
+  const id = changeId(git);
+  if (!new RegExp(`^release-${cfg.release.tagPrefix}\\d+\\.\\d+\\.\\d+$`).test(id ?? '')) return report(root, `not on the branch of a release (${cfg.loop.branches.release}${cfg.release.tagPrefix}<x.y.z>), and no --change names one (release-${cfg.release.tagPrefix}<x.y.z>)`);
+  const rel = `${cfg.loop.reviews}/${id}.md`;
+  if (!has(rel)) return report(rel, 'missing: the qa agent writes it from the template (pitwall ADR-0013)');
+  const { s } = reviewBasics(git, id, rel);
+  // What the release answers for: every criterion of every closed epic, and every fixed bug's regression test.
+  const want = [];
+  const plan = has('docs/EPICS.md') ? tableRows(read('docs/EPICS.md').split('\n')) : [];
+  for (const row of plan) {
+    const e = /^\[?(E\d+)\]?(?:\(([^)]+)\))?$/.exec(String(row[0] ?? '').trim());
+    if (!e || !/^(merged|released)\b/i.test(bareCell(row[4]))) continue;
+    const ef = e[2] ? join('docs', e[2]).split('\\').join('/') : null;
+    const file = ef && has(ef) ? ef : (filesIn('docs/epics').map((f) => `docs/epics/${f}`).find((f) => new RegExp(`/${e[1]}-[^/]*\\.md$`).test(f)) ?? null);
+    if (!file) {
+      report(rel, `${e[1]} is ${bareCell(row[4])}, and its file in docs/epics/ is not there`);
+      continue;
+    }
+    want.push(...listItems(sections(read(file)).get('Acceptance criteria') ?? []).map((l) => /^- \[[ xX]\] (E\d+-AC\d+):/.exec(l)?.[1]).filter(Boolean));
+  }
+  const bugs = has('docs/BUGS.md') ? bugTable(read('docs/BUGS.md')) : null;
+  for (const r of bugs?.rows ?? []) {
+    const b = bugFacts(r, cfg, bugs.old);
+    if (/^fixed$/i.test(b.status)) want.push(b.id);
+  }
+  const covered = new Map();
+  for (const row of tableRows(s.get('Acceptance criteria') ?? [])) {
+    const c = bareCell(row[0]);
+    if (!want.includes(c)) report(rel, `"## Acceptance criteria": "${row[0]}" is neither a criterion of a merged or released epic nor a fixed bug`);
+    covered.set(c, row);
+  }
+  for (const c of want) {
+    const row = covered.get(c);
+    if (!row) report(rel, `${c} is not in "## Acceptance criteria": name the test or the QA scenario that covers it`);
+    else if (nothingIn(row[1])) report(rel, `${c} is not covered: name the test (its file and name) or the QA scenario that checks it`);
+  }
+  const findings = tableRows(s.get('Findings') ?? []);
+  if (findings.length) report(rel, `"## Findings" holds ${findings.length} finding${findings.length === 1 ? '' : 's'}: a failure of a release is a bug, filed with /pitwall:bug, and a release with one does not go (pitwall ADR-0013)`);
+  for (const b of openBlockingBugs(root, cfg, 'HEAD')) report(rel, `${b.id} (${b.title}) is a blocking bug, open: no release goes until its fix merges or the owner confirms it is not blocking (pitwall ADR-0013)`);
 }
 
 // ---------- bugs and lessons (T4b-AC1, AC2) ----------
@@ -1364,7 +1424,7 @@ function checkLessons() {
   }
 }
 
-const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview, bug: checkBugs, lesson: checkLessons };
+const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview, release: checkRelease, bug: checkBugs, lesson: checkLessons };
 for (const s of stages) checks[s]();
 
 const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;

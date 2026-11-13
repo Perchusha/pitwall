@@ -4,10 +4,11 @@
 //   node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
-// Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0, e1 and bug
+// Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0, e1, bug and release
 // (scripts/e2e-loop.mjs). With no flags it runs e1 from the state e0 saved, the cheap run after a
 // change; --from e0 runs E0 and E1, the run before a PR; --from bug runs a blocking bug's fix
-// through the loop from the state e1 saved (T4b-AC4); --until plan runs the planning stages from
+// through the loop from the state e1 saved (T4b-AC4); --from release runs /pitwall:release from the
+// state bug saved (T4c-AC9); --until plan runs the planning stages from
 // kickoff. A run is either planning stages or loop stages. --github <owner/repo> runs the loop
 // stages against an empty private repository the owner created, and records GitHub's answers.
 // A planning run goes from --from (default kickoff) to --until (default plan). Every stage that passes saves the
@@ -96,13 +97,13 @@ const opt = (name, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan'];
-const LOOP = ['e0', 'e1', 'bug'];
+const LOOP = ['e0', 'e1', 'bug', 'release'];
 const ALL = [...STAGES, ...LOOP];
 const fromArg = opt('from', '');
 const untilArg = opt('until', '');
 // No flags: e1 from the saved e0 (owner, T3b). --until a planning stage alone: from kickoff, as before.
 const from = fromArg || (STAGES.includes(untilArg) ? 'kickoff' : 'e1');
-const until = untilArg || (STAGES.includes(from) ? 'plan' : from === 'bug' ? 'bug' : 'e1');
+const until = untilArg || (STAGES.includes(from) ? 'plan' : from === 'e0' ? 'e1' : from);
 const seedArg = opt('seed', '');
 const github = opt('github', '');
 const stateDir = resolve(opt('state', join(homedir(), '.cache', 'pitwall-e2e')));

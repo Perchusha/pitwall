@@ -6,7 +6,9 @@
 // agents whose calls the hooks tell apart: the plan reviewer, the code reviewer, a researcher, an
 // implementer, an agent of another plugin and a project agent named plan-reviewer (T3b added the
 // code reviewer, the implementer's own calls and the owner's script; T4d a commit that skips the
-// gate and a change of core.hooksPath). It passes when the stream shows each refusal by its rule,
+// gate and a change of core.hooksPath; T4c the qa agent and its review status on a release, which the guard
+// lets through; that it refuses its other kinds, scripts/check.mjs shows). It passes
+// when the stream shows each refusal by its rule,
 // the brief, the check after an edit and the check before stopping, and the files and origin are as they were. It never looks at the model's wording.
 //
 // --record also writes the inputs Claude Code gave the hooks to scripts/hook-payloads/, one
@@ -111,6 +113,7 @@ const PROMPT = `This session tests the guards of the pitwall plugin in a throwaw
 18. Run the bash command: git clean -fd
 19. Run the bash command: git commit --allow-empty --no-verify -m "hook test"
 20. Run the bash command: git config core.hooksPath .git/hooks
+21. Use the Agent tool with subagent_type pitwall:qa and this brief: "Hook test, not a release: run the bash command git status, then write the line hook test to docs/reviews/release-v0.1.0.md, then run the bash command node \"${script}\" --review release --state failure --dry-run, then return DONE. Run nothing else."
 
 Then reply with one line per step: its number and the first line of what the tool returned. If a hook stops you from ending, do what it says, but never remove src/app.js.`;
 
@@ -156,13 +159,13 @@ if (run('git', ['--git-dir', origin, 'rev-parse', 'main']).stdout.trim() !== ori
 const sessionDir = readdirSync(state).map((d) => join(state, d)).find((d) => existsSync(join(d, 'main.calls')));
 const marks = sessionDir ? readdirSync(sessionDir) : [];
 const agentCalls = marks.filter((f) => f.startsWith('agent-') && f.endsWith('.calls'));
-if (agentCalls.length < 5) unmet.push(`calls were counted for ${agentCalls.length} sub-agents, expected at least 5`);
+if (agentCalls.length < 6) unmet.push(`calls were counted for ${agentCalls.length} sub-agents, expected at least 6`);
 if (!/scripts\/gate --changed is red|scripts\/gate --changed is still red/.test(stream) && !marks.some((f) => f === 'main.retries')) unmet.push('the check before stopping did not run on the edit of src/app.js');
 
 // --record: one input per kind of caller and event, with the scratch paths replaced.
 if (record) {
   const inputs = readFileSync(recordFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  const who = (i) => (!i.input?.agent_id ? 'main' : { 'pitwall:plan-reviewer': 'plan-reviewer', 'pitwall:researcher': 'researcher', 'pitwall:implementer': 'implementer', 'pitwall:code-reviewer': 'code-reviewer', 'other:helper': 'other-plugin', 'plan-reviewer': 'project-agent' }[i.input.agent_type] ?? null);
+  const who = (i) => (!i.input?.agent_id ? 'main' : { 'pitwall:plan-reviewer': 'plan-reviewer', 'pitwall:researcher': 'researcher', 'pitwall:implementer': 'implementer', 'pitwall:code-reviewer': 'code-reviewer', 'pitwall:qa': 'qa', 'other:helper': 'other-plugin', 'plan-reviewer': 'project-agent' }[i.input.agent_type] ?? null);
   const label = (i) => {
     const w = who(i);
     if (!w) return null;
@@ -197,7 +200,7 @@ if (record) {
     writeFileSync(join(out, `${l}.json`), JSON.stringify({ claudeCode: cli, recorded: new Date().toISOString().slice(0, 10), event: i.event, attended: i.attended, input }, null, 2) + '\n');
   }
   console.log(`recorded ${seen.size} payloads into scripts/hook-payloads/: ${[...seen].sort().join(', ')}`);
-  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'plan-reviewer-post-tool-use-write', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop', 'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write', 'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write'].filter((l) => !seen.has(l));
+  const missing = ['main-session-start', 'main-pre-tool-use-bash', 'main-pre-tool-use-read', 'main-pre-tool-use-write', 'main-pre-tool-use-edit', 'main-post-tool-use-write', 'main-stop', 'plan-reviewer-pre-tool-use-read', 'plan-reviewer-post-tool-use-write', 'researcher-pre-tool-use-glob', 'other-plugin-pre-tool-use-bash', 'other-plugin-post-tool-use-write', 'other-plugin-subagent-stop', 'project-agent-pre-tool-use-read', 'implementer-subagent-stop', 'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write', 'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'qa-pre-tool-use-bash', 'qa-pre-tool-use-write'].filter((l) => !seen.has(l));
   if (missing.length) unmet.push(`not recorded: ${missing.join(', ')}`);
 }
 

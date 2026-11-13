@@ -54,9 +54,10 @@ Found by the loop stage `bug` at d4f3b55, proposed by the agent and accepted by 
 
 Review round 1 (2026-11-12): three findings to fix, none blocking, all fixed on the branch: `layout.mjs --hook` committed through the hook it adds, so a `core.hooksPath` already `.githooks` (the owner's yes over a folder of their own) left the hook staged for the implementer's next commit; the hook's test would have passed with the gate run in another mode or with `.claude/pitwall.json` left out of the docs-only rule; two consequences of ADR-0012 said the opposite of what the code does. Also taken from its notes: `./.githooks` and `.githooks/` pass the guard as `.githooks`, the template's `CLAUDE.md` says `core.hooksPath` stays `.githooks`, and `scripts/check.mjs` refuses a hook that is not in the index.
 
-From the same notes, proposed by the agent, awaiting owner (2026-11-12):
-- Git LFS writes its own hooks (pre-push, post-checkout, post-commit, post-merge) into the folder `core.hooksPath` names, so in a pitwall project they land in `.githooks/` untracked, and committing them is a change to `.githooks/` the code reviewer counts as blocking. Not for T4d: decide it in T6 or T5b, since Last Ones Down is a game and likely uses LFS.
-- The hook has no time limit of its own, unlike the check after an edit (`hooks.gateTimeoutSeconds.fast`): a `--fast` that hangs holds the commit until the command tool's timeout. Accept as it is: `timeout` is not on macOS, and E0-AC1 asks for a fast `--fast`.
+From the same notes, proposed by the agent and decided by the owner after the merge (2026-11-12):
+- Git LFS writes its own hooks (pre-push, post-checkout, post-commit, post-merge) into the folder `core.hooksPath` names, so in a pitwall project they land in `.githooks/` untracked, and committing them is a change to `.githooks/` the code reviewer counts as blocking. Neither the move reminder nor Last Ones Down uses LFS (no LFS rules in the game's repository), so it is neither T6's nor T5b's: BUG-9, not blocking, high, fixed after 1.0 (owner).
+- The hook has no time limit of its own, unlike the check after an edit (`hooks.gateTimeoutSeconds.fast`): a `--fast` that hangs holds the commit until the command tool's timeout. Accepted as it is: `timeout` is not on macOS, and E0-AC1 asks for a fast `--fast` (owner).
+- Two more from the notes, filed the same day: BUG-7, kickoff sets `core.hooksPath` over a global one without asking, where `continue` asks (not blocking, normal, fixed when no epic is ready); BUG-8, the rule `precommit` lets `git config --global core.hooksPath .githooks` through, where this epic's draft refused `--global` at any value (not blocking, high, fixed after T7 with the guard's other bugs) (owner).
 
 ## Out of scope
 

@@ -21,4 +21,4 @@ One-way (2026-11-12): T5 is split in two systems, not three (owner): the lite on
 
 ## Open questions
 
-None.
+- The first question when T5a starts (owner, 2026-11-12): the reminder runs on Windows and macOS, and its macOS build is made only on a Mac, so a release is built on two machines. `release.mjs --tag` refuses in a clone where the qa agent recorded no build (T4c), and the qa agent builds on one machine. How does a release record and hand over the build of the other machine?

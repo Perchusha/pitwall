@@ -120,8 +120,11 @@ export function changeOf(branch, cfg) {
   const name = branch.slice(cfg.loop.branches[kind].length);
   const epic = kind === 'epic' ? /^(E\d+)-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(name) : null;
   const bug = kind === 'fix' ? /^BUG-\d+$/.exec(name) : null;
-  if (!epic && !bug) return { kind, branch, id: null };
-  return { kind, branch, id: name, epic: epic?.[1] ?? null, bug: bug?.[0] ?? null, review: `${cfg.loop.reviews}/${name}.md` };
+  // A release, release/v<x.y.z> (T4c-AC3, ADR-0013): its change is release-v<x.y.z>.
+  const release = kind === 'release' ? new RegExp(`^${cfg.release.tagPrefix}(\\d+)\\.(\\d+)\\.(\\d+)$`).exec(name) : null;
+  if (!epic && !bug && !release) return { kind, branch, id: null };
+  const id = release ? `release-${name}` : name;
+  return { kind, branch, id, epic: epic?.[1] ?? null, bug: bug?.[0] ?? null, release: release ? name : null, review: `${cfg.loop.reviews}/${id}.md` };
 }
 
 // The risk class of an epic as a merge reads it (T3b-AC5): the higher of the class docs/EPICS.md gives it
@@ -337,4 +340,95 @@ export function printHandoff(reason, steps, then) {
     console.log(`  ${THEN_LABEL}`);
     console.log(`    ${then}`);
   }
+}
+
+// The open blocking bugs (T4c-AC6, ADR-0013): docs/BUGS.md, the rows only another branch holds and what waits
+// in the git directory, an unconfirmed bug included, since it is blocking until the owner answers. A bug whose
+// fix is merged into ref ("fix(BUG-<n>): ..." on its first-parent history) is not open, though only the first
+// commit of the next branch, or the release, records it fixed.
+export function openBlockingBugs(project, cfg = config(), ref = null) {
+  const blocking = Object.keys(cfg.bugs.severities)[0];
+  const fixed = new Set();
+  if (ref) {
+    const subjects = gitRunner(project)('log', '--first-parent', '--merges', '--format=%s', ref).out.split('\n');
+    for (const s of subjects) {
+      const m = loopSubject(s, cfg);
+      if (m?.kind === 'bug') fixed.add(m.id);
+    }
+  }
+  return bugsView(project, cfg).rows.filter((b) => b.open && b.severity === blocking && !fixed.has(b.id));
+}
+
+// Versions and releases (T4c-AC1, ADR-0013). A version is x.y.z; its tag is release.tagPrefix + x.y.z.
+export const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+export const compareVersions = (a, b) => {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+};
+// The merge commits of the loop as merge.mjs writes them, and a release's.
+export const loopSubject = (subject, cfg = config()) => {
+  const epic = /^feat\((E\d+)\): (.+) \(#(\d+)\)$/.exec(subject);
+  if (epic) return { kind: 'epic', id: epic[1], title: epic[2], pr: Number(epic[3]) };
+  const bug = /^fix\((BUG-\d+)\): (.+) \(#(\d+)\)$/.exec(subject);
+  if (bug) return { kind: 'bug', id: bug[1], title: bug[2], pr: Number(bug[3]) };
+  const release = new RegExp(`^${cfg.release.subject}: ${cfg.release.tagPrefix}(\\d+\\.\\d+\\.\\d+) \\(#(\\d+)\\)$`).exec(subject);
+  if (release) return { kind: 'release', version: release[1], pr: Number(release[2]) };
+  return null;
+};
+
+// What main holds since the last release, read from its first-parent history at ref (git is a gitRunner):
+//   last      the highest tag vX.Y.Z merged into ref, { tag, version, sha }, or null;
+//   untagged  the newest release merged after it, { version, sha, pr }, or null: merged, and not tagged yet;
+//   items     the loop's merges since the last release, tagged or not, oldest first: { kind, id, title, pr, sha };
+//   leftOut   the commits since then that are neither, and not the plan's merge or the kickoff: { sha, subject, why }.
+export function releaseHistory(git, ref, cfg = config()) {
+  const prefix = cfg.release.tagPrefix;
+  const tags = git('tag', '--merged', ref, '--list', `${prefix}*`).out.split('\n').map((t) => t.trim()).filter((t) => t.startsWith(prefix) && SEMVER.test(t.slice(prefix.length)));
+  tags.sort((a, b) => compareVersions(a.slice(prefix.length), b.slice(prefix.length)));
+  const top = tags.pop();
+  const last = top ? { tag: top, version: top.slice(prefix.length), sha: git('rev-list', '-n', '1', top).out } : null;
+  const log = git('log', '--first-parent', '--format=%H%x1f%P%x1f%s%x1f%b%x1e', ref, ...(last ? [`^${last.sha}`] : []));
+  const commits = log.raw.split('\x1e').map((r) => r.replace(/^\s+/, '')).filter(Boolean).map((r) => {
+    const [sha, parents, subject, body] = r.split('\x1f');
+    return { sha, merge: (parents ?? '').trim().split(/\s+/).filter(Boolean).length > 1, subject: subject ?? '', body: body ?? '' };
+  });
+  const at = commits.findIndex((c) => c.merge && loopSubject(c.subject, cfg)?.kind === 'release');
+  const untagged = at >= 0 ? { ...loopSubject(commits[at].subject, cfg), sha: commits[at].sha } : null;
+  const since = (at >= 0 ? commits.slice(0, at) : commits).reverse();
+  const items = [];
+  const leftOut = [];
+  for (const c of since) {
+    const s = loopSubject(c.subject, cfg);
+    if (c.merge && s && s.kind !== 'release') items.push({ ...s, sha: c.sha });
+    else if (/Plan approved by the owner/.test(c.body) || /^chore: kickoff from pitwall\b/.test(c.subject)) continue;
+    else leftOut.push({ sha: c.sha, subject: c.subject, why: c.merge ? 'a merge the loop did not make' : 'a commit on main that is no merge of the loop' });
+  }
+  return { last, untagged, items, leftOut };
+}
+
+// The changelog's section of a version, as release.mjs writes it: Keep a Changelog's headings, one line per merge.
+export function changelogSection(version, date, items, cfg = config()) {
+  const line = (i) => `- ${i.id}: ${i.title} (#${i.pr})`;
+  const added = items.filter((i) => i.kind === 'epic').map(line);
+  const fixed = items.filter((i) => i.kind === 'bug').map(line);
+  return [`## ${cfg.release.tagPrefix}${version} - ${date}`, '', ...(added.length ? ['### Added', '', ...added, ''] : []), ...(fixed.length ? ['### Fixed', '', ...fixed, ''] : [])].join('\n').trimEnd();
+}
+
+// The section of a version in a changelog's text, without its trailing blank lines, or null.
+export function changelogSectionOf(text, version, cfg = config()) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const head = new RegExp(`^## ${cfg.release.tagPrefix}${version.replace(/\./g, '\\.')}(?: |$)`);
+  const start = lines.findIndex((l) => head.test(l));
+  if (start < 0) return null;
+  let end = lines.findIndex((l, i) => i > start && /^## /.test(l));
+  if (end < 0) end = lines.length;
+  return lines.slice(start, end).join('\n').trimEnd();
+}
+
+// The file in the git directory where a release keeps what is not committed: its build record, the tag's message.
+export function releaseDir(project, cfg = config()) {
+  const r = spawnSync('git', ['-C', project, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) return null;
+  return join(resolve(project, r.stdout.trim()), ...cfg.release.pending.split('/'));
 }

@@ -2,6 +2,34 @@
 
 One entry per epic, newest first.
 
+## T4d - The gate before every commit (2026-11-12)
+
+A pitwall project gets `.githooks/pre-commit`, which runs `scripts/gate --fast` before every commit and refuses it while the gate is red (L-14), except on `spike/*` and for a commit of Markdown under `docs/` and `.claude/pitwall.json` alone, which must land while the gate is red: the first commit of a fix for a red `main`, a reviewer's verdict. `/pitwall:kickoff` sets `core.hooksPath` before the skeleton commit, `/pitwall:continue` sets it in a new clone and lays the hook out in a project from before 0.8.0 through `layout.mjs --hook`, a commit of its own. The guard's rule `precommit` refuses `git commit --no-verify` or `-n` and a `git config` that points `core.hooksPath` elsewhere or unsets it; what it does not read is R-5, by the owner's choice of a narrow rule. pitwall itself runs `scripts/check.mjs --fast`, the steps that only read the repository or lay out scratch projects, before each of its own commits. ADR-0012 records the hook and its limits: it checks the work tree, not what is committed, and git makes some commits without it; CI catches both.
+
+**Numbers.** `scripts/check.mjs` grew from 26 to 27 steps, the new one the template's hook in a scratch project (a red gate refuses code, a green one passes, `spike/*` and docs alone pass while red, a gate's own scratch repository leaves the project's commit alone), and gained `--fast`: about 9 seconds of the full run's 200 on the owner's machine. The hooks step gained the rule's cases both ways, in bash and PowerShell. The branch adds 689 lines and removes 104 over 39 files.
+
+| Run | Turns | Minutes | Cost | Result |
+| --- | --- | --- | --- | --- |
+| hooks, plugin 5c9241b | 23 | 3.4 | $1.13 | pass: each guarded step refused by its rule, the skipped gate among them |
+| hooks, plugin d4f3b55, the rule renamed `precommit` | 23 | 3.7 | $1.15 | pass, the same |
+| bug, fake GitHub, plugin d4f3b55 | 6 | 11.0 | $11.12 | pass only through an accepted risk: the code reviewer counted the commit of `layout.mjs --hook` on the fix's branch as a blocking change to `.githooks/`, and the scripted owner accepted it as the project's R-1; one unscripted question, whether to record a lesson |
+| bug, fake GitHub, plugin 1651426 | 4 | 7.6 | $5.22 | pass: the hook laid out and installed through `continue` in a project from before 0.8.0, the fix committed through it, review approved in round one, merged after the owner's yes |
+
+**What only the work showed:**
+- Git on Windows drops the executable bit of a new file in a commit that names its paths, which is how `continue` commits; the hook goes in a commit of its own.
+- A hook runs with git's variables for the commit's own index set, so a gate whose tests make scratch repositories writes into the commit; the hook clears them first.
+- A hook that refuses every red commit also refuses the first commit of a red `main`'s own fix, which holds only docs: hence the docs-only exception, found before any project met it.
+- The reviewer's rule against changes to `.githooks/` caught pitwall's own upgrade of a project: every project laid out before 0.8.0 would have met that finding on its first branch. Only the headless stage `bug` showed it.
+
+**What the review found.** Before round one the guard's change was replayed on 38,608 command lines of the owner's transcripts and the 52 variants of T4a (L-13): five refusals, all deliberate tests. Round one found three to fix, none blocking: `layout.mjs --hook` committed through the hook it adds, the hook's test would have passed with the gate in another mode or with `.claude/pitwall.json` left out of the docs-only rule, and two consequences of ADR-0012 said the opposite of the code. Its notes became BUG-7 (kickoff replaces a global `core.hooksPath` unasked), BUG-8 (`git config --global core.hooksPath .githooks` passes) and BUG-9 (Git LFS writes its hooks into `.githooks/`), filed after the merge, and the hook's missing time limit, which the owner accepted. Round two approved with no finding.
+
+| Round | Blocking | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- |
+| 1 | none, 3 to fix | 248,678 | 61 | 16.9 |
+| 2 | none | 261,312 | 67 | 18.7 |
+
+**Next:** T4c, releases and a minimal QA.
+
 ## T4b - Bugs and lessons (2026-11-12)
 
 `/pitwall:bug` files a defect of merged work as the next BUG-n with a title, a severity and a risk class the owner confirms, and `/pitwall:lesson` records L-n with what checks it; a rule a tool could check but none does is filed as a bug. `bugs.mjs` keeps a new row, an accepted risk and a lesson in the git directory, outside the work tree, until the first commit of the next branch takes it, and lets it go once a commit holds it. A blocking bug's fix goes right after the change in flight, never interrupting it, and a bug that is not blocking waits until no epic is ready. Every fix merges after the owner's yes at any class; the class only picks the implementer. A table of `docs/BUGS.md` from before T4b gains its columns in a project's next first commit. The guard's corpus and the gate before every commit, drafted here, went to T4d and then partly to T7, after T5 (owner).

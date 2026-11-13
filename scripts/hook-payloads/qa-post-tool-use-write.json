@@ -1,0 +1,35 @@
+{
+  "claudeCode": "2.1.318",
+  "recorded": "2026-11-12",
+  "event": "post-tool-use",
+  "attended": "0",
+  "input": {
+    "session_id": "recorded-session",
+    "transcript_path": "<home>/.claude/recorded/transcript_path",
+    "cwd": "<project>",
+    "scratchpad_dir": "<home>/.claude/recorded/scratchpad_dir",
+    "prompt_id": "recorded-prompt_id",
+    "permission_mode": "auto",
+    "agent_id": "recorded-qa",
+    "agent_type": "pitwall:qa",
+    "effort": {
+      "level": "xhigh"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "<project>\\docs\\reviews\\release-v0.1.0.md",
+      "content": "hook test\n"
+    },
+    "tool_response": {
+      "type": "create",
+      "filePath": "<project>\\docs\\reviews\\release-v0.1.0.md",
+      "content": "hook test\n",
+      "structuredPatch": [],
+      "originalFile": null,
+      "userModified": false
+    },
+    "tool_use_id": "recorded-tool_use_id",
+    "duration_ms": 15
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "claudeCode": "2.1.318",
+  "recorded": "2026-11-12",
+  "event": "pre-tool-use",
+  "attended": "0",
+  "input": {
+    "session_id": "recorded-session",
+    "transcript_path": "<home>/.claude/recorded/transcript_path",
+    "cwd": "<project>",
+    "scratchpad_dir": "<home>/.claude/recorded/scratchpad_dir",
+    "prompt_id": "recorded-prompt_id",
+    "permission_mode": "auto",
+    "agent_id": "recorded-qa",
+    "agent_type": "pitwall:qa",
+    "effort": {
+      "level": "xhigh"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "SubagentHandback",
+    "tool_input": {
+      "message": "The report of the recorded agent."
+    },
+    "tool_use_id": "recorded-tool_use_id"
+  }
+}
