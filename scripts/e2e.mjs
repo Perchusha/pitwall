@@ -133,7 +133,15 @@ if (bad || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) =
 }
 if (loop) {
   const { runLoop } = await import('./e2e-loop.mjs');
-  process.exit(await runLoop({ stages: span, stateDir, maxTurns, github }));
+  // What the harness itself could not do (a push, the plan's merge, a gate that never came) ends the run with its
+  // reason in the log: a run in a process of its own has no terminal to show a stack to.
+  let code = 1;
+  try {
+    code = await runLoop({ stages: span, stateDir, maxTurns, github });
+  } catch (err) {
+    console.error(`\nE2E LOOP: FAIL - the harness stopped before a result: ${err?.stack ?? err}`);
+  }
+  process.exit(code);
 }
 const stages = span;
 // A later stage starts from a project: the seed, or what the stage before it saved.

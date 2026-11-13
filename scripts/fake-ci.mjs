@@ -65,6 +65,8 @@ try {
       const left = 30 * 60 * 1000 - (Date.now() - started);
       const r = spawnSync('bash', ['-e', '-c', step], { cwd: work, encoding: 'utf8', timeout: Math.max(left, 1000), maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CI: 'true' } });
       log += `$ ${step}\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error.message}` : ''}\n`;
+      // A step that failed says how, even when it printed nothing (a shell that could not start, a signal).
+      if (r.status !== 0) log += `(exit ${r.status ?? 'none'}${r.signal ? `, signal ${r.signal}` : ''})\n`;
       if (r.status !== 0) {
         conclusion = 'failure';
         break;
