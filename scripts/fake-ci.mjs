@@ -54,8 +54,12 @@ const started = Date.now();
 let conclusion = 'failure';
 let log = '';
 try {
-  const clone = spawnSync('git', ['clone', '-q', origin, work], { encoding: 'utf8' });
-  const checkout = clone.status === 0 ? spawnSync('git', ['-C', work, 'checkout', '-q', sha], { encoding: 'utf8' }) : clone;
+  // This process is started detached, so on Windows it has no console, and a console program it starts would
+  // open a window of its own on the owner's screen for as long as the gate runs: windowsHide gives each a
+  // console without a window, which its own children share (owner, 2026-11-13; a window closed by hand had
+  // ended a gate, and with it a loop run).
+  const clone = spawnSync('git', ['clone', '-q', origin, work], { encoding: 'utf8', windowsHide: true });
+  const checkout = clone.status === 0 ? spawnSync('git', ['-C', work, 'checkout', '-q', sha], { encoding: 'utf8', windowsHide: true }) : clone;
   if (checkout.status !== 0) log = `git: ${checkout.stderr}`;
   else {
     const ciFile = join(work, '.github', 'workflows', 'ci.yml');
@@ -63,7 +67,7 @@ try {
     conclusion = 'success';
     for (const step of steps) {
       const left = 30 * 60 * 1000 - (Date.now() - started);
-      const r = spawnSync('bash', ['-e', '-c', step], { cwd: work, encoding: 'utf8', timeout: Math.max(left, 1000), maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CI: 'true' } });
+      const r = spawnSync('bash', ['-e', '-c', step], { cwd: work, encoding: 'utf8', timeout: Math.max(left, 1000), maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CI: 'true' }, windowsHide: true });
       log += `$ ${step}\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error.message}` : ''}\n`;
       // A step that failed says how, even when it printed nothing (a shell that could not start, a signal).
       if (r.status !== 0) log += `(exit ${r.status ?? 'none'}${r.signal ? `, signal ${r.signal}` : ''})\n`;
