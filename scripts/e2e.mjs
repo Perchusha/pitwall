@@ -7,8 +7,9 @@
 // Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0, e1, bug and release
 // (scripts/e2e-loop.mjs). The planning stages run through the conductor (T5a): kickoff starts as
 // `/pitwall:continue <idea>` in an empty folder, and every later stage as a fresh session whose owner says
-// only "continue", which the template's CLAUDE.md turns into /pitwall:continue; when a stage's check passes,
-// the scripted owner is asked once more, and a conductor that did not ask whether to move on is named in the result. With no flags it runs e1 from the state e0 saved, the cheap run after a
+// only "continue", which the template's CLAUDE.md turns into /pitwall:continue; the hooks' record of the
+// session's tool calls must show that skill started and the stage's own skill file read, and when a stage's
+// check passes, the scripted owner is asked once more: a conductor that did not ask whether to move on fails the run. With no flags it runs e1 from the state e0 saved, the cheap run after a
 // change; --from e0 runs E0 and E1, the run before a PR; --from bug runs a blocking bug's fix
 // through the loop from the state e1 saved (T4b-AC4); --from release runs /pitwall:release from the
 // state bug saved (T4c-AC9); --until plan runs the planning stages from
@@ -199,7 +200,10 @@ writeFileSync(ghLog, '');
 // The commit identity comes from the environment, so a fresh run starts from a folder with
 // nothing in it, and kickoff's preflight has to set up git itself.
 const identity = { GIT_AUTHOR_NAME: 'pitwall e2e', GIT_AUTHOR_EMAIL: 'e2e@pitwall.invalid', GIT_COMMITTER_NAME: 'pitwall e2e', GIT_COMMITTER_EMAIL: 'e2e@pitwall.invalid' };
-const env = { ...process.env, ...identity, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog, GIT_CEILING_DIRECTORIES: scratch };
+// Every tool call the hooks see, so that a stage can show which skills led it (scripts/hook.mjs, PITWALL_HOOK_RECORD).
+const hookRecord = join(scratch, 'hook-record.jsonl');
+writeFileSync(hookRecord, '');
+const env = { ...process.env, ...identity, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog, GIT_CEILING_DIRECTORIES: scratch, PITWALL_HOOK_RECORD: hookRecord };
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete env[k];
 if (run('gh', ['auth', 'status'], { env }).status === 0) {
   console.error('e2e: gh is still signed in with an empty GH_CONFIG_DIR; refusing to run so nothing reaches GitHub.');
@@ -316,9 +320,22 @@ const promises = {
   },
 };
 
+// T5a: the conductor led the stage. From the stage's first tool call on (recorded), the session started the
+// continue skill by itself, on the owner's one word, and read the stage's own skill file. Kickoff is asked for by
+// its command, and the hooks see nothing before it lays the project out.
+let recordedBefore = 0;
+function conducted(stage) {
+  if (stage === 'kickoff') return [];
+  const calls = readFileSync(hookRecord, 'utf8').split('\n').slice(recordedBefore).filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.event === 'pre-tool-use' && !r.input?.agent_id);
+  const unmet = [];
+  if (!calls.some((r) => r.input?.tool_name === 'Skill' && /(^|:)continue$/.test(String(r.input?.tool_input?.skill ?? '')))) unmet.push('the session did not start the continue skill on the owner\'s "continue"');
+  if (!calls.some((r) => new RegExp(`skills/${stage}/SKILL\\.md`).test(JSON.stringify(r.input?.tool_input ?? {}).split('\\\\').join('/')))) unmet.push(`the session did not read the ${stage} skill's file`);
+  return unmet;
+}
+
 function status(stage) {
   const check = docsCheck(stage);
-  const unmet = check.status === 0 ? promises[stage]() : [];
+  const unmet = check.status === 0 ? [...promises[stage](), ...conducted(stage)] : [];
   return { done: check.status === 0 && unmet.length === 0, check: check.stdout.trim(), unmet };
 }
 
@@ -341,6 +358,7 @@ const results = [];
 const unscripted = [];
 // Stages after which the conductor asks whether to move on (T5a), and the ones where it did not.
 const ASKS_NEXT = ['kickoff', 'discovery', 'decide', 'spike'];
+const CLOSING_TURNS = 3;
 const unasked = [];
 for (const stage of stages) {
   const started = Date.now();
@@ -352,6 +370,8 @@ for (const stage of stages) {
   let prompt = stage === 'kickoff' ? `/pitwall:continue ${IDEA}` : 'continue';
   let verdict = { done: false };
   let error = '';
+  let closing = 0;
+  recordedBefore = readFileSync(hookRecord, 'utf8').split('\n').length - 1;
   console.log(`\n== ${stage}`);
   try {
     while (turns < maxTurns) {
@@ -366,13 +386,16 @@ for (const stage of stages) {
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
       if (verdict.done) {
-        // The stage's check passes: the conductor's message must end by asking whether to move on, which the
-        // scripted owner answers with NEXT. Anything else is named in the result, for a person to read.
-        if (!/^\W*NEXT\b/i.test(reply.text)) {
+        // The stage's check passes: the conductor ends the stage by asking whether to move on, which the scripted
+        // owner answers with NEXT. A stage may still have a step or two after the commit that made its check pass
+        // (a question about merges, the hand-over), so the conversation gets a few more turns to reach that question.
+        if (/^\W*NEXT\b/i.test(reply.text)) break;
+        closing += 1;
+        if (closing > CLOSING_TURNS || /^DONE.?$/i.test(reply.text)) {
           unasked.push(stage);
           console.log(`  NO QUESTION WHETHER TO MOVE ON: the owner replied "${reply.text.split('\n')[0].slice(0, 110)}" to: ${String(out.result ?? '').trim().split('\n').pop().slice(0, 160)}`);
+          break;
         }
-        break;
       }
       const read = readOwner(reply.text, history[history.length - 1].text);
       reply.text = read.text;
@@ -408,7 +431,10 @@ for (const r of results) {
   }
 }
 for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRIDDEN' : 'QUESTION'} (${u.stage}, turn ${u.turn}): ${u.question}`);
-const passed = results.length === stages.length && results.every((r) => r.pass);
+// A stage that ended without the conductor's question whether to move on fails the run (T5a): its state is saved,
+// since its documents are sound, but the path the owner walks is not the one the skill promises.
+for (const s of unasked) console.log(`FAIL ${s}: the conductor ended the stage without asking whether to move on`);
+const passed = results.length === stages.length && results.every((r) => r.pass) && unasked.length === 0;
 // A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
-console.log(`\nE2E: ${resultWord(passed, unscripted, unasked)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
+console.log(`\nE2E: ${resultWord(passed, unscripted)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

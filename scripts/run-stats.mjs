@@ -12,7 +12,8 @@
 // quotes the owner's sessions, so its output is read in the terminal and summed up in
 // docs/JOURNAL.md in other words: no transcript line enters the repository (L-13).
 //
-// A stage starts at each /pitwall:<skill> command and ends at the next one. --list prints every
+// A stage starts at each /pitwall:<skill> command and ends at the next one; where /pitwall:continue
+// conducts, each stage skill's file the main conversation reads starts that stage. --list prints every
 // question (Q<n>), every message the owner typed (M<n>) and every sub-agent (A<n>), so that a marks
 // file can say how to count them:
 //
@@ -177,6 +178,12 @@ for (const s of sessions) {
       for (const p of content ?? []) {
         if (p.type === 'text' && p.text.trim()) lastAssistantText = p.text;
         if (p.type !== 'tool_use') continue;
+        // The conductor reads the stage's own skill file: that is where the stage starts.
+        const led = p.name === 'Read' ? /skills[\\/]+([\w-]+)[\\/]+SKILL\.md$/.exec(String(p.input?.file_path ?? ''))?.[1] : null;
+        if (led && led !== stage.name) {
+          if (stage.name === 'continue' && stage.questions.length === 0 && stage.agents.length === 0 && stage.typed.length === 0) stage.name = led;
+          else open(led, o, s.id);
+        }
         if (p.name === 'AskUserQuestion') pendingAsk.set(p.id, { stage, at: t, questions: p.input?.questions ?? [] });
         if (p.name === 'Agent' || p.name === 'Task') {
           const sub = s.agents.get(p.id);

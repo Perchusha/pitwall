@@ -7,7 +7,7 @@
       "when": "one user, no money or personal data, 1 to 3 epics",
       "spike": "optional",
       "spikeRequired": false,
-      "planReview": "short checklist, no pre-mortem, three review rounds at most",
+      "planReview": "short checklist, no pre-mortem",
       "planReviewRounds": {
         "ownerDecidesAtReject": 2,
         "maxRounds": 3
@@ -166,6 +166,7 @@
       "dontAsk"
     ],
     "ownerPromptMinutes": 60,
+    "ownerPromptNote": "pitwall/owner-prompt.json",
     "handback": [
       "SubagentHandback"
     ],

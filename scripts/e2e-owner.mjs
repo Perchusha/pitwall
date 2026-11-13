@@ -33,10 +33,8 @@ export function readOwner(reply, assistant) {
   return { text: rest || 'Do as you recommend.', question: asked.replace(/\s+/g, ' ').slice(0, 400), override: mark.override };
 }
 
-// The result's word: a run that went on against a recommendation to stop is not a plain PASS (T4a-AC5), and
-// neither is a planning run whose conductor finished a stage without asking whether to move on (T5a).
-export function resultWord(passed, unscripted, unasked = []) {
+// The result's word: a run that went on against a recommendation to stop is not a plain PASS (T4a-AC5).
+export function resultWord(passed, unscripted) {
   const overridden = unscripted.filter((u) => u.override).length;
-  const notes = [overridden ? `stops overridden: ${overridden}` : '', unasked.length ? `stages ended without the question whether to move on: ${unasked.join(', ')}` : ''].filter(Boolean);
-  return !passed ? 'FAIL' : notes.length ? `PASS, ${notes.join('; ')}` : 'PASS';
+  return !passed ? 'FAIL' : overridden ? `PASS, stops overridden: ${overridden}` : 'PASS';
 }

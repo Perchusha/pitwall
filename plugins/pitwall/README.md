@@ -103,7 +103,7 @@ It also holds `.githooks/pre-commit`, the gate before every commit: kickoff sets
 
 ## Configuration
 
-`config/defaults.json` holds the process levels (with the pre-mortem length, whether a spike is required and the size of a lite plan), risk classes (the implementer, its effort and whether it may merge without the owner), call budgets (researchers per level, implementers per change), the hooks (the brief's size, the gate's time limits, the agents with limits of their own, the scripts only the owner runs, the secret patterns), review and merge protection settings, the planning branch, the epic loop (its branches, the review folder and severities, the key of the owner's choice), the discovery, decide, spike, plan and plan review settings (counts, constraints, the list of decision areas, the checklists per level), maturity criteria and registries for new dependencies, and size limits for the docs.
+`config/defaults.json` holds the process levels (with the pre-mortem length, whether a spike is required and the size of a lite plan), risk classes (the implementer, its effort and whether it may merge without the owner), call budgets (researchers per level, implementers per change), the hooks (the brief's size, the gate's time limits, the agents with limits of their own, the scripts that record a choice of the owner, the secret patterns), review and merge protection settings, the planning branch, the epic loop (its branches, the review folder and severities, the key of the owner's choice), the discovery, decide, spike, plan and plan review settings (counts, constraints, the list of decision areas, the checklists per level), maturity criteria and registries for new dependencies, and size limits for the docs.
 
 ## License
 

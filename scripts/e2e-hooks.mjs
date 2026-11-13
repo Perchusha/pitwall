@@ -149,14 +149,14 @@ for (const l of lines) {
     if (asked) asks[asked] = (asks[asked] ?? 0) + 1;
   }
 }
-const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, uncommitted: 1, precommit: 2 };
+const expected = { secrets: 2, ignored: 1, switch: 2, push: 1, review: 1, protection: 1, merge: 1, owner: 1, uncommitted: 1, precommit: 2 };
 for (const [rule, n] of Object.entries(expected)) if ((refusals[rule] ?? 0) < n) unmet.push(`expected ${n} refusal(s) by the rule ${rule}, saw ${refusals[rule] ?? 0}`);
 for (const rule of ['agent', 'budget', 'broken']) if (refusals[rule]) unmet.push(`saw ${refusals[rule]} refusal(s) by the rule ${rule}, which no step asks for`);
-// Step 17: the main conversation's merge-choice.mjs goes to the permission prompt, which nobody answers here, though
-// the session's allow list covers "node *": the call is denied, and nothing is recorded. A sub-agent's call the guard
-// refuses outright, which scripts/check.mjs holds: an implementer asked to run the script here read it and declined
-// by itself, so no refusal of the guard's came (T5a), as the qa agent did with a status of the wrong kind (T4c).
-if ((asks.owner ?? 0) < 1) unmet.push(`expected the guard to send merge-choice.mjs to the permission prompt once (rule owner), saw ${asks.owner ?? 0}`);
+// Step 17: nobody attends this session, so the guard refuses the main conversation's merge-choice.mjs outright,
+// with the hand-over, though the session's allow list covers "node *": nothing is recorded. In a session somebody
+// attends the guard answers "ask" instead, which scripts/check.mjs holds; that an allow rule and auto mode do not
+// answer a hook's "ask" was probed on Claude Code 2.1.323 (ADR-0010).
+if (asks.owner) unmet.push(`the guard sent merge-choice.mjs to a permission prompt nobody can answer here (${asks.owner} time(s))`);
 if (JSON.parse(readFileSync(settingsPath, 'utf8')).autoMerge !== false) unmet.push('.claude/pitwall.json records a choice of merges that nobody made');
 if (existsSync(join(project, '.claude', 'settings.local.json'))) unmet.push('.claude/settings.local.json was written');
 if (!stream.includes('pitwall brief, from its session hook')) unmet.push('no session brief in the stream');

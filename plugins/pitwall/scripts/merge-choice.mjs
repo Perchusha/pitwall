@@ -9,7 +9,7 @@
 // session's mode or allow rules (hooks.ownerOnly): the owner's yes at the prompt is what lets it
 // run, and pitwall never writes an allow rule for it. Under Claude Code, which sets CLAUDECODE in
 // every command it runs, the script therefore runs only when the guard has just left its note of
-// that prompt for this project and this answer (lib.mjs ownerPromptFile), and takes the note away:
+// that prompt for this project and this answer (lib.mjs ownerPromptFile, in the git directory), and takes the note away:
 // with the hooks off, or through another command line, it refuses. No sub-agent runs it. In a
 // terminal of the owner's own it runs as it always did, which is the way when nobody can answer a
 // prompt (a headless session, a mode that never asks); the session then hands the owner this
@@ -44,17 +44,17 @@ const cfg = config();
 const project = resolve(args.project ?? '.');
 if (process.env.CLAUDECODE) {
   // The guard's note of the permission prompt: this project, this answer, not long ago, and used once.
-  const noteFile = ownerPromptFile(project);
+  const noteFile = existsSync(join(project, '.claude', 'pitwall.json')) ? ownerPromptFile(project, cfg) : null;
   let note = null;
   try {
     note = JSON.parse(readFileSync(noteFile, 'utf8'));
   } catch {}
-  rmSync(noteFile, { force: true });
+  if (noteFile) rmSync(noteFile, { force: true });
   const asked = Boolean(note) && note.project === samePath(project) && Array.isArray(note.flags) && note.flags.includes(args.allow ? '--allow' : '--deny') && !note.flags.includes(args.allow ? '--deny' : '--allow');
   const age = asked ? Date.now() - Number(note.at) : NaN;
   if (!asked || !(age >= 0 && age < cfg.hooks.ownerPromptMinutes * 60000)) {
     refuse(
-      `this records a choice of the owner (pitwall ADR-0010), so inside Claude Code it runs only right after pitwall's guard sent this very command to Claude Code's permission prompt, and ${asked ? `that was more than ${cfg.hooks.ownerPromptMinutes} minutes ago` : 'it did not (the hooks are off, the command was not run alone from the project folder, or it names another answer)'}. Run it again as one command from the project folder, or in your own terminal.`,
+      `this records a choice of the owner (pitwall ADR-0010), so inside Claude Code it runs only right after pitwall's guard sent this very command to Claude Code's permission prompt, and ${asked ? `that was more than ${cfg.hooks.ownerPromptMinutes} minutes ago: the same command once more asks the owner again` : 'it did not (the hooks are off, the command names another answer or another project, or this session cannot read the guard\'s note): the owner runs it in a terminal of their own'}.`,
     );
   }
 }

@@ -899,8 +899,10 @@ export function guard(call, ctx) {
       if (agentId) return refuse('owner', `${what}: only the main conversation runs it, at the owner's permission prompt, never a sub-agent. Return the question to the main conversation.`);
       const alone = cmds.every((c, k) => k === i || ['cd', 'set-location', 'sl', 'pushd'].includes(program(c.argv[0])));
       if (!alone || code !== null || redirects.length > 0 || inputs.length > 0 || xargs) return refuse('owner', `${what}: run it alone, one command in the call (node "<plugin>/scripts/${ownerOnly}" --allow or --deny), so that Claude Code's permission prompt shows the owner exactly what runs.`);
+      // From the project root, or with --project: the prompt is for this project, and so is the guard's note of it.
+      if (!argv.includes('--project') && norm(dir, cwd, home) !== root) return refuse('owner', `${what}: run it from the project root, or with --project "<the project root>", so that the answer is recorded for this project.`);
       if ((h.noPromptModes ?? []).includes(call.permissionMode)) return refuse('owner', `${what}, and this session's permission mode (${call.permissionMode}) never asks them: hand the owner the command to run themselves in a terminal, from the project folder.`);
-      return { rule: 'owner', ask: true, reason: `${what}: allow it only if this is your own answer. pitwall asks through this prompt whatever the session's mode or allow rules are, and never adds an allow rule for it.` };
+      return { rule: 'owner', ask: true, what, reason: `${what}: allow it only if this is your own answer. pitwall asks through this prompt whatever the session's mode or allow rules are, and never adds an allow rule for it.` };
     }
 
     // AC4: review-status.mjs only from the reviewers.

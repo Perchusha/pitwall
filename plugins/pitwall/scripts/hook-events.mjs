@@ -7,6 +7,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { config, ghRunner, hookState, ownerPromptFile, parseJson, pluginRoot, pluginVersion, readGate, readReview, safeName as safe, samePath } from './lib.mjs';
@@ -107,8 +108,15 @@ function preToolUse(s) {
   // An owner's script (ADR-0010, T5a): Claude Code asks the owner at its permission prompt, and the note tells the
   // script which answer the guard sent there, for this project, and when.
   if (refusal?.ask) {
+    // Nobody attends a headless session, so nobody can answer the prompt: the model gets the way on, not words
+    // written for the owner. Outside a git repository there is nowhere to leave the note.
+    const handOver = 'hand the owner the command to run themselves in a terminal, from the project folder.';
+    if (unattended) return deny(refusal.rule, `${refusal.what}, and nobody attends this session to answer Claude Code's permission prompt: ${handOver}`);
+    const note = ownerPromptFile(s.root, cfg);
+    if (!note) return deny(refusal.rule, `${refusal.what}, and the project is no git repository yet, where the guard notes that it asked: ${handOver}`);
     const words = String(input.tool_input?.command ?? '').split(/\s+/);
-    writeFileSync(ownerPromptFile(s.root), JSON.stringify({ at: Date.now(), project: samePath(s.root), flags: words.filter((w) => /^--[a-z-]+$/.test(w)) }) + '\n');
+    mkdirSync(dirname(note), { recursive: true });
+    writeFileSync(note, JSON.stringify({ at: Date.now(), project: samePath(s.root), flags: words.filter((w) => /^--[a-z-]+$/.test(w)) }) + '\n');
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: `pitwall asks you (${refusal.rule}): ${refusal.reason}` } };
   }
   if (refusal) return deny(refusal.rule, refusal.reason);

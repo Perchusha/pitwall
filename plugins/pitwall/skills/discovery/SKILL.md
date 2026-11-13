@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 > Status: built in T1.
 
-Turns the confirmed idea into `docs/DISCOVERY.md`: who it is for and what they do with it, what already exists, what the owner will and will not accept, and which technical assumptions could sink the project. Research runs in parallel `researcher` agents; constraints come from the owner, one at a time.
+Turns the confirmed idea into `docs/DISCOVERY.md`: who it is for and what they do with it, what already exists, what the owner will and will not accept, and which technical assumptions could sink the project. Research runs in parallel `researcher` agents; constraints come from the owner: what the idea already implies as one list to confirm, the rest one at a time.
 
 Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`discovery`, `planning.branch`, `budgets.researcherToolCalls`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
 

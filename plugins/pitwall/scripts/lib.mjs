@@ -1,7 +1,6 @@
 // Helpers shared by the plugin's scripts (ADR-0004). Node only, no dependencies.
 
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -39,9 +38,16 @@ export const samePath = (dir) => {
   const p = resolve(String(dir)).split('\\').join('/').replace(/\/+$/, '');
   return process.platform === 'win32' ? p.toLowerCase() : p;
 };
-// The note the guard leaves when it sends an owner's script to Claude Code's permission prompt (ADR-0010, T5a),
-// one per project: under Claude Code the script runs only when the note is its own and fresh.
-export const ownerPromptFile = (projectRoot) => join(hookState(), `owner-prompt-${createHash('sha256').update(samePath(projectRoot)).digest('hex').slice(0, 16)}.json`);
+// The note the guard leaves when it sends an owner's script to Claude Code's permission prompt (ADR-0010, T5a):
+// under Claude Code the script runs only when the note is its own and fresh. It lies in the project's git
+// directory, beside the rows that wait there (bugs.pending), and not in a temp folder: the hook runs outside
+// Claude Code's sandbox and the script may run inside it, where the temp folder is another one (review round 1).
+// Null outside a git repository.
+export function ownerPromptFile(projectRoot, cfg = config()) {
+  const r = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' });
+  if (r.error || r.status !== 0) return null;
+  return join(resolve(projectRoot, r.stdout.trim()), ...cfg.hooks.ownerPromptNote.split('/'));
+}
 export const pluginVersion = () => readJson(join(pluginRoot, '.claude-plugin', 'plugin.json')).version;
 
 // Stops with a clear message on a Node older than the plugin needs (runtime.nodeMinMajor).

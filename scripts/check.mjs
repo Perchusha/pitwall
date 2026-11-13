@@ -186,16 +186,73 @@ step('skills', (report) => {
   for (const s of stageNames) {
     const f = join(dir, s, 'SKILL.md');
     if (!existsSync(f)) report(`skills/continue names the stage skill ${s}, which has no SKILL.md`);
-    else if (!/\/pitwall:continue/.test(readFileSync(f, 'utf8'))) report(`skills/${s}: its hand-over must name /pitwall:continue as the way to the next stage`);
+    else {
+      // The hand-over steps themselves, not the description, which names the conductor too (review round 1).
+      const handOvers = readFileSync(f, 'utf8').split('\n').filter((l) => /^\d+\. \*\*Hand over\.\*\*/.test(l));
+      if (handOvers.length === 0 || !handOvers.every((l) => /`\/pitwall:continue`/.test(l)) || handOvers.some((l) => /next stage is `\/pitwall:(?!continue)/.test(l))) report(`skills/${s}: each "Hand over" step must name /pitwall:continue as the way to the next stage, and no stage's own command`);
+    }
   }
+  // L-17: the conductor reads the stage skills as files, where Claude Code fills no placeholder, while it fills
+  // both in the conductor's own text. So the sentence that explains them must still say which they are once they
+  // are filled, and the conductor's text must not lean on a placeholder that would be gone.
+  const delivered = conductor.split('${CLAUDE_PLUGIN_ROOT}').join('/the/plugin').split('$ARGUMENTS').join('');
+  if (!/a dollar sign, then `CLAUDE_PLUGIN_ROOT` in braces/.test(delivered) || !/a dollar sign, then `ARGUMENTS`/.test(delivered)) report('skills/continue: as Claude Code delivers it, with both placeholders filled, the text no longer says which placeholders a stage skill\'s file holds (L-17)');
+  // The arguments stand once, on a line of their own that reads well filled and empty; every step then says
+  // "this skill's arguments" (review round 1 found "after `` of them", what an empty one left of a sentence).
+  const argLines = conductor.split('\n').filter((l) => l.includes('$ARGUMENTS'));
+  if (argLines.length !== 1 || !/^Arguments, .*: \$ARGUMENTS$/.test(argLines[0])) report('skills/continue: the arguments placeholder stands once, at the end of a line "Arguments, ...: ", and nowhere inside a sentence (L-17)');
   if (!/run `\/pitwall:continue`/.test(readFileSync(join(plugin, 'template', 'CLAUDE.md.tmpl'), 'utf8'))) report('the template\'s CLAUDE.md does not tell the session to run /pitwall:continue when the owner says to continue');
   // The plan review's rounds at a level never exceed the general limit, and its full rounds come before its last.
   const cfgAll = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
   for (const [level, l] of Object.entries(cfgAll.processLevels)) {
     const r = l.planReviewRounds;
     if (r && !(r.maxRounds >= 1 && r.maxRounds <= cfgAll.review.maxRounds && r.ownerDecidesAtReject >= 1 && r.ownerDecidesAtReject < r.maxRounds)) report(`config: processLevels.${level}.planReviewRounds must hold 1 <= ownerDecidesAtReject < maxRounds <= review.maxRounds`);
+    // The lightest level is the one a small idea must not drown at: its plan review is shorter than the general
+    // one, and its notes go to the implementers (T5a, owner 2026-11-13).
+    if (level === 'lite' && !(r && r.maxRounds < cfgAll.review.maxRounds && l.planReviewNotes === 'implementers')) report('config: processLevels.lite must hold planReviewRounds shorter than review.maxRounds, and planReviewNotes "implementers"');
     if (!['implementers', 'owner'].includes(l.planReviewNotes)) report(`config: processLevels.${level}.planReviewNotes must be "implementers" or "owner"`);
   }
+});
+
+// 4b. T5a-AC3: run-stats.mjs counts a run from Claude Code's transcripts: on a transcript written here, a stage
+// the conductor led, a form's question, a typed answer, an intervention and a sub-agent with its own transcript.
+step('run stats', (report) => {
+  scratch('pitwall-stats-', (dir) => {
+    const stats = (args) => spawnSync(process.execPath, [join(root, 'scripts', 'run-stats.mjs'), ...args], { encoding: 'utf8' });
+    let r = stats(['--transcripts', join(dir, 'none')]);
+    if (r.status !== 0 || !/nothing to count/.test(r.stdout)) report(`run-stats without transcripts must say so and exit 0: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    const at = (m) => `2026-01-01T10:${String(m).padStart(2, '0')}:00.000Z`;
+    const user = (m, content) => ({ type: 'user', timestamp: at(m), message: { role: 'user', content } });
+    const asst = (m, id, content, out = 10) => ({ type: 'assistant', timestamp: at(m), message: { id, role: 'assistant', content, usage: { input_tokens: 5, output_tokens: out, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } } });
+    const lines = [
+      user(0, '<command-message>pitwall:continue</command-message>\n<command-name>/pitwall:continue</command-name>'),
+      asst(1, 'm1', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'C:\\plugin\\skills\\discovery\\SKILL.md' } }]),
+      asst(2, 'm2', [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ question: 'Which licence?', header: 'Licence', options: [{ label: 'MIT' }, { label: 'Apache-2.0' }] }] } }]),
+      user(4, [{ type: 'tool_result', tool_use_id: 'q1', content: 'Your questions have been answered: "Which licence?"="MIT".' }]),
+      asst(5, 'm3', [{ type: 'tool_use', id: 'a1', name: 'Agent', input: { subagent_type: 'pitwall:researcher', description: 'Research analogues' } }]),
+      asst(6, 'm4', [{ type: 'text', text: 'The table is ready.\n\nDo you accept it?' }]),
+      user(7, 'yes'),
+      asst(8, 'm5', [{ type: 'text', text: 'Discovery is committed.' }]),
+      user(9, 'why was that so slow'),
+    ];
+    const t = join(dir, 'transcripts');
+    mkdirSync(join(t, 'session-1', 'subagents'), { recursive: true });
+    writeFileSync(join(t, 'session-1.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    writeFileSync(join(t, 'session-1', 'subagents', 'agent-x.jsonl'), [asst(5, 's1', [{ type: 'tool_use', id: 'w1', name: 'WebSearch', input: {} }], 40), asst(6, 's2', [{ type: 'text', text: 'done' }], 60)].map((l) => JSON.stringify(l)).join('\n') + '\n');
+    writeFileSync(join(t, 'session-1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ agentType: 'pitwall:researcher', toolUseId: 'a1' }));
+    r = stats(['--transcripts', t, '--list']);
+    const row = r.stdout.split('\n').find((l) => l.startsWith('| discovery |'))?.split('|').map((c) => c.trim()) ?? [];
+    // Stage, minutes, waiting, questions, unnecessary, refused, answers, interventions, main calls, main tokens, sub-agents, their calls, their tokens.
+    const got = [row[4], row[5], row[7], row[8], row[9], row[11], row[12], row[13]].join(' / ');
+    if (r.status !== 0 || got !== '1 / 0 / 1 / 1 / 3 / 1 (1 researcher) / 1 / 100 / 210') report(`run-stats on a transcript the conductor led: the discovery row holds ${got}\n${r.stdout}${r.stderr}`);
+    if (/^\| continue \|/m.test(r.stdout)) report('run-stats must name a stage the conductor led by the stage skill it read, not "continue"');
+    if (!/^Q1 \[discovery\] 2 options, waited 2\.0 min/m.test(r.stdout) || !/^M1 \[discovery\] answer/m.test(r.stdout) || !/^M2 \[discovery\] intervention/m.test(r.stdout)) report(`run-stats --list must name the question, the answer and the intervention:\n${r.stdout}`);
+    writeFileSync(join(dir, 'marks.json'), JSON.stringify({ unnecessary: ['Q1'], answers: ['M2'] }));
+    r = stats(['--transcripts', t, '--marks', join(dir, 'marks.json')]);
+    const marked = r.stdout.split('\n').find((l) => l.startsWith('| discovery |'))?.split('|').map((c) => c.trim()) ?? [];
+    if ([marked[5], marked[7], marked[8]].join(' / ') !== '1 / 2 / 0') report(`run-stats --marks must count the marked question as unnecessary and the marked message as an answer: ${[marked[5], marked[7], marked[8]].join(' / ')}`);
+    if (stats(['--transcripts', t, '--bogus']).status !== 2) report('run-stats with an unknown flag must be a usage error');
+  });
 });
 
 // 5. Agents: named after their file, described, and an unbuilt agent says so in its description.
@@ -3462,53 +3519,73 @@ slowStep('hooks (recorded payloads)', (report) => {
     bash(releaseStatus, 'deny:review');
 
     // T3b-AC6, T5a: merge-choice.mjs records the owner's choice. The main conversation runs it only through Claude
-    // Code's permission prompt: the guard answers "ask" for the script alone in its call, refuses it in a line with
-    // anything else, in a session whose mode never asks, and to every sub-agent.
+    // Code's permission prompt: the guard answers "ask" for the script alone in its call, from the project root, in a
+    // session somebody attends or may attend. It refuses it in a line with anything else, from another folder, in a
+    // session nobody attends or whose mode never asks, and to every sub-agent.
     const choice = `node "${P}/scripts/merge-choice.mjs" --allow`;
-    bash(choice, 'ask:owner');
-    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'ask:owner');
-    bash(`cd "${fwd(project)}" && ${choice}`, 'ask:owner');
-    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'ask:owner');
-    bash(`${choice} 2>&1`, 'ask:owner');
-    expect('main-pre-tool-use-bash', 'PowerShell: merge-choice.mjs alone', { tool: 'PowerShell', input: { tool_input: { command: choice } } }, 'ask:owner');
-    bash(`${choice} && git status`, 'deny:owner');
-    bash(`git status; ${choice}`, 'deny:owner');
-    bash(`${choice} > choice.log`, 'deny:owner');
-    bash(`echo --allow | xargs node "${P}/scripts/merge-choice.mjs"`, 'deny:owner');
-    for (const mode of cfg.hooks.noPromptModes) expect('main-pre-tool-use-bash', `merge-choice.mjs in the mode ${mode}`, { input: { permission_mode: mode, tool_input: { command: choice } } }, 'deny:owner');
+    const attended = { env: { CLAUDE_CODE_SESSION_ATTENDED: '1' } };
+    bash(choice, 'ask:owner', attended);
+    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'ask:owner', attended);
+    bash(`cd "${fwd(project)}" && ${choice}`, 'ask:owner', attended);
+    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'ask:owner', attended);
+    bash(`${choice} 2>&1`, 'ask:owner', attended);
+    bash(choice, 'ask:owner', { env: { CLAUDE_CODE_SESSION_ATTENDED: undefined } });
+    expect('main-pre-tool-use-bash', 'PowerShell: merge-choice.mjs alone', { tool: 'PowerShell', input: { tool_input: { command: choice } }, ...attended }, 'ask:owner');
+    bash(`${choice} && git status`, 'deny:owner', attended);
+    bash(`git status; ${choice}`, 'deny:owner', attended);
+    bash(`${choice} > choice.log`, 'deny:owner', attended);
+    bash(`echo --allow | xargs node "${P}/scripts/merge-choice.mjs"`, 'deny:owner', attended);
+    bash(`cd docs && ${choice}`, 'deny:owner', attended);
+    bash(`cd docs && ${choice} --project "${fwd(project)}"`, 'ask:owner', attended);
+    for (const mode of cfg.hooks.noPromptModes) expect('main-pre-tool-use-bash', `merge-choice.mjs in the mode ${mode}`, { input: { permission_mode: mode, tool_input: { command: choice } }, ...attended }, 'deny:owner');
     if (cfg.hooks.noPromptModes.length < 2) report('hooks.noPromptModes must name the modes that never prompt (bypassPermissions, dontAsk)');
     {
-      // The note the guard leaves at the prompt is what lets the script run under Claude Code: once, for the answer
-      // the prompt showed, for this project, and not long after.
+      // Nobody attends a headless session: no prompt can be answered, so the call is refused with the way on, and no note is left.
+      const r = bash(choice, 'deny:owner');
+      if (!/nobody attends this session.*hand the owner the command/.test(r.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`merge-choice.mjs in a session nobody attends must be refused with the hand-over: ${JSON.stringify(r.out)}`);
+      // The prompts above left their note in the shared project: nothing ran on it, and nothing may later.
+      rmSync(join(project, '.git', ...cfg.hooks.ownerPromptNote.split('/')), { force: true });
+      // Outside a git repository there is nowhere for the note.
+      const bare = join(dir, 'no-git');
+      if (layOut(bare).status !== 0) throw new Error('layout failed');
+      expect('main-pre-tool-use-bash', 'merge-choice.mjs in a project that is no git repository', { projectDir: bare, input: { tool_input: { command: choice } }, ...attended }, 'deny:owner');
+    }
+    {
+      // The note the guard leaves at the prompt, in the project's git directory, is what lets the script run under
+      // Claude Code: once, for the answer the prompt showed, for this project, and not long after.
       const cp = makeProject('choice');
-      const ccEnv = { ...process.env, CLAUDECODE: '1', PITWALL_HOOK_STATE: state, HOME: home, USERPROFILE: home };
+      const ccEnv = { ...process.env, CLAUDECODE: '1', HOME: home, USERPROFILE: home };
       const runChoice = (flag, p = cp) => spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), flag, '--project', p], { encoding: 'utf8', env: ccEnv });
       const choiceIs = () => JSON.parse(readFileSync(join(cp, '.claude', 'pitwall.json'), 'utf8')).autoMerge;
-      const notes = () => readdirSync(state).filter((f) => f.startsWith('owner-prompt-'));
-      const ask = (flag) => expect('main-pre-tool-use-bash', `merge-choice.mjs ${flag} in the choice project`, { projectDir: cp, input: { tool_input: { command: `node "${P}/scripts/merge-choice.mjs" ${flag}` } } }, 'ask:owner');
-      for (const f of notes()) rmSync(join(state, f));
+      const noteFile = join(cp, '.git', ...cfg.hooks.ownerPromptNote.split('/'));
+      const noted = () => existsSync(noteFile);
+      const ask = (flag) => expect('main-pre-tool-use-bash', `merge-choice.mjs ${flag} in the choice project`, { projectDir: cp, input: { tool_input: { command: `node "${P}/scripts/merge-choice.mjs" ${flag}` } }, ...attended }, 'ask:owner');
       let c = runChoice('--allow');
       if (c.status !== 1 || !/and it did not/.test(c.stdout) || choiceIs() !== false) report(`merge-choice under Claude Code without the guard's prompt must refuse: exit ${c.status}\n${c.stdout}`);
       ask('--deny');
-      if (notes().length !== 1) report(`the guard's "ask" must leave one note of the prompt, found ${notes().length}`);
+      if (!noted()) report(`the guard's "ask" must leave its note of the prompt in the git directory, ${noteFile}`);
+      else if (!readdirSync(state).every((f) => !f.startsWith('owner-prompt'))) report('the guard\'s note must not lie in the hooks\' state folder, which a sandboxed command does not share');
       c = runChoice('--allow');
-      if (c.status !== 1 || choiceIs() !== false || notes().length !== 0) report(`merge-choice --allow after a prompt for --deny must refuse and use the note up: exit ${c.status}, ${notes().length} notes\n${c.stdout}`);
+      if (c.status !== 1 || choiceIs() !== false || noted()) report(`merge-choice --allow after a prompt for --deny must refuse and use the note up: exit ${c.status}\n${c.stdout}`);
       ask('--allow');
-      const noteFile = join(state, notes()[0]);
-      const old = JSON.parse(readFileSync(noteFile, 'utf8'));
-      writeFileSync(noteFile, JSON.stringify({ ...old, at: old.at - (cfg.hooks.ownerPromptMinutes + 1) * 60000 }));
+      if (noted()) {
+        const old = JSON.parse(readFileSync(noteFile, 'utf8'));
+        writeFileSync(noteFile, JSON.stringify({ ...old, at: old.at - (cfg.hooks.ownerPromptMinutes + 1) * 60000 }));
+      }
       c = runChoice('--allow');
-      if (c.status !== 1 || !/minutes ago/.test(c.stdout) || choiceIs() !== false) report(`merge-choice after a prompt older than hooks.ownerPromptMinutes must refuse: exit ${c.status}\n${c.stdout}`);
+      if (c.status !== 1 || !/minutes ago: the same command once more asks the owner again/.test(c.stdout) || choiceIs() !== false) report(`merge-choice after a prompt older than hooks.ownerPromptMinutes must refuse: exit ${c.status}\n${c.stdout}`);
       ask('--allow');
-      c = runChoice('--allow', project);
-      if (c.status !== 1 || !/and it did not/.test(c.stdout)) report(`merge-choice for another project than the one the prompt was for must refuse: exit ${c.status}\n${c.stdout}`);
+      const other = makeProject('choice-other');
+      c = runChoice('--allow', other);
+      if (c.status !== 1 || !/and it did not/.test(c.stdout) || !noted() || JSON.parse(readFileSync(join(other, '.claude', 'pitwall.json'), 'utf8')).autoMerge !== false) report(`merge-choice for another project than the one the prompt was for must refuse, and leave the note: exit ${c.status}\n${c.stdout}`);
       c = runChoice('--allow');
-      if (c.status !== 0 || choiceIs() !== true || notes().length !== 0) report(`merge-choice --allow right after the guard's prompt for it must record the yes and use the note up: exit ${c.status}, autoMerge ${choiceIs()}\n${c.stdout}${c.stderr}`);
+      if (c.status !== 0 || choiceIs() !== true || noted()) report(`merge-choice --allow right after the guard's prompt for it must record the yes and use the note up: exit ${c.status}, autoMerge ${choiceIs()}\n${c.stdout}${c.stderr}`);
       c = runChoice('--deny');
       if (c.status !== 1 || choiceIs() !== true) report(`merge-choice a second time on one prompt must refuse: exit ${c.status}\n${c.stdout}`);
       ask('--deny');
       c = runChoice('--deny');
       if (c.status !== 0 || choiceIs() !== false) report(`merge-choice --deny right after the guard's prompt for it must record the no: exit ${c.status}\n${c.stdout}${c.stderr}`);
+      if (gitIn(cp, 'status', '--porcelain').stdout.split('\n').some((l) => l.includes('owner-prompt'))) report('the guard\'s note shows in git status: it belongs in the git directory');
     }
     bash(`node -e "import('${P}/scripts/merge-choice.mjs')"`, 'deny:switch');
     bash(`cat "${P}/scripts/merge-choice.mjs"`, 'allow');

@@ -17,14 +17,14 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 
 - Run each command in the steps as written, from the project root, one command per call.
 - One question per message, then wait for the answer. Use the question tool when it is there, plain text otherwise. Never answer for the owner.
-- The question tool takes two to four options that really differ, and refuses a question with one: a single proposal to confirm is asked in plain text. What you only inferred from the idea or an earlier answer is not a question each: such facts go to the owner as one numbered list, to confirm as a whole or correct by number.
+- The question tool refuses a question with a single option: a proposal to confirm is asked in plain text, and options are offered only where they really differ. What you only inferred from the idea or an earlier answer is not a question each: such facts go to the owner as one numbered list, to confirm as a whole or correct by number.
 - Never overwrite a file, never delete one, and never adopt an existing project: that is a later pitwall epic. Say so and stop.
 - The skeleton commit is the only commit that goes to `main` directly. Every change to GitHub settings goes through `protect.mjs`.
 - When a script hands a step over, show its HANDOFF lines to the owner verbatim. Never retry a refused write another way.
 
 ## Steps
 
-1. **Preflight**, before any question. The working folder becomes the project root.
+1. **Preflight**, before any question. The working folder becomes the project root. When `.claude/pitwall.json` is already there, an earlier run of this skill laid the project out and stopped before its end: do not run the layout check, which refuses a folder that holds files, and do not lay out again. Resume at the first step whose result is missing: step 5 when `docs/IDEA.md` is not filled in, asking the owner again what its sections need and neither `CLAUDE.md` nor `.claude/pitwall.json` holds; step 8 when `main` has no commit; then the remote, the protection mode, the question about merges and the planning branch, each only when it is not done.
    - Run `node --version`. If it fails or the major version is below `runtime.nodeMinMajor`, stop: the owner installs the Node LTS release from https://nodejs.org and runs kickoff again.
    - Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --check`. It looks at the folder, git and the repository the folder is in, and writes nothing. Exit 1 (a folder with files in it, a repository with commits, no git): show its message to the owner and stop; kickoff starts new projects only. Exit 0: run the command on its `NEXT:` line as written, and pass any `NOTE:` line on to the owner.
 2. **The idea.** Start from the arguments, `$ARGUMENTS`; when they are empty, the first question asks for the idea in one line. Then ask `kickoff.questions` (min to max) questions, one per message, each built on the answers so far, and skip any the idea already answers:

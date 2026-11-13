@@ -35,7 +35,7 @@ A task is done when all of these hold:
 
 ## How to work
 
-- When the owner says to continue, to go on or asks what is next, in any language, and names no other task, run `/pitwall:continue`: it finds the stage the project has reached and takes the next step.
+- When the owner says to continue, to go on or asks what is next, in any language, names no other task, and no other task is under way in the conversation, run `/pitwall:continue`: it finds the stage the project has reached and takes the next step. A "continue" that answers a question just asked is that answer.
 - Read `docs/LESSONS.md` before writing code.
 - One epic, one branch `epic/E<n>-<slug>`, one PR; a bug fix goes on `fix/BUG-<n>`. Never push to `main`. Until the plan is merged, stages 1 to 5 commit on `{{PLANNING_BRANCH}}`.
 - A decision that belongs to the owner is asked one question at a time, with the options compared. What was only inferred from their words or the docs goes to them as one list to confirm, not as a question each.
