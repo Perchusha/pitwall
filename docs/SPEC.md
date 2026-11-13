@@ -11,7 +11,7 @@ pitwall takes an idea to a release through stages that each end with a check. Ag
 
 ## 2. The pipeline
 
-Stages 0 to 5 run once and produce an approved plan. Stage 6 repeats for every epic until the plan is done.
+Stages 0 to 5 run once and produce an approved plan. Stage 6 repeats for every epic until the plan is done. One skill, `continue`, conducts the whole path: it finds the stage the project has reached, runs that stage's own skill, and asks the owner before it moves on to the next stage, so the owner only ever says "continue" (T5a).
 
 | Stage | Skill or agent | Output | Check |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ Stages 0 to 5 run once and produce an approved plan. Stage 6 repeats for every e
 
 | Level | When | Required | Lighter |
 | --- | --- | --- | --- |
-| lite | One user, no money or personal data, 1 to 3 epics | Discovery, 3 to 5 decisions, plan, epic loop with review | Spike optional, a short plan review with no pre-mortem, a local build instead of staging and production |
+| lite | One user, no money or personal data, 1 to 3 epics | Discovery, 3 to 5 decisions, plan, epic loop with review | Spike optional, a short plan review with no pre-mortem and three rounds at most, whose notes go to the implementers without a question to the owner, a local build instead of staging and production |
 | standard | Users, a database, auth, a deployment | Every stage, a pre-mortem with 5 reasons, staging, QA after every merge, a production smoke check | Spike only for an unproven assumption |
 | full | Several services, realtime, payments, AI pipelines, a high cost of error | Every stage, a spike and a pre-mortem with 10 reasons, staging, QA, a production smoke check | Nothing |
 
@@ -35,7 +35,7 @@ At every level, a high-risk PR waits for the owner (section 6). The level can go
 
 ## 4. Decisions
 
-One-way decisions (database, data model, monorepo, monolith or services, auth, hosting with lock-in) are asked one at a time, with 2 to 4 options compared on pros, cons, maturity, cost and lock-in, the agent's recommendation and the cost of revisiting. Two-way decisions (linter, formatter, test layout, small libraries) are picked by the agent with a one-line reason and accepted by the owner as a list. A two-way decision the agent doubts becomes one-way.
+One-way decisions (database, data model, monorepo, monolith or services, auth, hosting with lock-in) are asked one at a time, with 2 to 4 options compared on pros, cons, maturity, cost and lock-in, the agent's recommendation and the cost of revisiting. Two-way decisions (linter, formatter, test layout, small libraries) are picked by the agent with a one-line reason and accepted by the owner as a list. A two-way decision the agent doubts becomes one-way. What the agent only inferred from the owner's words or the docs is not a question each: it goes to the owner as one list to confirm or correct (T5a).
 
 "New but proven" means a stable release, active maintenance, a migration path and compatibility with the rest of the stack. Versions, models, prices and limits are checked against live sources at decision time and kept in one config.
 
@@ -80,9 +80,9 @@ Sub-agents never ask the owner; they return NEEDS_OWNER and the main conversatio
 
 - **The plugin** holds the process: skills, agents, hooks, scripts and defaults. Improving the process ships as a new plugin version to every project.
 - **The template** (`plugins/pitwall/template/`) is copied into a new project by `kickoff` (ADR-0001). It holds no code; E0 adds the code and the real `scripts/gate` once the stack is chosen.
-- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/reviews/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json`, `.githooks/pre-commit`, `scripts/gate --fast|--changed|--full`, `scripts/build <version>` and `CHANGELOG.md` (ADR-0013), plus the `##` headings of the template's documents (ADR-0006, ADR-0011). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, the owner's choice of ADR-0010, which only the owner records, through `merge-choice.mjs` in a terminal.
+- **The contract between them** is a set of paths: `docs/EPICS.md`, `docs/epics/`, `docs/adr/`, `docs/reviews/`, `docs/LESSONS.md`, `docs/BUGS.md`, `.claude/pitwall.json`, `.githooks/pre-commit`, `scripts/gate --fast|--changed|--full`, `scripts/build <version>` and `CHANGELOG.md` (ADR-0013), plus the `##` headings of the template's documents (ADR-0006, ADR-0011). Changing any of it is a major version with a migration note. `.claude/pitwall.json` holds the process level, the merge protection mode, `templateVersion`, the plugin version the project was laid out from, and `autoMerge`, the owner's choice of ADR-0010, which only the owner records: `merge-choice.mjs` runs through Claude Code's permission prompt, where their yes records it, or in a terminal of their own.
 - **Plugin scripts** run on Node.js (ADR-0004): the layout, the docs check, merge protection, the review status, the merge, the release, the owner's choice of merges without them and the hooks. A project's stack needs no Node.
-- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status, the reviewers' limits, the owner's own script, git commands that would throw away uncommitted work (L-12), a commit that skips the gate before every commit and a change of `core.hooksPath` (ADR-0012), and their own switch, call budgets, and the gate after edits and before stopping on epic, fix and release branches (T3a, T3b, T4c). On the owner's yes to merges without them, the session-start hook keeps the two narrow allow rules of ADR-0010 in `.claude/settings.local.json` in step with the plugin's path. A guard that cannot run refuses.
+- **Hooks** act only in a pitwall project: a brief at session start, guards on secrets, ignored files, pushes to `main`, merge protection, the review status, the reviewers' limits, the owner's own script, which every session reaches only through Claude Code's permission prompt (ADR-0010), git commands that would throw away uncommitted work (L-12), a commit that skips the gate before every commit and a change of `core.hooksPath` (ADR-0012), and their own switch, call budgets, and the gate after edits and before stopping on epic, fix and release branches (T3a, T3b, T4c). On the owner's yes to merges without them, the session-start hook keeps the two narrow allow rules of ADR-0010 in `.claude/settings.local.json` in step with the plugin's path. A guard that cannot run refuses.
 - **MCP** is for data outside the repository: library docs for the stack, GitHub, a browser for QA, hosting and databases. Project state stays in files, and the process stays in skills.
 - **Merge protection** follows repository visibility (ADR-0002): branch protection with the required checks `gate` and `ai-review`, admins included (ADR-0005), wherever GitHub offers it, and a local hook that refuses the merge on private repositories on GitHub Free.
 - **Planning** happens on one branch: the skeleton is the only direct commit on `main`, stages 1 to 5 commit on `plan/initial`, and the plan reaches `main` in one PR after stage 5, merged with a merge commit once the owner says yes (ADR-0008). Spike code stays on `spike/<topic>`.
@@ -96,6 +96,6 @@ The template is tested like a product: two systems walk the whole path, and the 
 | lite | A desktop move-reminder app for one user, built from scratch | That a small idea does not drown in process |
 | full | Last Ones Down, an existing game project pitwall adopts (T6), with its own path to Steam | Adoption without a second plan, spike, pre-mortem, many high-risk epics, modules |
 
-The standard level is not validated before 1.0: the first real standard project after 1.0 checks it (owner, 2026-11-12).
+The lite run ended at its first merged epic, on the data of one session (T5a; owner, 2026-11-13), and the path of a release is checked by a headless run. The full run comes after 1.0, which ships after T5a, T6 and T7 (owner, 2026-11-13). The standard level is not validated before 1.0: the first real standard project after 1.0 checks it (owner, 2026-11-12).
 
 Measured per system: questions to the owner and how many were unnecessary; interventions outside the questions; calls, tokens and money per epic; blocking review findings and how many repeated a lesson; bugs found by QA after merge and bugs that reached production; what had to change in the plugin, each change released as a version before the next system.

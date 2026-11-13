@@ -1,7 +1,7 @@
 # T6 - Adopt an existing project
 
 Goal: pitwall starts in a repository that already has code or docs: it lays out only what is missing, keeps what is there and starts at the stage the project has actually reached.
-Depends on: T1
+Depends on: T5a
 Risk class: normal
 
 ## Acceptance criteria (draft, refined when T6 starts)

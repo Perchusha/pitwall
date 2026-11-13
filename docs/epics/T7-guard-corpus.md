@@ -1,7 +1,7 @@
 # T7 - The guard's corpus
 
 Goal: every change of a guard that reads commands is checked against its corpus before a reviewer sees it (L-13), and the gaps of the guard found in T4a are fixed that way.
-Depends on: T5b
+Depends on: T6
 Risk class: high (the guard refuses tools in every pitwall project: a false refusal stops ordinary work, L-9)
 ADR: ADR-0006
 
@@ -11,6 +11,8 @@ ADR: ADR-0006
 - [ ] T7-AC2: The 52 variants that T4a's verifying round wrote, kept by the owner outside the repository, become cases in `scripts/check.mjs` with their verdicts at T4a's merge, once a check has shown that none of them is a copy of a transcript line (owner, 2026-11-10).
 
 ## Decisions
+
+One-way (2026-11-13): T7 comes right after T6 and before 1.0, with the guard's bugs BUG-1 to BUG-10 that are the guard's own (owner); T5b no longer stands before it.
 
 One-way (2026-11-11): moved here from T4d, after T5 (owner). pitwall's own pre-commit hook, drafted here as `T7-AC3`, went back to T4d as T4d-AC4 on 2026-11-12: it is cheap (owner). The bugs of the guard are fixed right after this epic, each change of the guard checked by the script of AC1: BUG-1 (`git rm -f`) first, then BUG-2 (`git worktree remove --force`), BUG-3 (`git reset --merge`), BUG-4 (the PowerShell single-word assignment), BUG-6 (`node -e` reading the plugin's config), BUG-8 (`git config --global core.hooksPath .githooks`) (owner, 2026-11-12) and BUG-10 (a narrow rule on `git tag -a`, a push of a tag and `gh release create`, R-6) (owner, 2026-11-12).
 

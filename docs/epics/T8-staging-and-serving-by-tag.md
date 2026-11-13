@@ -1,7 +1,7 @@
 # T8 - Staging and pitwall served by tag
 
 Goal: a project with a staging environment of its type gets one, QA can pass through a browser, and pitwall reaches its users by tag, not by a merge into `main`.
-Depends on: T5b
+Depends on: T7
 Risk class: high (deploys to staging, and the way pitwall reaches its users)
 ADR: ADR-0010
 
@@ -12,6 +12,8 @@ ADR: ADR-0010
 - [ ] T8-AC3: The qa agent adds an exploratory pass in a browser to the tests of the closed epics' criteria.
 
 ## Decisions
+
+One-way (2026-11-13): T8 comes after 1.0, which ships after T5a, T6 and T7 (owner).
 
 One-way (2026-11-12): moved here from T4c, after T5 (owner): T5 holds no web application, and Last Ones Down reaches Steam its own way.
 
