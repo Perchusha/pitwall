@@ -3889,6 +3889,17 @@ slowStep('hooks (recorded payloads)', (report) => {
       if (!/kickoff is not finished \(the branch plan\/initial is not there yet\)/.test(stage())) report(`the brief of a kickoff that stopped before its planning branch must name kickoff as not finished: ${stage()}`);
       gitIn(stopped, 'switch', '-qc', 'plan/initial');
       if (!/the next stage is discovery/.test(stage())) report(`the brief after kickoff's last step must name discovery: ${stage()}`);
+      // Review round 3: a new clone in the middle of the planning has main checked out and the planning branch
+      // only as origin's. Kickoff is over there too: naming it would cut a second planning branch from main.
+      const planOrigin = join(dir, 'stopped-origin.git');
+      gitIn(dir, 'init', '-q', '--bare', '-b', 'main', planOrigin);
+      gitIn(stopped, 'remote', 'add', 'origin', planOrigin);
+      gitIn(stopped, 'push', '-q', 'origin', 'main', 'plan/initial');
+      const cloned = join(dir, 'stopped-clone');
+      gitIn(dir, 'clone', '-q', planOrigin, cloned);
+      const inClone = /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: cloned }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
+      if (gitIn(cloned, 'branch', '--show-current').stdout.trim() !== 'main' || gitIn(cloned, 'rev-parse', '--verify', '-q', 'refs/heads/plan/initial').status === 0) report('the clone of this case must stand on main, without a local planning branch');
+      if (/kickoff is not finished/.test(inClone) || !/the next stage is discovery/.test(inClone)) report(`the brief of a new clone whose origin holds the planning branch must name discovery, not kickoff: ${inClone}`);
     }
     // While the plan is made, the brief gives the stage, not E0.
     // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.

@@ -286,7 +286,9 @@ function planningStage(root, cfg, branch) {
     // settings and the planning branch exists. Until then the way on is still kickoff, which resumes.
     if (stage === 'kickoff') {
       const committed = git(['cat-file', '-e', 'HEAD:.claude/pitwall.json'], root).ok;
-      const branched = git(['rev-parse', '--verify', '-q', `refs/heads/${plan}`], root).ok;
+      // The planning branch is there when this clone has it or origin does: a new clone of a project in the
+      // middle of its planning holds it only as origin's (review round 3).
+      const branched = [`refs/heads/${plan}`, `refs/remotes/origin/${plan}`].some((ref) => git(['rev-parse', '--verify', '-q', ref], root).ok);
       if (!committed || !branched) return `planning on ${plan}; kickoff is not finished (${!committed ? 'no commit holds the skeleton yet' : `the branch ${plan} is not there yet`}): /pitwall:continue goes on with it, by the kickoff skill, which resumes.`;
     }
   }

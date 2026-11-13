@@ -402,6 +402,12 @@ for (const stage of stages) {
       cost += out.total_cost_usd ?? 0;
       history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
       console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
+      // The owner's one word must start the conductor in the session's first turn: a stage that began without it is
+      // not paid for to its end (review round 3).
+      if (turns === 1 && conducted(stage).some((u) => /continue skill/.test(u))) {
+        error = 'the session did not start the continue skill on the owner\'s "continue"';
+        break;
+      }
       verdict = status(stage);
       if (verdict.off) {
         error = 'the stage\'s documents and git state pass, but the conductor did not lead it';
@@ -453,7 +459,8 @@ for (const stage of stages) {
   if (verdict.done && !asked && !unasked.includes(stage)) unasked.push(stage);
   const minutes = (Date.now() - started) / 60000;
   if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question), overridden: unscripted.filter((u) => u.stage === stage && u.override).map((u) => u.question) });
-  results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
+  // An error in a closing turn is kept for the results, beside the missing question it caused.
+  results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done && !unasked.includes(stage) ? '' : error, check: verdict.check, unmet: verdict.unmet });
   // A stage that failed, or that ended without the conductor's question, ends the run: the later stages would only spend.
   if (!verdict.done || unasked.includes(stage)) break;
 }
@@ -470,7 +477,7 @@ for (const r of results) {
 for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRIDDEN' : 'QUESTION'} (${u.stage}, turn ${u.turn}): ${u.question}`);
 // A stage that ended without the conductor's question whether to move on fails the run (T5a): its state is saved,
 // since its documents are sound, but the path the owner walks is not the one the skill promises.
-for (const s of unasked) console.log(`FAIL ${s}: the conductor ended the stage without asking whether to move on`);
+for (const s of unasked) console.log(`FAIL ${s}: the conductor ended the stage without asking whether to move on${results.find((r) => r.stage === s)?.error ? ` (${results.find((r) => r.stage === s).error})` : ''}`);
 const passed = results.length === stages.length && results.every((r) => r.pass) && unasked.length === 0;
 if (results.length < stages.length) console.log(`not run: ${stages.slice(results.length).join(', ')}`);
 // A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
