@@ -29,10 +29,12 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`release`, `bug
 
 ## Steps
 
+Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
+
 1. **Preflight.** Read `.claude/pitwall.json`; without it, stop: `/pitwall:kickoff` first. With a remote, `git fetch --prune origin`, which also drops branches deleted on GitHub. Run `git status --porcelain`: a changed `.claude/pitwall.json` is the owner's answer and goes into the release's commit (step 3); anything else the owner commits or drops first. Run `git branch --list "release/*"`:
    - a release branch whose last commit is not the second parent of a merge commit on `main` is the release in flight: `git switch <it>` and go to the step it stands at (its PR, its QA, its merge), as `gh pr view <branch> --json number,state,statusCheckRollup` shows;
    - otherwise `git switch main`, and with a remote `git pull --ff-only origin main`.
-2. **Plan.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/release.mjs" --plan`, with `--version <x.y.z>` when `$ARGUMENTS` names one, the owner's word for a major.
+2. **Plan.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/release.mjs" --plan`, with `--version <x.y.z>` when this skill's arguments (the line under "Steps") name one, the owner's word for a major.
    - Exit 4: the first release of this project. Show the owner the changes it lists and ask one question: is its version 0.1.0 or 1.0.0 (`release.firstVersions`)? Run it again with their answer as `--version`.
    - Exit 1: show why, and stop. A change of the loop in flight, or left behind (an `epic/*` or `fix/*` branch with commits `main` does not hold): the release records what is merged as that change's next branch would, so it waits until `/pitwall:continue` has merged that change, or the owner deleted an abandoned one; show the owner its HANDOFF verbatim, which names each branch and the commands that delete it, and never run them yourself. A project with no `scripts/build`: it comes through a change of the loop, since `main` is protected. A blocking bug open: its fix goes first, through `/pitwall:continue`, and an unconfirmed one waits for the owner to confirm it (`/pitwall:owner-calls`). A release merged and not tagged: run `node "${CLAUDE_PLUGIN_ROOT}/scripts/release.mjs" --tag` and show its HANDOFF verbatim. Nothing to release: say so.
    - Exit 0: tell the owner in a few lines the version, the changes it holds, and each commit it names as left out (a commit on `main` that is no merge of the loop never reaches the changelog).

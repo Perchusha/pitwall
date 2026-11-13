@@ -13,7 +13,9 @@ Turns the idea and the discovery into recorded decisions: one ADR per one-way de
 
 Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`decide`, `processLevels`, `maturity`, `registries`, `planning.branch`, `budgets.researcherToolCalls`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
 
-With an area as the argument (`$ARGUMENTS` names one of `decide.areas`), follow "Revisit one area" below instead of the steps.
+With an area as the argument (the arguments, on the line below, name one of `decide.areas`), follow "Revisit one area" below instead of the steps.
+
+Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
 
 ## Rules
 

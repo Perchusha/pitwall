@@ -199,8 +199,11 @@ step('skills', (report) => {
   if (!/a dollar sign, then `CLAUDE_PLUGIN_ROOT` in braces/.test(delivered) || !/a dollar sign, then `ARGUMENTS`/.test(delivered)) report('skills/continue: as Claude Code delivers it, with both placeholders filled, the text no longer says which placeholders a stage skill\'s file holds (L-17)');
   // The arguments stand once, on a line of their own that reads well filled and empty; every step then says
   // "this skill's arguments" (review round 1 found "after `` of them", what an empty one left of a sentence).
-  const argLines = conductor.split('\n').filter((l) => l.includes('$ARGUMENTS'));
-  if (argLines.length !== 1 || !/^Arguments, .*: \$ARGUMENTS$/.test(argLines[0])) report('skills/continue: the arguments placeholder stands once, at the end of a line "Arguments, ...: ", and nowhere inside a sentence (L-17)');
+  for (const name of readdirSync(dir)) {
+    const argLines = readFileSync(join(dir, name, 'SKILL.md'), 'utf8').split('\n').filter((l) => l.includes('$ARGUMENTS'));
+    if (argLines.length > 1 || argLines.some((l) => !/^\s*Arguments, .*: \$ARGUMENTS$/.test(l))) report(`skills/${name}: the arguments placeholder stands once at most, at the end of a line "Arguments, ...: ", and nowhere inside a sentence, where an empty one leaves a gap (L-17)`);
+  }
+  if (!conductor.split('\n').some((l) => /^Arguments, .*: \$ARGUMENTS$/.test(l))) report('skills/continue: it takes arguments (the idea, or how many changes to merge), on a line "Arguments, ...: "');
   if (!/run `\/pitwall:continue`/.test(readFileSync(join(plugin, 'template', 'CLAUDE.md.tmpl'), 'utf8'))) report('the template\'s CLAUDE.md does not tell the session to run /pitwall:continue when the owner says to continue');
   // The plan review's rounds at a level never exceed the general limit, and its full rounds come before its last.
   const cfgAll = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
@@ -3537,6 +3540,10 @@ slowStep('hooks (recorded payloads)', (report) => {
     bash(`echo --allow | xargs node "${P}/scripts/merge-choice.mjs"`, 'deny:owner', attended);
     bash(`cd docs && ${choice}`, 'deny:owner', attended);
     bash(`cd docs && ${choice} --project "${fwd(project)}"`, 'ask:owner', attended);
+    bash(`cd docs && ${choice} --project ..`, 'ask:owner', attended);
+    // --project must name this project: the prompt, and the guard's note of it, are for this one.
+    bash(`cd docs && ${choice} --project .`, 'deny:owner', attended);
+    bash(`${choice} --project "${fwd(dir)}/another"`, 'deny:owner', attended);
     for (const mode of cfg.hooks.noPromptModes) expect('main-pre-tool-use-bash', `merge-choice.mjs in the mode ${mode}`, { input: { permission_mode: mode, tool_input: { command: choice } }, ...attended }, 'deny:owner');
     if (cfg.hooks.noPromptModes.length < 2) report('hooks.noPromptModes must name the modes that never prompt (bypassPermissions, dontAsk)');
     {
@@ -3585,6 +3592,12 @@ slowStep('hooks (recorded payloads)', (report) => {
       ask('--deny');
       c = runChoice('--deny');
       if (c.status !== 0 || choiceIs() !== false) report(`merge-choice --deny right after the guard's prompt for it must record the no: exit ${c.status}\n${c.stdout}${c.stderr}`);
+      // Without --project, from the project's folder, as the skills run it.
+      ask('--allow');
+      c = spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), '--allow'], { cwd: cp, encoding: 'utf8', env: ccEnv });
+      if (c.status !== 0 || choiceIs() !== true) report(`merge-choice --allow from the project's folder, with no --project, must record the yes: exit ${c.status}\n${c.stdout}${c.stderr}`);
+      c = spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), '--allow'], { cwd: dir, encoding: 'utf8', env: ccEnv });
+      if (c.status !== 1 || !/is not a pitwall project/.test(c.stdout)) report(`merge-choice under Claude Code in a folder that is no pitwall project must say so: exit ${c.status}\n${c.stdout}`);
       if (gitIn(cp, 'status', '--porcelain').stdout.split('\n').some((l) => l.includes('owner-prompt'))) report('the guard\'s note shows in git status: it belongs in the git directory');
     }
     bash(`node -e "import('${P}/scripts/merge-choice.mjs')"`, 'deny:switch');
@@ -3861,6 +3874,22 @@ slowStep('hooks (recorded payloads)', (report) => {
     gitIn(unborn, 'init', '-q', '-b', 'main');
     const early = hook('main-session-start', { projectDir: unborn }).out?.hookSpecificOutput?.additionalContext ?? '';
     if (!/Stage: planning/.test(early)) report(`the brief before the skeleton's commit must give the planning stage:\n${early}`);
+    // L-18: a kickoff that stopped after its documents is not over, and the brief must not send the session on to
+    // discovery: no commit holds the skeleton yet, or the planning branch is not there yet.
+    {
+      const stopped = join(dir, 'stopped');
+      if (layOut(stopped).status !== 0) throw new Error('layout failed');
+      gitIn(stopped, 'init', '-q', '-b', 'main');
+      writeFileSync(join(stopped, 'docs', 'IDEA.md'), '# Idea\n\nWritten at stage 0.\n\n## Problem\n\nI sit too long.\n\n## Who it is for\n\nMe, on my own laptop.\n\n## Out of scope\n\n- Phones.\n\n## Process level\n\nlite: one user, no money, no personal data.\n');
+      const stage = () => /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: stopped }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
+      if (docsCheck(stopped, ['--stage', 'kickoff']).status !== 0) report(`the stopped kickoff of this case must pass kickoff's docs check:\n${docsCheck(stopped, ['--stage', 'kickoff']).stdout}`);
+      if (!/kickoff is not finished \(no commit holds the skeleton yet\): \/pitwall:continue goes on with it, by the kickoff skill/.test(stage())) report(`the brief of a kickoff that stopped before its commit must name kickoff as not finished: ${stage()}`);
+      gitIn(stopped, 'add', '-A');
+      gitIn(stopped, 'commit', '-qm', 'skeleton');
+      if (!/kickoff is not finished \(the branch plan\/initial is not there yet\)/.test(stage())) report(`the brief of a kickoff that stopped before its planning branch must name kickoff as not finished: ${stage()}`);
+      gitIn(stopped, 'switch', '-qc', 'plan/initial');
+      if (!/the next stage is discovery/.test(stage())) report(`the brief after kickoff's last step must name discovery: ${stage()}`);
+    }
     // While the plan is made, the brief gives the stage, not E0.
     // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.
     const odd = makeProject('odd', 1);

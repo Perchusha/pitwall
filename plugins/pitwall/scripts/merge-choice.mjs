@@ -42,9 +42,11 @@ const refuse = (msg) => {
 };
 const cfg = config();
 const project = resolve(args.project ?? '.');
+const file = join(project, '.claude', 'pitwall.json');
+if (!existsSync(file)) refuse(`${project} is not a pitwall project: there is no .claude/pitwall.json. Run it from the project folder, or pass --project.`);
 if (process.env.CLAUDECODE) {
   // The guard's note of the permission prompt: this project, this answer, not long ago, and used once.
-  const noteFile = existsSync(join(project, '.claude', 'pitwall.json')) ? ownerPromptFile(project, cfg) : null;
+  const noteFile = ownerPromptFile(project, cfg);
   let note = null;
   try {
     note = JSON.parse(readFileSync(noteFile, 'utf8'));
@@ -58,8 +60,6 @@ if (process.env.CLAUDECODE) {
     );
   }
 }
-const file = join(project, '.claude', 'pitwall.json');
-if (!existsSync(file)) refuse(`${project} is not a pitwall project: there is no .claude/pitwall.json. Run it from the project folder, or pass --project.`);
 let settings;
 try {
   settings = JSON.parse(readFileSync(file, 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));

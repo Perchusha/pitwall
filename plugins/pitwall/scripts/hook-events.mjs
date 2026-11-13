@@ -282,6 +282,13 @@ function planningStage(root, cfg, branch) {
   for (const stage of stages) {
     const r = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'docs-check.mjs'), '--root', root, '--stage', stage], { encoding: 'utf8' });
     if (r.status !== 0) return `planning on ${plan}; the next stage is ${stage} (its docs check does not pass yet): /pitwall:continue runs it, by the ${stage === 'plan-review' ? 'plan' : stage} skill.`;
+    // Kickoff's documents are only its first half (review round 2): it is over when a commit holds the project's
+    // settings and the planning branch exists. Until then the way on is still kickoff, which resumes.
+    if (stage === 'kickoff') {
+      const committed = git(['cat-file', '-e', 'HEAD:.claude/pitwall.json'], root).ok;
+      const branched = git(['rev-parse', '--verify', '-q', `refs/heads/${plan}`], root).ok;
+      if (!committed || !branched) return `planning on ${plan}; kickoff is not finished (${!committed ? 'no commit holds the skeleton yet' : `the branch ${plan} is not there yet`}): /pitwall:continue goes on with it, by the kickoff skill, which resumes.`;
+    }
   }
   return `planning on ${plan}; the plan is reviewed and waits for its merge: /pitwall:continue goes on with it, by the plan skill.`;
 }

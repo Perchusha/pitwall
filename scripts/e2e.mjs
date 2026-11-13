@@ -334,17 +334,28 @@ const promises = {
 let recordedBefore = 0;
 function conducted(stage) {
   if (stage === 'kickoff') return [];
-  const calls = readFileSync(hookRecord, 'utf8').split('\n').slice(recordedBefore).filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.event === 'pre-tool-use' && !r.input?.agent_id);
+  // A last line still being written does not parse: it is left for the next look.
+  const parse = (l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return null;
+    }
+  };
+  const calls = readFileSync(hookRecord, 'utf8').split('\n').slice(recordedBefore).filter(Boolean).map(parse).filter((r) => r?.event === 'pre-tool-use' && !r.input?.agent_id);
   const unmet = [];
   if (!calls.some((r) => r.input?.tool_name === 'Skill' && /(^|:)continue$/.test(String(r.input?.tool_input?.skill ?? '')))) unmet.push('the session did not start the continue skill on the owner\'s "continue"');
   if (!calls.some((r) => new RegExp(`skills/${stage}/SKILL\\.md`).test(JSON.stringify(r.input?.tool_input ?? {}).split('\\\\').join('/')))) unmet.push(`the session did not read the ${stage} skill's file`);
   return unmet;
 }
 
+// off: the stage's documents and git state pass, but the conductor did not lead it. Such a stage fails at once: it
+// cannot become right by going on, and going on would start the next stage in this one's session (review round 2).
 function status(stage) {
   const check = docsCheck(stage);
-  const unmet = check.status === 0 ? [...promises[stage](), ...conducted(stage)] : [];
-  return { done: check.status === 0 && unmet.length === 0, check: check.stdout.trim(), unmet };
+  const unmet = check.status === 0 ? promises[stage]() : [];
+  const off = check.status === 0 && unmet.length === 0 ? conducted(stage) : [];
+  return { done: check.status === 0 && unmet.length === 0 && off.length === 0, off: off.length > 0, check: check.stdout.trim(), unmet: [...unmet, ...off] };
 }
 
 // A passing stage saves the project as it left it, for runs that start after it.
@@ -379,6 +390,8 @@ for (const stage of stages) {
   let verdict = { done: false };
   let error = '';
   let closing = 0;
+  // Whether the conductor's question whether to move on came: the stages that end the planning ask none.
+  let asked = !ASKS_NEXT.includes(stage);
   recordedBefore = readFileSync(hookRecord, 'utf8').split('\n').length - 1;
   console.log(`\n== ${stage}`);
   try {
@@ -390,6 +403,10 @@ for (const stage of stages) {
       history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
       console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
       verdict = status(stage);
+      if (verdict.off) {
+        error = 'the stage\'s documents and git state pass, but the conductor did not lead it';
+        break;
+      }
       if (verdict.done && !ASKS_NEXT.includes(stage)) break;
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
@@ -397,7 +414,10 @@ for (const stage of stages) {
         // The stage's check passes: the conductor ends the stage by asking whether to move on, which the scripted
         // owner answers with NEXT. A stage may still have a step or two after the commit that made its check pass
         // (a question about merges, the hand-over), so the conversation gets a few more turns to reach that question.
-        if (/^\W*NEXT\b/i.test(reply.text)) break;
+        if (/^\W*NEXT\b/i.test(reply.text)) {
+          asked = true;
+          break;
+        }
         closing += 1;
         if (closing > CLOSING_TURNS || /^DONE.?$/i.test(reply.text)) {
           unasked.push(stage);
@@ -429,10 +449,13 @@ for (const stage of stages) {
     error = err.message;
   }
   if (!verdict.done) verdict = status(stage);
+  // A stage whose closing turns ran out, or ended in an error, never got the question either.
+  if (verdict.done && !asked && !unasked.includes(stage)) unasked.push(stage);
   const minutes = (Date.now() - started) / 60000;
   if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question), overridden: unscripted.filter((u) => u.stage === stage && u.override).map((u) => u.question) });
   results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
-  if (!verdict.done) break;
+  // A stage that failed, or that ended without the conductor's question, ends the run: the later stages would only spend.
+  if (!verdict.done || unasked.includes(stage)) break;
 }
 
 console.log('\n== results');
@@ -449,6 +472,7 @@ for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRID
 // since its documents are sound, but the path the owner walks is not the one the skill promises.
 for (const s of unasked) console.log(`FAIL ${s}: the conductor ended the stage without asking whether to move on`);
 const passed = results.length === stages.length && results.every((r) => r.pass) && unasked.length === 0;
+if (results.length < stages.length) console.log(`not run: ${stages.slice(results.length).join(', ')}`);
 // A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
 console.log(`\nE2E: ${resultWord(passed, unscripted)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

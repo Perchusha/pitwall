@@ -21,7 +21,10 @@ Exit code 0 is a pass, anything else is a fail.
 
 ## Steps
 
-1. The mode is `$ARGUMENTS`, or `--full` when it is empty; anything other than `--fast`, `--changed` or `--full` is a usage error: say so and stop.
+1. The mode is this skill's argument, on the line below, or `--full` when there is none; anything other than `--fast`, `--changed` or `--full` is a usage error: say so and stop.
+
+   Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
+
 2. Run `bash scripts/gate <mode>` from the project root, once, with the longest timeout the command tool allows: the way CI runs it, so a gate without the executable bit still runs. Never wrap it in a loop or run it again to see whether a red turns green.
 3. Report in one message:
    - PASS, with the mode;

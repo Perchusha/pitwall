@@ -24,10 +24,14 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 
 ## Steps
 
-1. **Preflight**, before any question. The working folder becomes the project root. When `.claude/pitwall.json` is already there, an earlier run of this skill laid the project out and stopped before its end: do not run the layout check, which refuses a folder that holds files, and do not lay out again. Resume at the first step whose result is missing: step 5 when `docs/IDEA.md` is not filled in, asking the owner again what its sections need and neither `CLAUDE.md` nor `.claude/pitwall.json` holds; step 8 when `main` has no commit; then the remote, the protection mode, the question about merges and the planning branch, each only when it is not done.
+1. **Preflight**, before any question. The working folder becomes the project root. When `.claude/pitwall.json` is already there, an earlier run of this skill laid the project out and stopped before its end: do not run the layout check, which refuses a folder that holds files, and do not lay out again. Resume at the first step whose result is missing. Step 5 when `docs/IDEA.md` is not filled in, asking the owner again what its sections need and neither `CLAUDE.md` nor `.claude/pitwall.json` holds. Step 6, the owner's confirmation, when it is filled in and no commit holds the skeleton (`git cat-file -e HEAD:.claude/pitwall.json` fails). With the skeleton committed and no planning branch yet: step 9, which only pushes when a remote is there and `main` is not on it; step 10, since `protect.mjs` changes nothing that is done; step 11 once more unless `autoMerge` is already true, since nothing records that the question was asked; then step 12. With the planning branch there, kickoff is over: say that `/pitwall:continue` goes on from here, and stop.
    - Run `node --version`. If it fails or the major version is below `runtime.nodeMinMajor`, stop: the owner installs the Node LTS release from https://nodejs.org and runs kickoff again.
    - Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/layout.mjs" --check`. It looks at the folder, git and the repository the folder is in, and writes nothing. Exit 1 (a folder with files in it, a repository with commits, no git): show its message to the owner and stop; kickoff starts new projects only. Exit 0: run the command on its `NEXT:` line as written, and pass any `NOTE:` line on to the owner.
-2. **The idea.** Start from the arguments, `$ARGUMENTS`; when they are empty, the first question asks for the idea in one line. Then ask `kickoff.questions` (min to max) questions, one per message, each built on the answers so far, and skip any the idea already answers:
+2. **The idea.** Start from this skill's arguments, on the line below; when there are none, the first question asks for the idea in one line.
+
+   Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
+
+   Then ask `kickoff.questions` (min to max) questions, one per message, each built on the answers so far, and skip any the idea already answers:
    - the problem: what is wrong today, and for whom;
    - who uses it, and how many: one person, a team, the public;
    - what it touches: money, personal data, accounts, a server or database, several services, realtime, AI;
