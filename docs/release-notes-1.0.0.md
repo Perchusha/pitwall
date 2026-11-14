@@ -1,0 +1,27 @@
+The first stable version of pitwall: epics T0 to T7 as they merged, with no new features since 0.12.0.
+
+### What it does
+
+- `/pitwall:continue` leads a project from a one-line idea, or from a project that exists already after a dry run that writes nothing, through discovery, decisions recorded as ADRs, a spike when one is due and a plan in epics that a fresh-context agent reviews. Then it runs the epic loop, one change per lap: implemented with tests, gated, reviewed by a fresh-context code reviewer, merged by risk class. In a pitwall project you can just say "continue".
+- Bugs and lessons: `/pitwall:bug` files a defect of merged work with a severity you confirm, `/pitwall:lesson` a mistake that can repeat with what checks it.
+- `/pitwall:release` ships what the loop merged as one version: a changelog from the merge commits, a local build, the `qa` agent's check of every closed epic's criteria, your yes, and the tag you make.
+- Three process levels, lite, standard and full: a small idea does not walk the path of a large system.
+- Hooks in every pitwall project: a brief at session start, guards on secrets, on pushes to `main`, on merges, on the review status, on uncommitted work, on the gate before every commit and on a release's tag, and call budgets for agents.
+
+### Checked
+
+- The lite level on a real project, from an empty repository to its first merged epic, in the owner's own session (T5a).
+- Every stage in headless runs against a fake GitHub, the adoption of an existing project included, on Windows with Claude Code 2.1.323.
+- Every check in CI, on Linux with Claude Code 2.1.318, the version `.claude-code-version` pins.
+
+### Known limits
+
+- A release is a local build at every level. Staging and QA in a browser come with T8; a deployment to production and its smoke check, which the standard and full levels name, are not built yet.
+- The standard and full levels have not yet run on a real project: T5b, a real project adopted at the full level, comes after 1.0.
+- The marketplace serves the plugin from `main`, not from a tag (T8).
+- The guards catch mistakes, not a command built to hide what it does: [R-2, R-3 and R-5](https://github.com/Perchusha/pitwall/blob/main/docs/RISKS.md).
+- Open bugs, none blocking: BUG-9 (Git LFS writes its hooks into `.githooks`) and BUG-11 to BUG-13 (three forms of a command that throws uncommitted work away and that the guard lets through), in [docs/BUGS.md](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md).
+
+### After 1.0
+
+T5b, T8, BUG-9 and BUG-11 to BUG-13, and a deployment to production with its smoke check, which no epic holds yet: [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).

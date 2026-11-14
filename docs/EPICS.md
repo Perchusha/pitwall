@@ -19,6 +19,6 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T5b](epics/T5b-full-last-ones-down.md) | Validation on the full system: Last Ones Down, adopted after a dry run, to a release | normal | T7 | planned |
 | [T8](epics/T8-staging-and-serving-by-tag.md) | Staging by type of application, QA in a browser, pitwall served by tag | high | T7 | planned |
 
-1.0 ships after T5a, T6 and T7; T5b and T8 come after 1.0 (owner, 2026-11-13, in place of the order of 2026-11-12).
+1.0.0 is released: T0 to T7, as they merged, with the tag `pitwall--v1.0.0` (owner, 2026-11-14). After 1.0: T5b and T8 above; BUG-9 and BUG-11 to BUG-13 in [BUGS.md](BUGS.md); and a deployment to production with its smoke check, which the standard and full levels of the SPEC name and no epic holds yet (found while writing the README of 1.0).
 
 Status: planned, in progress, in review, merged, released.

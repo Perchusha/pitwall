@@ -2,6 +2,18 @@
 
 One entry per epic, newest first.
 
+## 1.0 - The first stable version (2026-11-14)
+
+1.0 is a release, not an epic: no new features since 0.12.0 (owner, 2026-11-14). Twelve epics, T0 to T7, merged in twelve PRs between 2026-11-05 and 2026-11-14, each tagged as a 0.x version. The release holds:
+- the version 1.0.0 in the plugin and in the marketplace;
+- the README's quick start (an empty repository on GitHub, cloned; the plugin; `/pitwall:continue` with the idea; then "continue"), the requirements, with the Claude Code version CI pins and the bash of Git for Windows, the process levels, what the owner does, and the limits, linked to the risks; the plugin README's status;
+- `plugins/pitwall/CHANGELOG.md`: a section per version from the merge commits of T0 to T7, and the section of 1.0.0, which is also `docs/release-notes-1.0.0.md`, the notes of the GitHub release the owner publishes after the tag;
+- the records of T7's merge: BUG-1 to BUG-8 and BUG-10 fixed by #12.
+
+**Found on the way.** The standard and full levels of the SPEC name a deployment to production and its smoke check, and no epic holds them: T8 brings staging and QA in a browser only. The README says so among the limits, and the list after 1.0 in `docs/EPICS.md` holds it (owner, 2026-11-14: what 1.0's work finds goes to the bugs or to that list, not into its PR).
+
+**Next:** T5b, Last Ones Down adopted at the full level, once the owner has renamed its `master` to `main`; then T8, with BUG-9 and BUG-11 to BUG-13 after 1.0.
+
 ## T7 - The guard's corpus (2026-11-14)
 
 `scripts/guard-corpus.mjs` replays every command line of the local transcripts through the hooks' guard at a commit and in the working tree, as the main conversation and as the agents it is told, and prints each verdict that changed by its caller, its rule and the form of the command: the programs the guard's own parser reads, each named only when it is a known tool, and for git the subcommand. No word of a line is printed or kept (owner, 2026-11-10). Each line is judged with the plugin folders it names as the plugin's, as its session had them, in a scratch pitwall project with uncommitted work, and each git question is asked once, so the whole corpus takes about a minute and a half. It is a tool of pitwall's own development, not a step of `scripts/check.mjs`, since CI has no transcripts (L-13). T4a's 52 variants of one rollback are cases of the check with their verdicts at T4a's merge, 48 refused and 4 passing, none a copy of a transcript line. With the corpus behind each change, the guard's bugs were fixed: `git rm -f` over changed files (BUG-1); `git worktree remove --force` over a work tree that holds work, named plainly, in a loop, through xargs or by a PowerShell expression (BUG-2); `git reset --merge` over staged changes (BUG-3); a PowerShell assignment of one word read as a value (BUG-4); an inline `node -e` that only reads the plugin's data (BUG-6); `core.hooksPath` set for the account or the machine (BUG-8); and a new rule, `tag`: a release's tag, its push and its GitHub release are the owner's (BUG-10, R-6). Beside them, `bugs.mjs` and the docs check refuse a row of `docs/BUGS.md` with a cell too many (BUG-5), and kickoff asks before pitwall's hook replaces hooks of the owner's own (BUG-7). BUG-9, Git LFS, keeps its date after 1.0.
