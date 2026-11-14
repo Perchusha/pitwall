@@ -535,7 +535,8 @@ step('scripts parse', (report) => {
 });
 
 // 6d. T1-AC1: layout.mjs lays the template out complete and filled, and refuses any folder
-// that holds more than .git, so it can never overwrite or commit someone's files.
+// that holds more than .git, so it can never overwrite or commit someone's files: only a
+// .claude/settings.json that holds nothing the template's own does not is replaced (BUG-14).
 step('layout', (report) => {
   scratch('pitwall-layout-', (dir) => {
     const project = join(dir, 'p');
@@ -615,6 +616,50 @@ step('layout', (report) => {
     git(litter, 'commit', '-q', '-m', 'kickoff');
     const litterGate = spawnSync('bash', ['scripts/gate', '--full'], { cwd: litter, encoding: 'utf8', env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } });
     if (litterGate.status !== 0) report(`the gate fails after a layout next to OS files:\n${litterGate.stdout}`);
+    // BUG-14: a project-scope install of pitwall writes .claude/settings.json, which names the marketplace too when
+    // that was added for the project (Claude Code 2.1.323). Such a clone is laid out, with the template's file in its place.
+    const templateSettings = readFileSync(join(plugin, 'template', '.claude', 'settings.json.tmpl'), 'utf8');
+    const settingsCase = (name, body) => {
+      const p = join(dir, name);
+      mkdirSync(join(p, '.claude'), { recursive: true });
+      git(p, 'init', '-q', '-b', 'main');
+      writeFileSync(join(p, '.claude', 'settings.json'), body);
+      return p;
+    };
+    const installs = {
+      'the plugin': '{\n  "enabledPlugins": {\n    "pitwall@pitwall": true\n  }\n}\n',
+      'the plugin and its marketplace': `${JSON.stringify({ extraKnownMarketplaces: { pitwall: { source: { source: 'github', repo: 'Perchusha/pitwall' } } }, enabledPlugins: { 'pitwall@pitwall': true } }, null, 2)}\n`,
+      'the plugin, with a BOM and CRLF': `${String.fromCodePoint(0xfeff)}{\r\n  "enabledPlugins": {\r\n    "pitwall@pitwall": true\r\n  }\r\n}\r\n`,
+    };
+    Object.entries(installs).forEach(([label, body], i) => {
+      const p = settingsCase(`install-${i}`, body);
+      writeFileSync(join(p, '.claude', 'settings.local.json'), '{"permissions":{"allow":["Bash(git init *)"]}}\n');
+      const c = preflight(p);
+      if (c.status !== 0 || !/^NOTE: .*project-scope install of pitwall/m.test(c.stdout)) report(`--check in a clone where a project-scope install wrote ${label}: exit ${c.status}, expected 0 and a NOTE that the template's settings take its place\n${c.stdout}${c.stderr}`);
+      const l = layOut(p);
+      if (l.status !== 0 || readFileSync(join(p, '.claude', 'settings.json'), 'utf8') !== templateSettings) report(`layout in a clone where a project-scope install wrote ${label}: exit ${l.status}, expected 0 and the template's .claude/settings.json in its place\n${l.stderr}`);
+      if (readFileSync(join(p, '.claude', 'settings.local.json'), 'utf8') !== '{"permissions":{"allow":["Bash(git init *)"]}}\n') report(`layout in a clone where a project-scope install wrote ${label} changed .claude/settings.local.json beside it`);
+    });
+    // ... and settings that hold more than the template's, or do not parse, are kept as they are, with a way on.
+    const notInstalls = {
+      'another plugin': '{"enabledPlugins":{"pitwall@pitwall":true,"other@elsewhere":true}}\n',
+      'pitwall disabled': '{"enabledPlugins":{"pitwall@pitwall":false}}\n',
+      'an allow rule': '{"enabledPlugins":{"pitwall@pitwall":true},"permissions":{"allow":["Bash(npm test)"]}}\n',
+      'the marketplace from a folder': '{"extraKnownMarketplaces":{"pitwall":{"source":{"source":"directory","path":"/src/pitwall"}}},"enabledPlugins":{"pitwall@pitwall":true}}\n',
+      'no JSON': '{"enabledPlugins":\n',
+    };
+    Object.entries(notInstalls).forEach(([label, body], i) => {
+      const p = settingsCase(`settings-${i}`, body);
+      const c = preflight(p);
+      const l = layOut(p);
+      if (c.status !== 1 || !/move the file out of the folder/.test(c.stderr)) report(`--check next to .claude/settings.json with ${label}: exit ${c.status}, expected 1 and the way on\n${c.stderr}`);
+      if (l.status !== 1 || readFileSync(join(p, '.claude', 'settings.json'), 'utf8') !== body || existsSync(join(p, 'CLAUDE.md'))) report(`layout next to .claude/settings.json with ${label}: exit ${l.status}, expected 1 with the file untouched and nothing written`);
+    });
+    // An install's settings beside a file of the owner's: refused as not empty, the settings untouched.
+    const beside = settingsCase('install-beside', installs['the plugin']);
+    writeFileSync(join(beside, 'README.md'), '# Mine\n');
+    const lb = layOut(beside);
+    if (lb.status !== 1 || !/is not empty/.test(lb.stderr) || readFileSync(join(beside, '.claude', 'settings.json'), 'utf8') !== installs['the plugin'] || existsSync(join(beside, 'CLAUDE.md'))) report(`layout next to an install's .claude/settings.json and a README.md: exit ${lb.status}, expected 1 as not empty, with the settings untouched and nothing written\n${lb.stderr}`);
     const c2 = preflight(code);
     if (c2.status !== 1) report(`--check on a folder with code: exit ${c2.status}, expected 1`);
     const committed = join(dir, 'committed');

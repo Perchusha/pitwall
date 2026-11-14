@@ -10,7 +10,9 @@
 // the process level and the plugin version (ADR-0006). It lays out new
 // projects only: a folder that holds anything but .git is refused, and nothing
 // is written. Claude Code's own .claude/settings.local.json and the files an
-// operating system leaves behind do not count, and are never touched.
+// operating system leaves behind do not count, and are never touched; nor does
+// a .claude/settings.json that holds nothing the template's own does not, as a
+// project-scope install of pitwall writes it, which the template's replaces.
 //
 // --check is kickoff's preflight, asked before the interview and writing
 // nothing: the folder, git, and the repository the folder is in. On exit 0 it
@@ -127,11 +129,38 @@ if (args.hook) {
 // drop their own files; neither makes a folder a project.
 const IGNORED = new Set(['.claude/settings.local.json']);
 const LITTER = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
-const present = existsSync(target) ? listFiles(target, ['.git']).filter((f) => !IGNORED.has(f) && !LITTER.has(f.split('/').pop())) : [];
+// A project-scope install of pitwall writes .claude/settings.json, which enables the plugin, and names its
+// marketplace when that was added for the project too. A file that holds nothing the template's own does not
+// makes no folder a project either: the layout writes the template's in its place, which holds all of it (BUG-14).
+const SETTINGS = '.claude/settings.json';
+const templateSettings = (() => {
+  const rel = listFiles(templateRoot).find((f) => projectPath(f) === SETTINGS);
+  return rel ? JSON.parse(readFileSync(join(templateRoot, rel), 'utf8')) : null;
+})();
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+// Every key of a is in b with the same value; an array or a plain value only as it is.
+const within = (a, b) => (isObject(a) ? isObject(b) && Object.keys(a).every((k) => Object.hasOwn(b, k) && within(a[k], b[k])) : JSON.stringify(a) === JSON.stringify(b));
+const installSettings = (() => {
+  const file = join(target, SETTINGS);
+  if (!templateSettings || !existsSync(file)) return false;
+  try {
+    const mine = JSON.parse(readFileSync(file, 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
+    return isObject(mine) && within(mine, templateSettings);
+  } catch {
+    return false;
+  }
+})();
+const present = existsSync(target)
+  ? listFiles(target, ['.git']).filter((f) => !IGNORED.has(f) && !LITTER.has(f.split('/').pop()) && !(f === SETTINGS && installSettings))
+  : [];
 if (present.length > 0) {
   const existing = present.some((f) => f === 'CLAUDE.md' || f.startsWith('docs/'));
+  if (present.length === 1 && present[0] === SETTINGS) {
+    refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold something the template's own does not, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder and run kickoff again (when a new session no longer loads pitwall, install it for your user or for the project first), then bring back into the template's ${SETTINGS} what you need of yours`);
+  }
   refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }
+const settingsNote = `${SETTINGS} holds nothing the template's own does not, as a project-scope install of pitwall writes it: the layout writes the template's in its place.`;
 
 if (args.check) {
   const git = (...a) => spawnSync('git', ['-C', target, ...a], { encoding: 'utf8' });
@@ -147,6 +176,7 @@ if (args.check) {
   if (!git('config', 'user.email').stdout.trim()) {
     console.log('NOTE: git has no user.name and user.email here yet; the owner sets them (git config --global user.name, git config --global user.email) before the skeleton is committed.');
   }
+  if (installSettings) console.log(`NOTE: ${settingsNote}`);
   console.log(`layout: ${target} can be laid out`);
   console.log(`NEXT: ${next}`);
   process.exit(0);
@@ -194,5 +224,6 @@ for (const f of plan) {
   if (f.mode & 0o111 || /^(scripts|\.githooks)\//.test(f.dest)) chmodSync(out, 0o755);
 }
 console.log(`layout: wrote ${plan.length} files into ${target}`);
+if (installSettings) console.log(`layout: ${SETTINGS} held nothing the template's own does not, and the template's is in its place`);
 for (const f of plan.filter((p) => p.rel !== p.dest)) console.log(`  ${f.rel} -> ${f.dest}`);
 console.log(`layout: .claude/pitwall.json records level ${args.level}, template ${values.TEMPLATE_VERSION}, merge protection pending`);
