@@ -364,6 +364,15 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   // on main that is no merge of the loop, which the release must name and leave out of the changelog.
   function addBuild() {
     git('switch', '-q', 'main');
+    // A project laid out from 0.9.0 on has a scripts/build, and its E0 wrote the real one: the owner adds nothing,
+    // and the release builds what E0 built (2026-11-14: the harness's own build had replaced a real one, and the qa
+    // agent rightly failed the release on it).
+    const stub = readFileSync(join(plugin, 'template', 'scripts', 'build'), 'utf8');
+    const ownBuild = git('show', 'main:scripts/build');
+    if (ownBuild.status === 0 && ownBuild.stdout.replace(/\r\n/g, '\n') !== stub.replace(/\r\n/g, '\n')) {
+      console.log('main has a scripts/build of its own, from E0: the owner adds none');
+      return;
+    }
     writeFileSync(join(project, 'scripts', 'build'), '#!/usr/bin/env bash\n# The release build: the compiled app, for the release of pitwall\'s headless run.\nset -euo pipefail\nnpm run build >&2\necho "ARTIFACT: dist/main/main.js"\n');
     git('add', 'scripts/build');
     git('update-index', '--chmod=+x', 'scripts/build');
