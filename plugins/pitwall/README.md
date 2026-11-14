@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: v0.10.0, stages 0 to 5, the hooks, the epic loop, bugs and lessons, the gate before every commit, releases and a minimal QA, and one conductor for the whole path.** `/pitwall:continue` leads from the idea to the last epic: say "continue" and it takes the next step. `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:release` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep`, `code-reviewer` and `qa` agents, and the hooks guard every pitwall project. A release is a local build at every level for now: staging, production and QA in a browser come later. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: v0.11.0, stages 0 to 5, the adoption of a project that exists already, the hooks, the epic loop, bugs and lessons, the gate before every commit, releases and a minimal QA, and one conductor for the whole path.** `/pitwall:continue` leads from the idea to the last epic: say "continue" and it takes the next step. `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:release` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep`, `code-reviewer` and `qa` agents, and the hooks guard every pitwall project. A release is a local build at every level for now: staging, production and QA in a browser come later. See [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -26,6 +26,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 | Stage | Command | Output |
 | --- | --- | --- |
 | 0. Idea and process level | `/pitwall:kickoff` | Project skeleton, `docs/IDEA.md`, merge protection |
+| 0, for a project that exists | `/pitwall:adopt` | First a dry run that writes nothing: what pitwall would add, what it keeps, how your own plan maps onto `docs/EPICS.md`. After your yes: only the paths the project lacks, your real checks as `scripts/gate`, pitwall's documents filled from yours, and the stage the project starts from |
 | 1. Discovery | `/pitwall:discovery` | `docs/DISCOVERY.md`: scenarios, analogues, constraints, risks |
 | 2. Decisions | `/pitwall:decide` | One ADR per decision, `docs/STACK.md` |
 | 3. Spike | `/pitwall:spike` | `docs/spikes/<topic>.md` with a measured result, the prototype on `spike/<topic>` |
@@ -35,6 +36,10 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 | Release | `/pitwall:release` | A version: `CHANGELOG.md` from the merge commits, the local build of `scripts/build`, the `qa` agent's check of every closed epic's criteria, your yes, and the tag you make |
 
 Helpers: `/pitwall:gate`, `/pitwall:owner-calls` (everything that waits for you, in one list, with what happens if you say nothing), `/pitwall:bug` (a defect of merged work, with a title, a severity and a risk class you confirm), `/pitwall:lesson` (a mistake that can repeat, and what checks it).
+
+## Adopting an existing project
+
+In a repository that already holds code or docs, `/pitwall:continue` (or `/pitwall:adopt`) starts with a dry run, `scripts/adopt.mjs`, which writes nothing and lists what would happen: every template path the project lacks (`ADD`) and has (`KEEP`, never overwritten), the items of your own plan file, done and open, your documents (your own files in `docs/adr/`, `docs/epics/`, `docs/spikes/` and `docs/reviews/` stay as they are, and pitwall's checks leave them alone), the checks your manifests and CI already run, and a blocker for each path pitwall must commit that your ignore rules ignore. You decide from that list: the level, the stage to start from (discovery, decide or the plan; the stages before it stay as you did them, and their docs checks are skipped), the commands of the gate, and what pitwall's documents replace. `docs/EPICS.md` takes over your plan, whose file gets one line that says so: there are never two plans. Nothing is written before your yes. The adoption is one commit on the planning branch, so `main` moves only with the plan's PR; your own CI file stays, and the check named `gate` gets a workflow of its own; `.gitattributes` and `.gitignore` are written narrow, for pitwall's own paths, and only where you had none.
 
 ## Process levels
 

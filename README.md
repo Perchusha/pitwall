@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, a tagged release and QA on staging.
 
-> **Status: v0.10.0.** The whole path works, from a one-line idea to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic, and in a pitwall project you can just say "continue". What comes before 1.0 is in [docs/EPICS.md](docs/EPICS.md).
+> **Status: v0.11.0.** The whole path works, from a one-line idea, or from a project that exists already, to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic, and in a pitwall project you can just say "continue". What comes before 1.0 is in [docs/EPICS.md](docs/EPICS.md).
 
 ## Install
 

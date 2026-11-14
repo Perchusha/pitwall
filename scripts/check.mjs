@@ -974,6 +974,246 @@ function makePlanRepo(dir, { spike = true } = {}) {
   return { project, proto };
 }
 
+// 6d2. T6-AC1 to AC5: adopt.mjs on a project that already exists. Its dry run writes nothing and lists what
+// the adoption would do; --write lays out only what is missing, on the planning branch, and changes no file
+// the project had; --gate turns the project's own checks into scripts/gate, green only while they pass; and
+// the docs check skips the stages an adopted project had behind it.
+slowStep('adopt', (report) => {
+  scratch('pitwall-adopt-', (dir) => {
+    const adopt = (cwd, args = [], input) => runScript('adopt.mjs', args, { cwd, input });
+    const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    const FIXTURE = {
+      'package.json': '{\n  "name": "tally",\n  "version": "0.3.0",\n  "scripts": { "test": "node --test", "lint": "node --check src/tally.mjs" }\n}\n',
+      'src/tally.mjs': 'export const add = (a, b) => a + b;\n',
+      'test/tally.test.mjs': "import test from 'node:test';\nimport assert from 'node:assert';\nimport { add } from '../src/tally.mjs';\ntest('add', () => assert.equal(add(1, 2), 3));\n",
+      'README.md': '# tally\n\nA command line tally counter.\n\n## Usage\n\nRun it.\n',
+      'ROADMAP.md': '# Roadmap\n\n- [x] Count from the command line\n- [x] Save the count to a file\n- [ ] Named counters\n- [ ] Export the counts as CSV\n',
+      'CLAUDE.md': '# tally\n\n## Workflow\n\nCommit straight to main.\n\n## Commands\n\nnpm test\n',
+      'docs/SPEC.md': '# Spec\n\n## Overview\n\nOurs, written before pitwall.\n',
+      // An ADR in adr-tools' own format, in the folder pitwall's checks read by convention (review round 1).
+      'docs/adr/0001-record-architecture-decisions.md': '# 1. Record architecture decisions\n\nDate: 2025-03-01\n\n## Status\n\nAccepted\n\n## Context\n\nWe need to record the decisions.\n\n## Decision\n\nWe use ADRs.\n\n## Consequences\n\nSee them in docs/adr.\n',
+      '.github/workflows/ci.yml': 'name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n',
+    };
+    const make = (name, { branch = 'main', files: extra = {} } = {}) => {
+      const p = join(dir, name);
+      for (const [rel, body] of Object.entries({ ...FIXTURE, ...extra })) {
+        mkdirSync(dirname(join(p, rel)), { recursive: true });
+        writeFileSync(join(p, rel), body);
+      }
+      gitIn(p, 'init', '-q', '-b', branch);
+      gitIn(p, 'add', '-A');
+      gitIn(p, 'commit', '-qm', 'the project, before pitwall');
+      return p;
+    };
+    // Every file but git's own, with its bytes.
+    const tree = (p) => new Map(files(p).map((f) => [relative(p, f).split('\\').join('/'), readFileSync(f).toString('base64')]));
+    const sameTree = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+    const status = (p) => gitIn(p, 'status', '--porcelain').stdout.trim();
+    const wrote = ['--write', '--name', 'tally', '--idea', 'A command line tally counter', '--level', 'lite', '--stage', 'plan', '--plan-file', 'ROADMAP.md'];
+
+    // AC5, AC1: the dry run changes nothing and lists what would happen. With no flag it is a dry run too.
+    const p = make('tally');
+    const before = tree(p);
+    for (const flags of [['--dry-run'], []]) {
+      const r = adopt(p, flags);
+      const out = r.stdout;
+      if (r.status !== 0 || !out.trimEnd().endsWith('RESULT: dry run, nothing written')) report(`adopt ${flags.join(' ') || '(no flag)'}: exit ${r.status}, expected a dry run\n${out.slice(-300)}${r.stderr}`);
+      if (!sameTree(before, tree(p)) || status(p)) report(`adopt ${flags.join(' ') || '(no flag)'} changed the project: ${status(p)}`);
+      for (const want of [
+        /^ADD docs\/EPICS\.md$/m,
+        /^ADD \.claude\/pitwall\.json$/m,
+        /^ADD scripts\/gate$/m,
+        /^ADD \.github\/workflows\/pitwall-gate\.yml \(your \.github\/workflows\/ci\.yml is kept/m,
+        /^ADD \.gitattributes \(for pitwall's own scripts only/m,
+        /^SKIP \.editorconfig /m,
+        /^KEEP CLAUDE\.md \(lacks the template's sections: "Current state", "Architecture boundaries", "Definition of done", "How to work", "Never"\)$/m,
+        /^KEEP docs\/SPEC\.md \(lacks the template's sections: "Scenarios", "Architecture", "Data model", "Non-functional requirements", "Launch"\)$/m,
+        /^PLAN ROADMAP\.md: 4 items, 2 open and 2 done$/m,
+        /^ {2}- \[done\] Count from the command line$/m,
+        /^ {2}- \[open\] Export the counts as CSV$/m,
+        /^DOC README\.md: Usage$/m,
+        /^CHECK npm run lint \(from package\.json "lint"\)$/m,
+        /^CHECK npm test \(from package\.json "test"\)$/m,
+        /^CI \.github\/workflows\/ci\.yml: run: npm test$/m,
+        /^ADD \.github\/workflows\/pitwall-gate\.yml \(.*the adoption adds the setup your checks need/m,
+        /^KEEP docs\/adr\/0001-record-architecture-decisions\.md \(written before pitwall/m,
+      ]) if (!want.test(out)) report(`the dry run does not say ${want}:\n${out}`);
+      if (/^(ADD|KEEP) \.github\/workflows\/ci\.yml/m.test(out) || /^ADD CLAUDE\.md/m.test(out) || /^ADD docs\/SPEC\.md/m.test(out)) report(`the dry run would add a path the project has:\n${out}`);
+    }
+    // The sections the dry run says a kept document lacks are the ones the docs check asks for.
+    {
+      const lacks = /^KEEP CLAUDE\.md \(lacks the template's sections: (.*)\)$/m.exec(adopt(p).stdout)?.[1].split(', ').map((s) => s.replace(/"/g, '')) ?? [];
+      const q = make('tally-sections');
+      gitIn(q, 'switch', '-qc', 'plan/initial');
+      adopt(q, wrote);
+      const missing = [...docsCheck(q).stdout.matchAll(/CLAUDE\.md: missing section "## ([^"]+)"/g)].map((m) => m[1]);
+      if (lacks.join('|') !== missing.join('|')) report(`the dry run says CLAUDE.md lacks ${lacks.join(', ')}, and the docs check asks for ${missing.join(', ')}`);
+    }
+
+    // What is no project to adopt.
+    const empty = join(dir, 'empty');
+    mkdirSync(empty);
+    let r = adopt(empty);
+    if (r.status !== 1 || !/is not in a git repository/.test(r.stdout)) report(`adopt in a folder without git must refuse: exit ${r.status}\n${r.stdout}`);
+    gitIn(empty, 'init', '-q', '-b', 'main');
+    r = adopt(empty);
+    if (r.status !== 1 || !/has no commit yet: a new project starts with \/pitwall:kickoff/.test(r.stdout)) report(`adopt in a repository without a commit must point to kickoff: exit ${r.status}\n${r.stdout}`);
+    r = adopt(join(p, 'src'));
+    if (r.status !== 1 || !/not the top folder/.test(r.stdout)) report(`adopt in a subfolder must refuse: exit ${r.status}\n${r.stdout}`);
+    const laid = join(dir, 'laid');
+    layOut(laid);
+    gitIn(laid, 'init', '-q', '-b', 'main');
+    gitIn(laid, 'add', '-A');
+    gitIn(laid, 'commit', '-qm', 'skeleton');
+    r = adopt(laid);
+    if (r.status !== 1 || !/is a pitwall project already.*\/pitwall:continue/.test(r.stdout)) report(`adopt in a pitwall project must point to /pitwall:continue: exit ${r.status}\n${r.stdout}`);
+    // A repository without the branch the protection guards: said in the dry run, and --write refuses.
+    const master = make('master', { branch: 'master' });
+    r = adopt(master);
+    if (r.status !== 0 || !/^BLOCKER pitwall guards the branch "main".*git branch -m master main/m.test(r.stdout)) report(`a repository on master must show the blocker in the dry run: exit ${r.status}\n${r.stdout.slice(0, 400)}`);
+    gitIn(master, 'switch', '-qc', 'plan/initial');
+    r = adopt(master, wrote);
+    if (r.status !== 1 || existsSync(join(master, '.claude'))) report(`--write without the guarded branch must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
+
+    // AC1, AC4: --write never on the guarded branch, never over uncommitted work, and only what is missing.
+    r = adopt(p, wrote);
+    if (r.status !== 1 || !/main is the branch merge protection guards/.test(r.stdout) || !sameTree(before, tree(p))) report(`--write on main must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
+    gitIn(p, 'switch', '-qc', 'plan/initial');
+    writeFileSync(join(p, 'notes.txt'), 'work in progress\n');
+    r = adopt(p, wrote);
+    if (r.status !== 1 || !/uncommitted work/.test(r.stdout) || existsSync(join(p, '.claude'))) report(`--write over uncommitted work must refuse: exit ${r.status}\n${r.stdout}`);
+    rmSync(join(p, 'notes.txt'));
+    for (const [what, args] of [
+      ['a stage that is none', wrote.map((a) => (a === 'plan' ? 'loop' : a))],
+      ['a plan file the project has not', wrote.map((a) => (a === 'ROADMAP.md' ? 'PLANS.md' : a))],
+      ['no name', wrote.filter((a, i) => a !== '--name' && wrote[i - 1] !== '--name')],
+      ['--write with --dry-run', ['--dry-run', ...wrote]],
+    ]) {
+      r = adopt(p, args);
+      if (r.status !== 2 || existsSync(join(p, '.claude'))) report(`--write with ${what} must be a usage error that writes nothing: exit ${r.status}`);
+    }
+    r = adopt(p, wrote);
+    const after = tree(p);
+    if (r.status !== 0 || !/RESULT: adopted at plan/.test(r.stdout)) report(`--write on the planning branch: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    for (const [rel, body] of before) if (after.get(rel) !== body) report(`--write changed ${rel}, a file the project had`);
+    const settings = JSON.parse(readFileSync(join(p, '.claude', 'pitwall.json'), 'utf8'));
+    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending', autoMerge: false, startStage: 'plan', planFile: 'ROADMAP.md', ownDocs: ['docs/adr/0001-record-architecture-decisions.md'] };
+    if (JSON.stringify(settings) !== JSON.stringify(want)) report(`.claude/pitwall.json of an adopted project is ${JSON.stringify(settings)}, expected ${JSON.stringify(want)}`);
+    for (const rel of ['docs/EPICS.md', 'docs/IDEA.md', 'docs/epics/E0-skeleton.md', 'scripts/gate', 'scripts/build', '.githooks/pre-commit', '.github/workflows/pitwall-gate.yml', '.gitattributes', '.gitignore', 'CHANGELOG.md']) {
+      if (!after.has(rel)) report(`--write did not lay out ${rel}`);
+    }
+    if (after.has('.editorconfig')) report('--write laid out .editorconfig in a project that exists');
+    if (/\*\s+text=auto/.test(readFileSync(join(p, '.gitattributes'), 'utf8'))) report('.gitattributes of an adopted project must not change the line endings of the project\'s own files');
+    if (!/^ {2}gate:$/m.test(readFileSync(join(p, '.github', 'workflows', 'pitwall-gate.yml'), 'utf8'))) report('the workflow laid out beside the project\'s own has no job named gate');
+    for (const f of files(p)) {
+      const rel = relative(p, f).split('\\').join('/');
+      if (before.has(rel)) continue;
+      if (rel.endsWith('.tmpl')) report(`${rel} kept its .tmpl suffix`);
+      if (/\{\{[A-Z_]+\}\}/.test(readFileSync(f, 'utf8'))) report(`${rel} still holds a placeholder`);
+    }
+    r = adopt(p, wrote);
+    if (r.status !== 1 || !/pitwall project already/.test(r.stdout)) report(`a second --write must refuse: exit ${r.status}\n${r.stdout}`);
+
+    // AC3: the gate. The stub fails on a project with code, and the kickoff check of an adopted project says so.
+    const kick = (q) => docsCheck(q, ['--stage', 'kickoff']);
+    if (!/scripts\/gate: still the template's stub: an adopted project's gate runs its real checks/.test(kick(p).stdout)) report(`the kickoff check of an adopted project must refuse the stub gate:\n${kick(p).stdout}`);
+    const gate = (q, mode = '--full') => spawnSync('bash', ['scripts/gate', mode], { cwd: q, encoding: 'utf8' });
+    if (gate(p).status === 0) report('the template\'s stub gate passed on a project with code');
+    const lines = 'fast: node --check src/tally.mjs\nfull: node --check src/tally.mjs\nfull: node --test\nfull: node -e "process.exit(\'a\' === \'a\' ? 0 : 1)"\n';
+    r = adopt(p, ['--gate'], lines);
+    if (r.status !== 0 || !/RESULT: gate written/.test(r.stdout)) report(`--gate: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    if (/still the template's stub/.test(kick(p).stdout)) report('the kickoff check still calls the written gate a stub');
+    let g = gate(p);
+    if (g.status !== 0 || !/gate: PASS \(--full\) - 3 checks/.test(g.stdout)) report(`the adopted gate must pass on the project as it stands: exit ${g.status}\n${g.stdout.slice(-400)}${g.stderr.slice(-300)}`);
+    if (gate(p, '--changed').status !== 0 || gate(p, '--fast').status !== 0) report('the adopted gate must pass in --changed and --fast too');
+    if (gate(p, '--everything').status !== 2) report('the adopted gate must refuse an unknown mode with exit 2');
+    const testFile = join(p, 'test', 'tally.test.mjs');
+    const good = readFileSync(testFile, 'utf8');
+    writeFileSync(testFile, good.replace('add(1, 2), 3', 'add(1, 2), 4'));
+    g = gate(p);
+    if (g.status !== 1 || !/gate: FAIL \(--full\) - node --test/.test(g.stdout)) report(`the adopted gate must fail when a check of the project fails: exit ${g.status}\n${g.stdout.slice(-300)}`);
+    if (gate(p, '--fast').status !== 0) report('--fast runs the fast list only: a failing test of the full list must not fail it');
+    writeFileSync(testFile, good);
+    r = adopt(p, ['--gate'], 'full: node --test\n');
+    if (r.status !== 0 || !/gate: PASS \(--fast\) - 1 checks/.test(gate(p, '--fast').stdout)) report(`--gate over a gate it wrote, with no fast list: exit ${r.status}; --fast must then run the full list`);
+    for (const [what, input, code] of [['no full line', 'fast: node --test\n', 2], ['a line that is no check', 'node --test\n', 2]]) {
+      if (adopt(p, ['--gate'], input).status !== code) report(`--gate with ${what} must exit ${code}`);
+    }
+    writeFileSync(join(p, 'scripts', 'gate'), '#!/usr/bin/env bash\nexit 0\n');
+    r = adopt(p, ['--gate'], lines);
+    if (r.status !== 1 || !/the project's own file, and pitwall never overwrites it/.test(r.stdout) || readFileSync(join(p, 'scripts', 'gate'), 'utf8') !== '#!/usr/bin/env bash\nexit 0\n') report(`--gate over a gate of the project's own must refuse: exit ${r.status}\n${r.stdout}`);
+    if (adopt(make('not-adopted'), ['--gate'], lines).status !== 1) report('--gate in a project not adopted yet must refuse');
+
+    // AC4: the stages behind an adopted project are not checked, the ones ahead are; a project kickoff laid out
+    // is checked as before.
+    const stageCheck = (q, stage) => docsCheck(q, ['--stage', stage]);
+    const setStart = (q, value) => {
+      const f = join(q, '.claude', 'pitwall.json');
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), startStage: value }, null, 2));
+    };
+    const skips = (q, stage) => new RegExp(`^NOTE ${stage} was done before pitwall`, 'm').test(stageCheck(q, stage).stdout);
+    const runs = (q, stage, sign) => sign.test(stageCheck(q, stage).stdout);
+    const DISCOVERY = /docs\/DISCOVERY\.md: section "## Scenarios" is not filled in/;
+    const DECIDE = /docs\/STACK\.md/;
+    if (!skips(p, 'discovery') || !skips(p, 'decide')) report(`a project adopted at plan must skip the discovery and decide checks:\n${stageCheck(p, 'discovery').stdout}\n${stageCheck(p, 'decide').stdout}`);
+    if (runs(p, 'discovery', DISCOVERY) || runs(p, 'decide', DECIDE)) report('a skipped stage still reported its findings');
+    if (skips(p, 'plan') || !/docs\/EPICS\.md|E0/.test(stageCheck(p, 'plan').stdout) || stageCheck(p, 'plan').status === 0) report(`a project adopted at plan must still be held to the plan check:\n${stageCheck(p, 'plan').stdout}`);
+    setStart(p, 'decide');
+    if (!skips(p, 'discovery') || skips(p, 'decide') || !runs(p, 'decide', DECIDE)) report('a project adopted at decide must skip discovery and be held to decide');
+    setStart(p, 'discovery');
+    if (skips(p, 'discovery') || !runs(p, 'discovery', DISCOVERY)) report('a project adopted at discovery must be held to the discovery check');
+    setStart(p, 'loop');
+    if (!/startStage "loop" is not one of discovery, decide, plan/.test(kick(p).stdout) || skips(p, 'discovery')) report(`a startStage that is no stage must be reported, and skip nothing:\n${kick(p).stdout}`);
+    setStart(p, 'plan');
+    gitIn(p, 'mv', 'ROADMAP.md', 'OLD.md');
+    if (!/planFile "ROADMAP\.md" is not a file of the project/.test(kick(p).stdout)) report('a planFile that is gone must be reported by the kickoff check');
+    if (skips(laid, 'discovery') || !runs(laid, 'discovery', DISCOVERY)) report('a project kickoff laid out must be held to the discovery check as before');
+    gitIn(p, 'mv', 'OLD.md', 'ROADMAP.md');
+    // The project's own ADR is held to no template of pitwall's, at any stage; its ID still resolves, and its number
+    // still counts. Without the record of it, it would be held to the template.
+    for (const stage of ['kickoff', 'decide', 'plan']) {
+      if (/0001-record-architecture-decisions/.test(stageCheck(p, stage).stdout)) report(`the docs check at ${stage} holds the project's own ADR to pitwall's template:\n${stageCheck(p, stage).stdout}`);
+    }
+    {
+      const f = join(p, '.claude', 'pitwall.json');
+      const kept = readFileSync(f, 'utf8');
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(kept), ownDocs: undefined }, null, 2));
+      if (!/0001-record-architecture-decisions\.md: missing section "## Options"/.test(kick(p).stdout)) report('without ownDocs the project\'s own ADR must be held to the template: the exemption is what keeps it');
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(kept), ownDocs: ['src/tally.mjs'] }, null, 2));
+      if (!/ownDocs must list files under docs\/adr/.test(kick(p).stdout)) report('an ownDocs entry outside the convention folders must be reported');
+      writeFileSync(f, kept);
+    }
+    // Review round 1: a project whose ignore rules ignore a path pitwall must commit cannot finish its adoption.
+    const hidden = make('hidden', { files: { '.gitignore': 'node_modules/\n.claude/\n' } });
+    r = adopt(hidden);
+    if (r.status !== 0 || !/^BLOCKER the project's ignore rules ignore \.claude\/pitwall\.json/m.test(r.stdout)) report(`a .gitignore that ignores .claude/ must be a blocker of the dry run:\n${r.stdout.slice(0, 600)}`);
+    gitIn(hidden, 'switch', '-qc', 'plan/initial');
+    r = adopt(hidden, wrote);
+    if (r.status !== 1 || existsSync(join(hidden, '.claude', 'pitwall.json'))) report(`--write must refuse while a path it lays out is ignored: exit ${r.status}\n${r.stdout}`);
+    // Review round 1: the adoption lives on the planning branch until the plan merges: on main, or in a new clone, the
+    // dry run sends the session there instead of starting over.
+    gitIn(p, 'add', '-A');
+    gitIn(p, 'commit', '-qm', 'chore: adopt pitwall');
+    gitIn(p, 'switch', '-q', 'main');
+    r = adopt(p);
+    if (r.status !== 1 || !/being adopted already: plan\/initial holds \.claude\/pitwall\.json/.test(r.stdout)) report(`the dry run on main of a project adopted on its planning branch must send the session there: exit ${r.status}\n${r.stdout}`);
+    const cloneOfIt = join(dir, 'tally-clone');
+    const bareOfIt = join(dir, 'tally.git');
+    gitIn(dir, 'clone', '-q', '--bare', p, bareOfIt);
+    gitIn(dir, 'clone', '-q', bareOfIt, cloneOfIt);
+    r = adopt(cloneOfIt);
+    if (r.status !== 1 || !/being adopted already: origin\/plan\/initial holds/.test(r.stdout)) report(`the dry run in a new clone of a project being adopted must find origin's planning branch: exit ${r.status}\n${r.stdout}`);
+    // A numbered or "+" checklist is a plan too.
+    const listed = make('numbered', { files: { 'ROADMAP.md': '# Roadmap\n\n1. [x] One\n2. [ ] Two\n+ [ ] Three\n' } });
+    if (!/^PLAN ROADMAP\.md: 3 items, 2 open and 1 done$/m.test(adopt(listed).stdout)) report(`a numbered checklist must be read as a plan:\n${adopt(listed).stdout}`);
+    // A folder that is not under git yet gets the way to start.
+    const loose = join(dir, 'loose');
+    mkdirSync(loose);
+    writeFileSync(join(loose, 'a.txt'), 'x\n');
+    if (!/not in a git repository\. A project that exists but is not under git yet: run git init/.test(adopt(loose).stdout)) report(`adopt in a folder without git must say how to start:\n${adopt(loose).stdout}`);
+  });
+});
+
 // 6g. T2-AC1, T2-AC3, T2-AC4: the spike, plan and plan-review checks pass on a project the way
 // the skills leave it, and report each kind of gap. The spike check reads git (ADR-0009).
 slowStep('plan and spike checks', (report) => {
@@ -3902,6 +4142,20 @@ slowStep('hooks (recorded payloads)', (report) => {
       const inClone = /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: cloned }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
       if (gitIn(cloned, 'branch', '--show-current').stdout.trim() !== 'main' || gitIn(cloned, 'rev-parse', '--verify', '-q', 'refs/heads/plan/initial').status === 0) report('the clone of this case must stand on main, without a local planning branch');
       if (/kickoff is not finished/.test(inClone) || !/the next stage is discovery/.test(inClone)) report(`the brief of a new clone whose origin holds the planning branch must name discovery, not kickoff: ${inClone}`);
+      // T6: an adoption that stopped before its commit is the adopt skill's to resume, not kickoff's.
+      const half = join(dir, 'stopped-adoption');
+      mkdirSync(half);
+      gitIn(half, 'init', '-q', '-b', 'main');
+      gitIn(half, 'commit', '-q', '--allow-empty', '-m', 'the project, before pitwall');
+      gitIn(half, 'commit', '-q', '--allow-empty', '-m', 'more of it');
+      gitIn(half, 'switch', '-qc', 'plan/initial');
+      if (layOut(half).status !== 0) throw new Error('layout failed');
+      const hs = join(half, '.claude', 'pitwall.json');
+      writeFileSync(hs, JSON.stringify({ ...JSON.parse(readFileSync(hs, 'utf8')), startStage: 'plan' }, null, 2));
+      writeFileSync(join(half, 'docs', 'IDEA.md'), readFileSync(join(stopped, 'docs', 'IDEA.md')));
+      writeFileSync(join(half, 'scripts', 'gate'), '#!/usr/bin/env bash\necho "gate: PASS"\n');
+      const halfStage = /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: half }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
+      if (!/the adoption is not finished \(no commit holds what pitwall laid out yet\): \/pitwall:continue goes on with it, by the adopt skill/.test(halfStage)) report(`the brief of an adoption that stopped before its commit must name the adopt skill: ${halfStage}`);
     }
     // While the plan is made, the brief gives the stage, not E0.
     // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.

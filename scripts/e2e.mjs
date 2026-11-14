@@ -13,7 +13,9 @@
 // change; --from e0 runs E0 and E1, the run before a PR; --from bug runs a blocking bug's fix
 // through the loop from the state e1 saved (T4b-AC4); --from release runs /pitwall:release from the
 // state bug saved (T4c-AC9); --until plan runs the planning stages from
-// kickoff. A run is either planning stages or loop stages. --github <owner/repo> runs the loop
+// kickoff; --from adopt runs the adoption of an existing project (scripts/e2e-adopt.mjs, T6), and
+// --from adopt --until adopt-plan also the plan stage on the adopted project. A run is planning
+// stages, loop stages or adoption stages. --github <owner/repo> runs the loop
 // stages against an empty private repository the owner created, and records GitHub's answers.
 // A planning run goes from --from (default kickoff) to --until (default plan). Every stage that passes saves the
 // project as it left it in the state folder (default ~/.cache/pitwall-e2e/<stage>),
@@ -112,7 +114,8 @@ const opt = (name, fallback) => {
 };
 const STAGES = ['kickoff', 'discovery', 'decide', 'spike', 'plan'];
 const LOOP = ['e0', 'e1', 'bug', 'release'];
-const ALL = [...STAGES, ...LOOP];
+const ADOPT = ['adopt', 'adopt-plan'];
+const ALL = [...STAGES, ...LOOP, ...ADOPT];
 const fromArg = opt('from', '');
 const untilArg = opt('until', '');
 // No flags: e1 from the saved e0 (owner, T3b). --until a planning stage alone: from kickoff, as before.
@@ -123,10 +126,12 @@ const github = opt('github', '');
 const stateDir = resolve(opt('state', join(homedir(), '.cache', 'pitwall-e2e')));
 const maxTurns = Number(opt('max-turns', '30'));
 const flags = ['--from', '--until', '--max-turns', '--state', '--seed', '--github'];
-const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages or loop stages)';
+const usage = 'usage: node scripts/e2e.mjs [--from <stage>] [--until <stage>] [--max-turns 30] [--state <dir>] [--seed <project>] [--github <owner/repo>] [--log <file>]\n       stages: ' + ALL.join(', ') + ' (a run is planning stages, loop stages or adoption stages)';
 const loop = LOOP.includes(from) && LOOP.includes(until);
+const adopting = ADOPT.includes(from) && ADOPT.includes(until);
 const span = ALL.slice(ALL.indexOf(from), ALL.indexOf(until) + 1);
-const bad = !ALL.includes(from) || !ALL.includes(until) || span.length === 0 || (!loop && span.some((x) => LOOP.includes(x))) || (loop && seedArg) || (!loop && github) || (github && !/^[\w.-]+\/[\w.-]+$/.test(github));
+const kinds = new Set(span.map((x) => (LOOP.includes(x) ? 'loop' : ADOPT.includes(x) ? 'adopt' : 'planning')));
+const bad = !ALL.includes(from) || !ALL.includes(until) || span.length === 0 || kinds.size > 1 || ((loop || adopting) && seedArg) || (!loop && github) || (github && !/^[\w.-]+\/[\w.-]+$/.test(github));
 if (bad || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) => a.startsWith('--') && !flags.includes(a))) {
   console.error(usage);
   process.exit(2);
@@ -142,6 +147,10 @@ if (loop) {
     console.error(`\nE2E LOOP: FAIL - the harness stopped before a result: ${err?.stack ?? err}`);
   }
   process.exit(code);
+}
+if (adopting) {
+  const { runAdopt } = await import('./e2e-adopt.mjs');
+  process.exit(await runAdopt({ stages: span, stateDir, maxTurns }));
 }
 const stages = span;
 // A later stage starts from a project: the seed, or what the stage before it saved.

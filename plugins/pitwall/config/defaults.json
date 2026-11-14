@@ -241,6 +241,44 @@
   "planning": {
     "branch": "plan/initial"
   },
+  "adopt": {
+    "key": "startStage",
+    "stages": [
+      "discovery",
+      "decide",
+      "plan"
+    ],
+    "planNames": [
+      "roadmap",
+      "todo",
+      "backlog",
+      "plan",
+      "milestones"
+    ],
+    "decisionFolders": [
+      "docs/adrs",
+      "adr",
+      "doc/adr",
+      "docs/decisions",
+      "docs/architecture/decisions"
+    ],
+    "checkScripts": [
+      "lint",
+      "typecheck",
+      "check",
+      "test",
+      "build"
+    ],
+    "gateWorkflow": ".github/workflows/pitwall-gate.yml",
+    "ownDocsKey": "ownDocs",
+    "conventionFolders": [
+      "docs/adr",
+      "docs/epics",
+      "docs/spikes",
+      "docs/reviews"
+    ],
+    "maxListed": 40
+  },
   "bugs": {
     "severities": {
       "blocking": "the defect itself does harm in ordinary work: work stops, or data, work or a secret is lost because of it; its fix goes before the next epic",
