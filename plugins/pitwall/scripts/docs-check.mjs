@@ -1429,6 +1429,7 @@ function checkBugs() {
   if (!has(rel)) return report(rel, 'missing (a contract path, pitwall ADR-0006)');
   const table = bugTable(read(rel));
   if (!table.header) return report(rel, 'holds no table');
+  for (const r of table.ragged) report(rel, `the row ${r.id || 'without an ID'} has ${r.cells} cells, and the table has ${table.header.length} columns: a "|" inside a cell is written "\\|"`);
   if (table.old) return;
   const want = tableHeader(readTemplate('docs/BUGS.md').split('\n'));
   if (table.header.join('|').toLowerCase() !== want.join('|').toLowerCase()) return report(rel, `the table must keep the template's columns: | ${want.join(' | ')} |`);
