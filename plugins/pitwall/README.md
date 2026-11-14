@@ -13,11 +13,13 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 /plugin install pitwall@pitwall
 ```
 
+Choose the user scope when the install asks: a project-scope install writes `.claude/settings.json` into the folder, and kickoff then refuses it as not empty. From a terminal, `claude plugin marketplace add Perchusha/pitwall` and `claude plugin install pitwall@pitwall` install for your user.
+
 ## Requirements
 
 - Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of `config/defaults.json`: the plugin's scripts (layout, docs check, merge protection) and its hooks run on it. Your project's own stack can be anything.
 - bash (Git Bash on Windows): the gate contract, `scripts/gate`, is a bash script, and every hook starts through bash, which checks for a pitwall project and for Node before anything else.
-- The GitHub CLI, `gh`, signed in as an admin of the repository, for merge protection (the commands it hands over were tested with gh 2.98). Without it, kickoff hands you the commands to run.
+- The GitHub CLI, `gh`, signed in to github.com with admin rights on the repository: pitwall opens every PR, sets the `ai-review` status, merges and sets up merge protection through it (the commands it hands over were tested with gh 2.98). Without it, kickoff hands you the steps to install it and sign in. GitHub.com only.
 
 ## Stages
 
@@ -44,7 +46,7 @@ In a repository that already holds code or docs, `/pitwall:continue` (or `/pitwa
 ## Process levels
 
 - **lite**: one user, no money or personal data, 1 to 3 epics. A local build stands in for staging and production.
-- **standard**: users, a database, auth, a deployment. Every stage, a short pre-mortem in the plan review, staging, QA after every merge and a production smoke check; until T8 brings staging, and while nothing deploys to production, a release here is a local build too.
+- **standard**: users, a database, auth, a deployment. Every stage and a short pre-mortem in the plan review. The level names staging, QA after every merge and a production smoke check, and none of them is built yet: a release here is a local build checked by the `qa` agent, as at lite, until T8 brings staging and QA in a browser.
 - **full**: several services, realtime, payments or AI pipelines. Everything in standard, plus a required spike and a longer pre-mortem.
 
 ## What stages 0 to 5 leave in a project
