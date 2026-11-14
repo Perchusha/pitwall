@@ -13,7 +13,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 /plugin install pitwall@pitwall
 ```
 
-Choose the user scope when the install asks: a project-scope install writes `.claude/settings.json` into the folder, and kickoff then refuses it as not empty. From a terminal, `claude plugin marketplace add Perchusha/pitwall` and `claude plugin install pitwall@pitwall` install for your user.
+Choose the user scope when the install asks: a project-scope install writes `.claude/settings.json` into the folder, which is then refused as not empty; delete that file and install for your user. From a terminal, `claude plugin marketplace add Perchusha/pitwall` and `claude plugin install pitwall@pitwall` install for your user.
 
 ## Requirements
 

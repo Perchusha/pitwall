@@ -9,21 +9,21 @@ pitwall is a Claude Code plugin and a project template. It takes a new project f
 ## Quick start
 
 1. Create an empty repository on GitHub, with no README, licence or `.gitignore`, and clone it. Kickoff makes the first commit itself; a repository that already has commits is adopted instead, after a dry run.
-2. Install the plugin for your user, from a terminal:
+2. On Windows, install Git for Windows first: pitwall's hooks and gate run in its bash. Then install the plugin for your user, from a terminal:
 
    ```
    claude plugin marketplace add Perchusha/pitwall
    claude plugin install pitwall@pitwall
    ```
 
-   Inside Claude Code, `/plugin marketplace add Perchusha/pitwall` and `/plugin install pitwall@pitwall` do the same: choose the user scope there. A project-scope install writes `.claude/settings.json` into the clone, and kickoff then refuses the folder as not empty.
+   Inside Claude Code, `/plugin marketplace add Perchusha/pitwall` and `/plugin install pitwall@pitwall` do the same: choose the user scope there. A project-scope install writes `.claude/settings.json` into the clone, and the folder is then refused as not empty; if that happened, delete `.claude/settings.json` from the clone and install for your user.
 3. Open Claude Code in the clone and start with your idea in one line:
 
    ```
    /pitwall:continue A command line tool that keeps my reading list
    ```
 
-4. Answer its questions. At the end of each stage it asks whether to move on. From then on, in that project, say "continue": the project's `CLAUDE.md` turns it into `/pitwall:continue`, which takes the next step, a stage or the next change of the epic loop.
+4. Answer its questions. At the end of each stage it asks whether to move on. From then on, in that project, say "continue": the project's `CLAUDE.md` turns it into `/pitwall:continue`, which takes the next step, a stage or the next change of the epic loop. A lite project took one session of about four and a half hours from its idea to its first merged epic.
 
 For a project that already exists, open Claude Code in its clone and run `/pitwall:continue`: the adoption starts with a dry run that writes nothing, and nothing is written before your yes.
 
@@ -47,6 +47,7 @@ pitwall asks you only what an agent should not decide. You:
 - answer its questions, one at a time; what the agent only inferred comes to you as one list to confirm;
 - make the one-way decisions: the agent proposes options with its arguments and waits for your answer;
 - confirm a spike's criterion before its prototype, and measure by hand when the spike asks you to;
+- install the tools your project's stack needs, a runtime or a compiler: pitwall installs none;
 - say yes to the plan's merge, once the plan reviewer has approved it;
 - once a review has run its first rounds, decide each finding still open: fixed, or accepted as a risk with your fallback;
 - say yes to each merge that waits for you, and run the manual QA scenarios the change lists for you: high-risk changes, bug fixes and releases always wait, and low and normal risk epics do unless you allowed them, once, at Claude Code's permission prompt, to merge themselves when both checks are green;
@@ -62,8 +63,10 @@ pitwall asks you only what an agent should not decide. You:
 - The standard and full levels have not yet run on a real project, and the adoption of an existing project has run only headless, on a test project: T5b, a real project adopted at the full level, comes after 1.0.
 - The default branch must be `main`: kickoff makes it so, and the adoption stops while it is not, with the steps of the rename.
 - The marketplace serves the plugin from `main`, not from a tag (T8).
-- The guards catch mistakes, not a command built to hide what it does: [R-2, R-3 and R-5](docs/RISKS.md) say what gets past them. A merge that waits for you is held by Claude Code's permission prompt: with permissions skipped, or an allow rule of your own that covers `merge.mjs`, only the skill's text holds it (R-4).
-- Open bugs, none blocking: BUG-9 and BUG-11 to BUG-13, in [docs/BUGS.md](docs/BUGS.md).
+- On a private repository on GitHub Free there is no branch protection: a hook refuses `gh pr merge` until both checks are green, and a merge on GitHub's web page is not stopped.
+- The guards catch mistakes, not a command built to hide what it does: [R-2, R-3 and R-5](docs/RISKS.md) say what gets past them. A merge that waits for you is held by Claude Code's permission prompt, or in auto mode by its classifier: with permissions skipped, or an allow rule of your own that covers `merge.mjs`, only the skill's text holds it (R-4).
+- Checked on Windows, and in CI on Linux; macOS has not been tried.
+- Open bugs: BUG-9 and BUG-11 to BUG-13, none blocking, in [docs/BUGS.md](docs/BUGS.md). One more, found while writing this README, waits for the next branch: a project-scope install that kickoff refuses, which the quick start's user scope avoids.
 
 ## Principles
 
@@ -73,7 +76,7 @@ pitwall asks you only what an agent should not decide. You:
 4. **A stage closes only after its check**, and the check is written before the stage starts.
 5. **The reviewer is not the author.** A fresh-context agent with the project's shared memory of mistakes.
 6. **Volatile facts are checked against live sources.** Versions, models, prices and limits live in one place.
-7. **Costs are bounded.** Call budgets per agent and per session.
+7. **Costs are bounded.** Call budgets for every agent, and a fresh session after a set number of changes.
 8. **The process scales.** A small idea does not walk the path of a large system.
 
 ## Repository layout
