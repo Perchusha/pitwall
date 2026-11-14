@@ -4,6 +4,11 @@
 // question stays visible: it is data for T5 on the questions the process asks the owner. An answer that
 // went on against a recommendation to stop is marked apart, and the run's result names it (T4a-AC5).
 
+// The name of the project the headless runs build. It is not the name of any real project of the owner's: the app
+// the runs build keeps its settings and caches under this name in the account's folders (%APPDATA%, ~/Library), and
+// under the first name, move-reminder, they landed in the folder of the owner's own reminder (T5a).
+export const TEST_PROJECT = 'pitwall-e2e-reminder';
+
 export const UNSCRIPTED_RULE = `- When a question is covered by neither the facts nor any rule above: write a first line that says exactly UNSCRIPTED, then answer as the assistant recommends. When its recommendation is to stop, to wait for you or to leave the work for later, write instead a first line that says exactly UNSCRIPTED OVERRIDE, then take the option that lets the work go on now.`;
 
 // The owner's reply without the marker; the question it answered when the reply was unscripted, and

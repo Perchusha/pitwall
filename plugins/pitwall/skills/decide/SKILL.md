@@ -1,6 +1,6 @@
 ---
 name: decide
-description: Stage 2 of pitwall. Walks every architecture and stack area, asks the owner about each one-way decision with a comparison of options, accepts the two-way decisions as one list, and records each one-way decision as an ADR and the result in docs/STACK.md. The owner runs it as /pitwall:decide after discovery, or as /pitwall:decide <area> to revisit one area after a spike or a plan review.
+description: Stage 2 of pitwall. Walks every architecture and stack area, asks the owner about each one-way decision with a comparison of options, accepts the two-way decisions as one list, and records each one-way decision as an ADR and the result in docs/STACK.md. /pitwall:continue runs it after discovery; the owner can also run it as /pitwall:decide, or as /pitwall:decide <area> to revisit one area after a spike or a plan review.
 argument-hint: "[area to revisit]"
 disable-model-invocation: true
 ---
@@ -13,7 +13,9 @@ Turns the idea and the discovery into recorded decisions: one ADR per one-way de
 
 Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`decide`, `processLevels`, `maturity`, `registries`, `planning.branch`, `budgets.researcherToolCalls`) and `${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs`.
 
-With an area as the argument (`$ARGUMENTS` names one of `decide.areas`), follow "Revisit one area" below instead of the steps.
+With an area as the argument (the arguments, on the line below, name one of `decide.areas`), follow "Revisit one area" below instead of the steps.
+
+Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
 
 ## Rules
 
@@ -44,7 +46,7 @@ With an area as the argument (`$ARGUMENTS` names one of `decide.areas`), follow 
 9. **Architecture boundaries.** Fill the "Architecture boundaries" section of `CLAUDE.md` from the folder-structure and module-boundary decisions: each boundary names the tool that will enforce it.
 10. **Docs check.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage decide`. Fix what it reports and run it again until it passes.
 11. **Commit** on the planning branch: `git add docs/ CLAUDE.md .claude/pitwall.json` (the last only changes if `protect.mjs` recorded a mode) and `git commit -m "docs: decisions and stack"`. With a remote, `git push -u origin <branch>`.
-12. **Hand over.** Tell the owner how many ADRs were written, which assumption is the spike candidate, and that the next stage is `/pitwall:spike` when the process level asks for one, or `/pitwall:plan`.
+12. **Hand over.** Tell the owner how many ADRs were written, which assumption is the spike candidate, and the next stage: a spike on it when the process level asks for one, or when they want one, else the plan; `/pitwall:continue`, or just "continue", runs it. When `/pitwall:continue` runs this stage, it asks which way to move on.
 
 ## Revisit one area
 
@@ -54,7 +56,7 @@ When a spike was not confirmed, or a plan review shows that a decision does not 
 2. **Research and ask** as in steps 3 and 4, for this area only, with the spike's measured result and the old ADR's options as context. The old choice is one of the options, with what the spike measured.
 3. **Record.** Write the new ADR (the next free number, `Class: one-way`, `Decided by: owner`, today's date) and, when the area had an ADR, set the old one's Status to `superseded by ADR-NNNN`; an area that was a two-way line has nothing to supersede. In the new ADR's Context, link each spike from step 1 by its path, `../spikes/<topic>.md`: the plan check takes that link as the sign that this is the decision the spike led to. Update the area's rows in `docs/STACK.md` (versions as in step 6), and set the `Follow-up:` of each spike from step 1 to the new ADR.
 4. **Check and commit.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage decide` until it passes, then `git add docs/ CLAUDE.md` and `git commit -m "docs: revisit <area>"`. With a remote, `git push -u origin <planning branch>`.
-5. **Hand over.** Tell the owner the new decision, and that the next stage is `/pitwall:plan` (it resumes where it stopped).
+5. **Hand over.** Tell the owner the new decision, and that the next stage is the plan, which resumes where it stopped: `/pitwall:continue`, or just "continue".
 
 ## Output
 

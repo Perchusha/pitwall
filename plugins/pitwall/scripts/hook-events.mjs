@@ -7,9 +7,10 @@
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { dirname } from 'node:path';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { config, ghRunner, parseJson, pluginRoot, pluginVersion, readGate, readReview } from './lib.mjs';
+import { config, ghRunner, hookState, ownerPromptFile, parseJson, pluginRoot, pluginVersion, readGate, readReview, safeName as safe, samePath } from './lib.mjs';
 import { guard, norm } from './hook-guard.mjs';
 import { guardWorks, syncRules } from './merge-rules.mjs';
 
@@ -20,23 +21,13 @@ function git(args, dir) {
   return { ok: !r.error && r.status === 0, status: r.error ? -1 : r.status, out: (r.stdout ?? '').trim(), err: `${r.stderr ?? ''}${r.error?.message ?? ''}`.trim() };
 }
 
-// The account, so two users of one machine keep apart state folders.
-function account() {
-  try {
-    return safe(userInfo().username);
-  } catch {
-    return safe(process.getuid?.() ?? 'user');
-  }
-}
-
-const safe = (s) => String(s ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
 const lastLine = (text) => String(text).trim().split('\n').pop();
 
 export function run(event, input, root) {
   const cfg = config();
   const settings = parseJson(readFileSync(join(root, '.claude', 'pitwall.json'), 'utf8'));
   if (!settings || typeof settings !== 'object') throw new Error('.claude/pitwall.json is not JSON');
-  const dir = join(process.env.PITWALL_HOOK_STATE || join(tmpdir(), `pitwall-${account()}`), safe(input.session_id));
+  const dir = join(hookState(), safe(input.session_id));
   mkdirSync(dir, { recursive: true });
   const key = input.agent_id ? `agent-${safe(input.agent_id)}` : 'main';
   const s = { cfg, settings, root, dir, key, input };
@@ -113,7 +104,21 @@ function preToolUse(s) {
       : `this agent has used its ${budget.stop} tool calls (${budget.name}.stop): return your report now, PARTIAL with a handoff.`);
   }
 
-  const refusal = guard({ tool, input: input.tool_input ?? {}, agentId: input.agent_id, agentType: input.agent_type }, guardContext(s));
+  const refusal = guard({ tool, input: input.tool_input ?? {}, agentId: input.agent_id, agentType: input.agent_type, permissionMode: input.permission_mode }, guardContext(s));
+  // An owner's script (ADR-0010, T5a): Claude Code asks the owner at its permission prompt, and the note tells the
+  // script which answer the guard sent there, for this project, and when.
+  if (refusal?.ask) {
+    // Nobody attends a headless session, so nobody can answer the prompt: the model gets the way on, not words
+    // written for the owner. Outside a git repository there is nowhere to leave the note.
+    const handOver = 'hand the owner the command to run themselves in a terminal, from the project folder.';
+    if (unattended) return deny(refusal.rule, `${refusal.what}, and nobody attends this session to answer Claude Code's permission prompt: ${handOver}`);
+    const note = ownerPromptFile(s.root, cfg);
+    if (!note) return deny(refusal.rule, `${refusal.what}, and the project is no git repository yet, where the guard notes that it asked: ${handOver}`);
+    const words = String(input.tool_input?.command ?? '').split(/\s+/);
+    mkdirSync(dirname(note), { recursive: true });
+    writeFileSync(note, JSON.stringify({ at: Date.now(), project: samePath(s.root), flags: words.filter((w) => /^--[a-z-]+$/.test(w)) }) + '\n');
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: `pitwall asks you (${refusal.rule}): ${refusal.reason}` } };
+  }
   if (refusal) return deny(refusal.rule, refusal.reason);
 
   let note = null;
@@ -276,9 +281,18 @@ function planningStage(root, cfg, branch) {
   const stages = ['kickoff', 'discovery', 'decide', ...(spikes ? ['spike'] : []), 'plan', 'plan-review'];
   for (const stage of stages) {
     const r = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'docs-check.mjs'), '--root', root, '--stage', stage], { encoding: 'utf8' });
-    if (r.status !== 0) return `planning on ${plan}; the next stage is ${stage} (its docs check does not pass yet): /pitwall:${stage === 'plan-review' ? 'plan' : stage}.`;
+    if (r.status !== 0) return `planning on ${plan}; the next stage is ${stage} (its docs check does not pass yet): /pitwall:continue runs it, by the ${stage === 'plan-review' ? 'plan' : stage} skill.`;
+    // Kickoff's documents are only its first half (review round 2): it is over when a commit holds the project's
+    // settings and the planning branch exists. Until then the way on is still kickoff, which resumes.
+    if (stage === 'kickoff') {
+      const committed = git(['cat-file', '-e', 'HEAD:.claude/pitwall.json'], root).ok;
+      // The planning branch is there when this clone has it or origin does: a new clone of a project in the
+      // middle of its planning holds it only as origin's (review round 3).
+      const branched = [`refs/heads/${plan}`, `refs/remotes/origin/${plan}`].some((ref) => git(['rev-parse', '--verify', '-q', ref], root).ok);
+      if (!committed || !branched) return `planning on ${plan}; kickoff is not finished (${!committed ? 'no commit holds the skeleton yet' : `the branch ${plan} is not there yet`}): /pitwall:continue goes on with it, by the kickoff skill, which resumes.`;
+    }
   }
-  return `planning on ${plan}; the plan is reviewed and waits for its merge: /pitwall:plan.`;
+  return `planning on ${plan}; the plan is reviewed and waits for its merge: /pitwall:continue goes on with it, by the plan skill.`;
 }
 
 function selfTest(s) {

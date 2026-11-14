@@ -100,7 +100,8 @@ const scratch = (prefix, fn) => {
   try {
     return fn(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // A detached fake CI may still hold the folder on Windows for a moment: EBUSY is retried.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 };
 const textFiles = all.filter((p) => !['.png', '.jpg', '.jpeg', '.ico'].includes(extname(p)));
@@ -175,6 +176,87 @@ step('skills', (report) => {
       report(`skills/${name}: status is not "built" but it can trigger by itself (set disable-model-invocation: true)`);
     }
   }
+  // T5a: the conductor leads the whole path. It is the one skill the model starts by itself, on the owner's
+  // "continue", which the template's CLAUDE.md asks for; it runs each stage from that stage's skill file, so every
+  // stage it names has one; and it never hands the owner a command for the next stage.
+  const conductor = readFileSync(join(dir, 'continue', 'SKILL.md'), 'utf8');
+  if (frontmatter(conductor)?.['disable-model-invocation'] === 'true') report('skills/continue: the conductor must be startable by the model (no disable-model-invocation), or the owner\'s "continue" cannot reach it');
+  const stagesLine = /the stage skills `\$\{CLAUDE_PLUGIN_ROOT\}\/skills\/<stage>\/SKILL\.md` \(([^)]*)\)/.exec(conductor)?.[1] ?? '';
+  const stageNames = [...stagesLine.matchAll(/`([a-z-]+)`/g)].map((m) => m[1]);
+  for (const s of ['kickoff', 'discovery', 'decide', 'spike', 'plan']) if (!stageNames.includes(s)) report(`skills/continue: its stage skills do not name ${s}`);
+  for (const s of stageNames) {
+    const f = join(dir, s, 'SKILL.md');
+    if (!existsSync(f)) report(`skills/continue names the stage skill ${s}, which has no SKILL.md`);
+    else {
+      // The hand-over steps themselves, not the description, which names the conductor too (review round 1).
+      const handOvers = readFileSync(f, 'utf8').split('\n').filter((l) => /^\d+\. \*\*Hand over\.\*\*/.test(l));
+      if (handOvers.length === 0 || !handOvers.every((l) => /`\/pitwall:continue`/.test(l)) || handOvers.some((l) => /next stage is `\/pitwall:(?!continue)/.test(l))) report(`skills/${s}: each "Hand over" step must name /pitwall:continue as the way to the next stage, and no stage's own command`);
+    }
+  }
+  // L-17: the conductor reads the stage skills as files, where Claude Code fills no placeholder, while it fills
+  // both in the conductor's own text. So the sentence that explains them must still say which they are once they
+  // are filled, and the conductor's text must not lean on a placeholder that would be gone.
+  const delivered = conductor.split('${CLAUDE_PLUGIN_ROOT}').join('/the/plugin').split('$ARGUMENTS').join('');
+  if (!/a dollar sign, then `CLAUDE_PLUGIN_ROOT` in braces/.test(delivered) || !/a dollar sign, then `ARGUMENTS`/.test(delivered)) report('skills/continue: as Claude Code delivers it, with both placeholders filled, the text no longer says which placeholders a stage skill\'s file holds (L-17)');
+  // The arguments stand once, on a line of their own that reads well filled and empty; every step then says
+  // "this skill's arguments" (review round 1 found "after `` of them", what an empty one left of a sentence).
+  for (const name of readdirSync(dir)) {
+    const argLines = readFileSync(join(dir, name, 'SKILL.md'), 'utf8').split('\n').filter((l) => l.includes('$ARGUMENTS'));
+    if (argLines.length > 1 || argLines.some((l) => !/^\s*Arguments, .*: \$ARGUMENTS$/.test(l))) report(`skills/${name}: the arguments placeholder stands once at most, at the end of a line "Arguments, ...: ", and nowhere inside a sentence, where an empty one leaves a gap (L-17)`);
+  }
+  if (!conductor.split('\n').some((l) => /^Arguments, .*: \$ARGUMENTS$/.test(l))) report('skills/continue: it takes arguments (the idea, or how many changes to merge), on a line "Arguments, ...: "');
+  if (!/run `\/pitwall:continue`/.test(readFileSync(join(plugin, 'template', 'CLAUDE.md.tmpl'), 'utf8'))) report('the template\'s CLAUDE.md does not tell the session to run /pitwall:continue when the owner says to continue');
+  // The plan review's rounds at a level never exceed the general limit, and its full rounds come before its last.
+  const cfgAll = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
+  for (const [level, l] of Object.entries(cfgAll.processLevels)) {
+    const r = l.planReviewRounds;
+    if (r && !(r.maxRounds >= 1 && r.maxRounds <= cfgAll.review.maxRounds && r.ownerDecidesAtReject >= 1 && r.ownerDecidesAtReject < r.maxRounds)) report(`config: processLevels.${level}.planReviewRounds must hold 1 <= ownerDecidesAtReject < maxRounds <= review.maxRounds`);
+    // The lightest level is the one a small idea must not drown at: its plan review is shorter than the general
+    // one, and its notes go to the implementers (T5a, owner 2026-11-13).
+    if (level === 'lite' && !(r && r.maxRounds < cfgAll.review.maxRounds && l.planReviewNotes === 'implementers')) report('config: processLevels.lite must hold planReviewRounds shorter than review.maxRounds, and planReviewNotes "implementers"');
+    if (!['implementers', 'owner'].includes(l.planReviewNotes)) report(`config: processLevels.${level}.planReviewNotes must be "implementers" or "owner"`);
+  }
+});
+
+// 4b. T5a-AC3: run-stats.mjs counts a run from Claude Code's transcripts: on a transcript written here, a stage
+// the conductor led, a form's question, a typed answer, an intervention and a sub-agent with its own transcript.
+step('run stats', (report) => {
+  scratch('pitwall-stats-', (dir) => {
+    const stats = (args) => spawnSync(process.execPath, [join(root, 'scripts', 'run-stats.mjs'), ...args], { encoding: 'utf8' });
+    let r = stats(['--transcripts', join(dir, 'none')]);
+    if (r.status !== 0 || !/nothing to count/.test(r.stdout)) report(`run-stats without transcripts must say so and exit 0: exit ${r.status}\n${r.stdout}${r.stderr}`);
+    const at = (m) => `2026-01-01T10:${String(m).padStart(2, '0')}:00.000Z`;
+    const user = (m, content) => ({ type: 'user', timestamp: at(m), message: { role: 'user', content } });
+    const asst = (m, id, content, out = 10) => ({ type: 'assistant', timestamp: at(m), message: { id, role: 'assistant', content, usage: { input_tokens: 5, output_tokens: out, cache_read_input_tokens: 100, cache_creation_input_tokens: 0 } } });
+    const lines = [
+      user(0, '<command-message>pitwall:continue</command-message>\n<command-name>/pitwall:continue</command-name>'),
+      asst(1, 'm1', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'C:\\plugin\\skills\\discovery\\SKILL.md' } }]),
+      asst(2, 'm2', [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ question: 'Which licence?', header: 'Licence', options: [{ label: 'MIT' }, { label: 'Apache-2.0' }] }] } }]),
+      user(4, [{ type: 'tool_result', tool_use_id: 'q1', content: 'Your questions have been answered: "Which licence?"="MIT".' }]),
+      asst(5, 'm3', [{ type: 'tool_use', id: 'a1', name: 'Agent', input: { subagent_type: 'pitwall:researcher', description: 'Research analogues' } }]),
+      asst(6, 'm4', [{ type: 'text', text: 'The table is ready.\n\nDo you accept it?' }]),
+      user(7, 'yes'),
+      asst(8, 'm5', [{ type: 'text', text: 'Discovery is committed.' }]),
+      user(9, 'why was that so slow'),
+    ];
+    const t = join(dir, 'transcripts');
+    mkdirSync(join(t, 'session-1', 'subagents'), { recursive: true });
+    writeFileSync(join(t, 'session-1.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    writeFileSync(join(t, 'session-1', 'subagents', 'agent-x.jsonl'), [asst(5, 's1', [{ type: 'tool_use', id: 'w1', name: 'WebSearch', input: {} }], 40), asst(6, 's2', [{ type: 'text', text: 'done' }], 60)].map((l) => JSON.stringify(l)).join('\n') + '\n');
+    writeFileSync(join(t, 'session-1', 'subagents', 'agent-x.meta.json'), JSON.stringify({ agentType: 'pitwall:researcher', toolUseId: 'a1' }));
+    r = stats(['--transcripts', t, '--list']);
+    const row = r.stdout.split('\n').find((l) => l.startsWith('| discovery |'))?.split('|').map((c) => c.trim()) ?? [];
+    // Stage, minutes, waiting, questions, unnecessary, refused, answers, interventions, main calls, main tokens, sub-agents, their calls, their tokens.
+    const got = [row[4], row[5], row[7], row[8], row[9], row[11], row[12], row[13]].join(' / ');
+    if (r.status !== 0 || got !== '1 / 0 / 1 / 1 / 3 / 1 (1 researcher) / 1 / 100 / 210') report(`run-stats on a transcript the conductor led: the discovery row holds ${got}\n${r.stdout}${r.stderr}`);
+    if (/^\| continue \|/m.test(r.stdout)) report('run-stats must name a stage the conductor led by the stage skill it read, not "continue"');
+    if (!/^Q1 \[discovery\] 2 options, waited 2\.0 min/m.test(r.stdout) || !/^M1 \[discovery\] answer/m.test(r.stdout) || !/^M2 \[discovery\] intervention/m.test(r.stdout)) report(`run-stats --list must name the question, the answer and the intervention:\n${r.stdout}`);
+    writeFileSync(join(dir, 'marks.json'), JSON.stringify({ unnecessary: ['Q1'], answers: ['M2'] }));
+    r = stats(['--transcripts', t, '--marks', join(dir, 'marks.json')]);
+    const marked = r.stdout.split('\n').find((l) => l.startsWith('| discovery |'))?.split('|').map((c) => c.trim()) ?? [];
+    if ([marked[5], marked[7], marked[8]].join(' / ') !== '1 / 2 / 0') report(`run-stats --marks must count the marked question as unnecessary and the marked message as an answer: ${[marked[5], marked[7], marked[8]].join(' / ')}`);
+    if (stats(['--transcripts', t, '--bogus']).status !== 2) report('run-stats with an unknown flag must be a usage error');
+  });
 });
 
 // 5. Agents: named after their file, described, and an unbuilt agent says so in its description.
@@ -321,7 +403,8 @@ step('template gate behaviour', (report) => {
     cpSync(join(plugin, 'template', 'scripts', 'gate'), join(nogit, 'gate'));
     expect('outside git', run('bash', ['gate'], nogit), 1);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // Windows may hold a folder a moment after a process in it ends: EBUSY is retried.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 });
 
@@ -1114,6 +1197,14 @@ slowStep('plan and spike checks', (report) => {
       e('docs/spikes/notify.md', (t) => t.replace('- Outcome: confirmed', '- Outcome: not confirmed').replace('- Follow-up: -', '- Follow-up: ADR-0004'));
       writeFileSync(join(p, 'docs/adr/0004-models.md'), readFileSync(join(p, 'docs/adr/0001-stack.md'), 'utf8').replace('# ADR-0001: Stack', '# ADR-0004: Models').replace('- Date: 2026-11-05', '- Date: 2026-11-08').replace('A desktop app.', 'After ../spikes/notify.md, models move to a local file.'));
     }, []);
+    // T5a: the plan reviewer's notes for the implementers, where the level sends them into the file: each starts with
+    // the epic it concerns; a file from before the section passes.
+    const withNotes = (lines) => (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace('\n## Approval', `\n${lines}\n\n## Approval`));
+    if (!readFileSync(join(plugin, 'template', 'docs', 'PLAN-REVIEW.md'), 'utf8').includes('\n## Notes for the implementers\n')) report('the template\'s docs/PLAN-REVIEW.md has no "## Notes for the implementers" section');
+    planCase('notes for the implementers, each with its epic', withNotes('- E1: the snooze count restarts after a reboot\n- E0: pin the runtime version in CI'), [], 'plan-review');
+    planCase('a note for the implementers that names no epic', withNotes('- The snooze count restarts after a reboot'), [/"## Notes for the implementers": "- The snooze count.*does not start with its epic/], 'plan-review');
+    planCase('a note for an epic the plan does not have', withNotes('- E9: later'), [/"## Notes for the implementers": E9 is not an epic of docs\/EPICS\.md/], 'plan-review');
+    planCase('a plan review from before the notes section', (p, e) => e('docs/PLAN-REVIEW.md', (t) => t.replace(/## Notes for the implementers\n[\s\S]*?\n## Approval/, '## Approval')), [], 'plan-review');
     // T2 review, round 4: Markdown that GitHub shows one way and a line reader reads another.
     const hide = (label, rel, fn, patterns) => planCase(`hidden from the check: ${label}`, (p, e) => e(rel, fn), patterns, 'plan-review');
     const afterRow2 = (extra) => (t) => t.replace('| 2 | Full-screen games hide it | should fix | R-1 |\n', `| 2 | Full-screen games hide it | should fix | R-1 |\n${extra}`);
@@ -1719,8 +1810,9 @@ slowStep('code review status, merges by risk class, the owner\'s choice (fake gh
     merge('already merged', { scenario: { ...green, pr: { ...green.pr, state: 'MERGED' } }, code: 0, result: 'merged', merges: 0, says: ['already merged'] });
     merge('no PR', { scenario: { ...green, pr: null }, code: 3, result: 'pending', merges: 0, says: ['there is no PR from epic/E1-reminder'] });
 
-    // merge-choice.mjs: the owner's script, never under Claude Code, rules only while the guard works.
-    const owner = { ...process.env, CLAUDECODE: '' };
+    // merge-choice.mjs: the owner's script. In their terminal it runs as it is; under Claude Code only after the
+    // guard's prompt (the hooks step runs that path); its rules only while the guard works.
+    const owner = { ...process.env, CLAUDECODE: '', PITWALL_HOOK_STATE: join(dir, 'no-hook-state') };
     delete owner.CLAUDECODE;
     const choiceRun = (p, args, env = owner, script = join(scripts, 'merge-choice.mjs')) => spawnSync(process.execPath, [script, ...args, '--project', p], { encoding: 'utf8', env });
     const local = (p) => join(p, '.claude', 'settings.local.json');
@@ -1730,7 +1822,7 @@ slowStep('code review status, merges by risk class, the owner\'s choice (fake gh
     const expectRules = [...new Set([plugin, plugin.split('\\').join('/')])].flatMap((d) => [`Bash(node "${d}/scripts/review-status.mjs" *)`, `Bash(node "${d}/scripts/merge.mjs" --change)`]);
     let p = fresh();
     let r = choiceRun(p, ['--allow'], { ...owner, CLAUDECODE: '1' });
-    if (r.status !== 1 || !/not inside Claude Code/.test(r.stdout) || existsSync(local(p)) || choiceOf(p) !== false) report(`merge-choice under Claude Code must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
+    if (r.status !== 1 || !/only right after pitwall's guard sent this very command to Claude Code's permission prompt, and it did not/.test(r.stdout) || existsSync(local(p)) || choiceOf(p) !== false) report(`merge-choice under Claude Code, with no prompt of the guard before it, must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
     r = choiceRun(p, ['--allow']);
     if (r.status !== 0 || choiceOf(p) !== true || JSON.stringify(rules(p)) !== JSON.stringify(expectRules)) report(`merge-choice --allow: exit ${r.status}, autoMerge ${choiceOf(p)}, rules ${JSON.stringify(rules(p))}\n${r.stdout}${r.stderr}`);
     writeFileSync(local(p), JSON.stringify({ permissions: { allow: ['Bash(npm test)', ...expectRules] } }, null, 2));
@@ -1798,7 +1890,7 @@ slowStep('owner calls, snapshots and unscripted stops', (report) => {
     gitIn(base, 'remote', 'add', 'origin', origin);
     gitIn(base, 'push', '-q', 'origin', 'main', 'epic/E1-reminder');
     let n = 0;
-    const live = (p) => ({ ...process.env, ...identity, FAKE_GH_LIVE: join(`${p}-gh`), FAKE_GH_ORIGIN: `${p}-origin.git`, FAKE_GH_REPO: 'e2e/move-reminder', PITWALL_GH: JSON.stringify([process.execPath, fakeGh]) });
+    const live = (p) => ({ ...process.env, ...identity, FAKE_GH_LIVE: join(`${p}-gh`), FAKE_GH_ORIGIN: `${p}-origin.git`, FAKE_GH_REPO: 'e2e/pitwall-e2e-reminder', PITWALL_GH: JSON.stringify([process.execPath, fakeGh]) });
     const fresh = (prepare) => {
       const p = join(dir, `o${(n += 1)}`);
       cpSync(base, p, { recursive: true });
@@ -1813,8 +1905,8 @@ slowStep('owner calls, snapshots and unscripted stops', (report) => {
       gitIn(p, 'push', '-q', '-f', 'origin', branch);
       fake(p, 'pr', 'create', '--base', 'main', '--head', branch, '--title', branch, '--body', 'x');
       const head = gitIn(p, 'rev-parse', branch).stdout.trim();
-      fake(p, 'api', '-X', 'POST', `repos/e2e/move-reminder/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=approved');
-      for (let i = 0; i < 60 && json(fake(p, 'api', `repos/e2e/move-reminder/commits/${head}/check-runs`))?.check_runs?.[0]?.status !== 'completed'; i += 1) spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
+      fake(p, 'api', '-X', 'POST', `repos/e2e/pitwall-e2e-reminder/statuses/${head}`, '-f', 'state=success', '-f', 'context=ai-review', '-f', 'description=approved');
+      for (let i = 0; i < 60 && json(fake(p, 'api', `repos/e2e/pitwall-e2e-reminder/commits/${head}/check-runs`))?.check_runs?.[0]?.status !== 'completed'; i += 1) spawnSync(process.execPath, ['-e', 'setTimeout(() => {}, 1000)']);
     };
     const json = (r) => {
       try {
@@ -1926,7 +2018,7 @@ slowStep('owner calls, snapshots and unscripted stops', (report) => {
     p = fresh();
     const gh = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env: live(p), encoding: 'utf8' });
     const g = (...args) => spawnSync('git', args, { cwd: p, encoding: 'utf8' });
-    const repo = 'e2e/move-reminder';
+    const repo = 'e2e/pitwall-e2e-reminder';
     const snap = captureRemote(gh, g, repo);
     if (snap.id !== 'R_fakeRepositoryId' || !snap.main || !snap.branches.includes('epic/E1-reminder')) report(`captureRemote: ${JSON.stringify(snap)}`);
     if (JSON.stringify(restoreRemote(gh, g, repo, snap)) !== '[]') report('restoreRemote changed a repository that holds the snapshot');
@@ -1962,7 +2054,7 @@ slowStep('owner calls, snapshots and unscripted stops', (report) => {
     gitIn(p, 'switch', '-q', 'main');
     gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'later');
     gitIn(p, 'push', '-q', 'origin', 'main');
-    throws('restore after main moved', () => restoreRemote(gh, g, repo, snap), /main on e2e\/move-reminder moved past the snapshot/);
+    throws('restore after main moved', () => restoreRemote(gh, g, repo, snap), /main on e2e\/pitwall-e2e-reminder moved past the snapshot/);
     // Let the fake CI finish before the folder goes (Windows keeps a folder a running process works in).
     for (const d of readdirSync(dir).filter((x) => x.endsWith('-gh'))) {
       for (let i = 0; i < 60; i += 1) {
@@ -2649,7 +2741,7 @@ slowStep('fake GitHub against GitHub\'s answers', (report) => {
     gitIn(p, 'commit', '-q', '--allow-empty', '-m', 'docs: start E0-skeleton');
     gitIn(p, 'push', '-q', 'origin', 'main', 'epic/E0-skeleton');
     const head = gitIn(p, 'rev-parse', 'HEAD').stdout.trim();
-    const env = { ...process.env, ...identity, FAKE_GH_LIVE: state, FAKE_GH_ORIGIN: origin, FAKE_GH_REPO: 'e2e/move-reminder' };
+    const env = { ...process.env, ...identity, FAKE_GH_LIVE: state, FAKE_GH_ORIGIN: origin, FAKE_GH_REPO: 'e2e/pitwall-e2e-reminder' };
     const fake = (...args) => spawnSync(process.execPath, [fakeGh, ...args], { cwd: p, env, encoding: 'utf8' });
     const json = (r) => {
       try {
@@ -2659,7 +2751,7 @@ slowStep('fake GitHub against GitHub\'s answers', (report) => {
       }
     };
     const fieldsOf = (k) => recs[k].args[recs[k].args.indexOf('--json') + 1];
-    const repo = 'repos/e2e/move-reminder';
+    const repo = 'repos/e2e/pitwall-e2e-reminder';
     const answers = {};
     // The same requests the recorded run made, in the same states: a PR whose review asked for changes when
     // its checks were read (so gh exits 1), then approved, merged, and main read afterwards.
@@ -2892,7 +2984,7 @@ const PAYLOADS = [
   'implementer-pre-tool-use-subagenthandback', 'implementer-subagent-stop', 'plan-reviewer-post-tool-use-write',
   'implementer-pre-tool-use-write', 'implementer-pre-tool-use-bash', 'implementer-post-tool-use-write',
   'code-reviewer-pre-tool-use-bash', 'code-reviewer-pre-tool-use-write', 'code-reviewer-post-tool-use-write', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop',
-  'qa-pre-tool-use-bash', 'qa-pre-tool-use-write',
+  'qa-pre-tool-use-bash', 'qa-pre-tool-use-write', 'qa-post-tool-use-write', 'qa-pre-tool-use-subagenthandback', 'qa-subagent-stop',
 ];
 slowStep('hooks (recorded payloads)', (report) => {
   const pinned = readFileSync(join(root, '.claude-code-version'), 'utf8').trim();
@@ -2974,6 +3066,7 @@ slowStep('hooks (recorded payloads)', (report) => {
       if (!out) return 'allow';
       const h = out.hookSpecificOutput ?? {};
       if (h.permissionDecision === 'deny') return `deny:${/pitwall refused this call \((\w+)\)/.exec(h.permissionDecisionReason ?? '')?.[1] ?? '?'}`;
+      if (h.permissionDecision === 'ask') return `ask:${/^pitwall asks you \((\w+)\)/.exec(h.permissionDecisionReason ?? '')?.[1] ?? '?'}`;
       if (out.decision === 'block') return 'block';
       if (h.additionalContext) return 'context';
       if (out.systemMessage) return 'message';
@@ -3430,12 +3523,85 @@ slowStep('hooks (recorded payloads)', (report) => {
     expect('implementer-pre-tool-use-bash', 'implementer runs review-status.mjs on a release', { input: { tool_input: { command: releaseStatus } } }, 'deny:review');
     bash(releaseStatus, 'deny:review');
 
-    // T3b-AC6: merge-choice.mjs records the owner's choice, so no agent runs it, the main conversation included.
+    // T3b-AC6, T5a: merge-choice.mjs records the owner's choice. The main conversation runs it only through Claude
+    // Code's permission prompt: the guard answers "ask" for the script alone in its call, from the project root, in a
+    // session somebody attends or may attend. It refuses it in a line with anything else, from another folder, in a
+    // session nobody attends or whose mode never asks, and to every sub-agent.
     const choice = `node "${P}/scripts/merge-choice.mjs" --allow`;
-    bash(choice, 'deny:owner');
-    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'deny:owner');
-    bash(`cd "${fwd(project)}" && ${choice}`, 'deny:owner');
-    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'deny:owner');
+    const attended = { env: { CLAUDE_CODE_SESSION_ATTENDED: '1' } };
+    bash(choice, 'ask:owner', attended);
+    bash(`node "${P}/scripts/merge-choice.mjs" --deny`, 'ask:owner', attended);
+    bash(`cd "${fwd(project)}" && ${choice}`, 'ask:owner', attended);
+    bash(`node ${P}/scripts/merge-choice.mjs --allow --project .`, 'ask:owner', attended);
+    bash(`${choice} 2>&1`, 'ask:owner', attended);
+    bash(choice, 'ask:owner', { env: { CLAUDE_CODE_SESSION_ATTENDED: undefined } });
+    expect('main-pre-tool-use-bash', 'PowerShell: merge-choice.mjs alone', { tool: 'PowerShell', input: { tool_input: { command: choice } }, ...attended }, 'ask:owner');
+    bash(`${choice} && git status`, 'deny:owner', attended);
+    bash(`git status; ${choice}`, 'deny:owner', attended);
+    bash(`${choice} > choice.log`, 'deny:owner', attended);
+    bash(`echo --allow | xargs node "${P}/scripts/merge-choice.mjs"`, 'deny:owner', attended);
+    bash(`cd docs && ${choice}`, 'deny:owner', attended);
+    bash(`cd docs && ${choice} --project "${fwd(project)}"`, 'ask:owner', attended);
+    bash(`cd docs && ${choice} --project ..`, 'ask:owner', attended);
+    // --project must name this project: the prompt, and the guard's note of it, are for this one.
+    bash(`cd docs && ${choice} --project .`, 'deny:owner', attended);
+    bash(`${choice} --project "${fwd(dir)}/another"`, 'deny:owner', attended);
+    for (const mode of cfg.hooks.noPromptModes) expect('main-pre-tool-use-bash', `merge-choice.mjs in the mode ${mode}`, { input: { permission_mode: mode, tool_input: { command: choice } }, ...attended }, 'deny:owner');
+    if (cfg.hooks.noPromptModes.length < 2) report('hooks.noPromptModes must name the modes that never prompt (bypassPermissions, dontAsk)');
+    {
+      // Nobody attends a headless session: no prompt can be answered, so the call is refused with the way on, and no note is left.
+      const r = bash(choice, 'deny:owner');
+      if (!/nobody attends this session.*hand the owner the command/.test(r.out?.hookSpecificOutput?.permissionDecisionReason ?? '')) report(`merge-choice.mjs in a session nobody attends must be refused with the hand-over: ${JSON.stringify(r.out)}`);
+      // The prompts above left their note in the shared project: nothing ran on it, and nothing may later.
+      rmSync(join(project, '.git', ...cfg.hooks.ownerPromptNote.split('/')), { force: true });
+      // Outside a git repository there is nowhere for the note.
+      const bare = join(dir, 'no-git');
+      if (layOut(bare).status !== 0) throw new Error('layout failed');
+      expect('main-pre-tool-use-bash', 'merge-choice.mjs in a project that is no git repository', { projectDir: bare, input: { tool_input: { command: choice } }, ...attended }, 'deny:owner');
+    }
+    {
+      // The note the guard leaves at the prompt, in the project's git directory, is what lets the script run under
+      // Claude Code: once, for the answer the prompt showed, for this project, and not long after.
+      const cp = makeProject('choice');
+      const ccEnv = { ...process.env, CLAUDECODE: '1', HOME: home, USERPROFILE: home };
+      const runChoice = (flag, p = cp) => spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), flag, '--project', p], { encoding: 'utf8', env: ccEnv });
+      const choiceIs = () => JSON.parse(readFileSync(join(cp, '.claude', 'pitwall.json'), 'utf8')).autoMerge;
+      const noteFile = join(cp, '.git', ...cfg.hooks.ownerPromptNote.split('/'));
+      const noted = () => existsSync(noteFile);
+      const ask = (flag) => expect('main-pre-tool-use-bash', `merge-choice.mjs ${flag} in the choice project`, { projectDir: cp, input: { tool_input: { command: `node "${P}/scripts/merge-choice.mjs" ${flag}` } }, ...attended }, 'ask:owner');
+      let c = runChoice('--allow');
+      if (c.status !== 1 || !/and it did not/.test(c.stdout) || choiceIs() !== false) report(`merge-choice under Claude Code without the guard's prompt must refuse: exit ${c.status}\n${c.stdout}`);
+      ask('--deny');
+      if (!noted()) report(`the guard's "ask" must leave its note of the prompt in the git directory, ${noteFile}`);
+      else if (!readdirSync(state).every((f) => !f.startsWith('owner-prompt'))) report('the guard\'s note must not lie in the hooks\' state folder, which a sandboxed command does not share');
+      c = runChoice('--allow');
+      if (c.status !== 1 || choiceIs() !== false || noted()) report(`merge-choice --allow after a prompt for --deny must refuse and use the note up: exit ${c.status}\n${c.stdout}`);
+      ask('--allow');
+      if (noted()) {
+        const old = JSON.parse(readFileSync(noteFile, 'utf8'));
+        writeFileSync(noteFile, JSON.stringify({ ...old, at: old.at - (cfg.hooks.ownerPromptMinutes + 1) * 60000 }));
+      }
+      c = runChoice('--allow');
+      if (c.status !== 1 || !/minutes ago: the same command once more asks the owner again/.test(c.stdout) || choiceIs() !== false) report(`merge-choice after a prompt older than hooks.ownerPromptMinutes must refuse: exit ${c.status}\n${c.stdout}`);
+      ask('--allow');
+      const other = makeProject('choice-other');
+      c = runChoice('--allow', other);
+      if (c.status !== 1 || !/and it did not/.test(c.stdout) || !noted() || JSON.parse(readFileSync(join(other, '.claude', 'pitwall.json'), 'utf8')).autoMerge !== false) report(`merge-choice for another project than the one the prompt was for must refuse, and leave the note: exit ${c.status}\n${c.stdout}`);
+      c = runChoice('--allow');
+      if (c.status !== 0 || choiceIs() !== true || noted()) report(`merge-choice --allow right after the guard's prompt for it must record the yes and use the note up: exit ${c.status}, autoMerge ${choiceIs()}\n${c.stdout}${c.stderr}`);
+      c = runChoice('--deny');
+      if (c.status !== 1 || choiceIs() !== true) report(`merge-choice a second time on one prompt must refuse: exit ${c.status}\n${c.stdout}`);
+      ask('--deny');
+      c = runChoice('--deny');
+      if (c.status !== 0 || choiceIs() !== false) report(`merge-choice --deny right after the guard's prompt for it must record the no: exit ${c.status}\n${c.stdout}${c.stderr}`);
+      // Without --project, from the project's folder, as the skills run it.
+      ask('--allow');
+      c = spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), '--allow'], { cwd: cp, encoding: 'utf8', env: ccEnv });
+      if (c.status !== 0 || choiceIs() !== true) report(`merge-choice --allow from the project's folder, with no --project, must record the yes: exit ${c.status}\n${c.stdout}${c.stderr}`);
+      c = spawnSync(process.execPath, [join(scripts, 'merge-choice.mjs'), '--allow'], { cwd: dir, encoding: 'utf8', env: ccEnv });
+      if (c.status !== 1 || !/is not a pitwall project/.test(c.stdout)) report(`merge-choice under Claude Code in a folder that is no pitwall project must say so: exit ${c.status}\n${c.stdout}`);
+      if (gitIn(cp, 'status', '--porcelain').stdout.split('\n').some((l) => l.includes('owner-prompt'))) report('the guard\'s note shows in git status: it belongs in the git directory');
+    }
     bash(`node -e "import('${P}/scripts/merge-choice.mjs')"`, 'deny:switch');
     bash(`cat "${P}/scripts/merge-choice.mjs"`, 'allow');
     bash(`grep -n allow "${P}/scripts/merge-choice.mjs"`, 'allow');
@@ -3685,7 +3851,7 @@ slowStep('hooks (recorded payloads)', (report) => {
     rmSync(join(project, 'src.js'));
     gitIn(project, 'checkout', '-q', 'main');
     // Every recorded payload not used above passes in a project with nothing to refuse.
-    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write']) {
+    for (const label of ['main-pre-tool-use-agent', 'plan-reviewer-post-tool-use-write', 'plan-reviewer-pre-tool-use-subagenthandback', 'plan-reviewer-subagent-stop', 'researcher-pre-tool-use-subagenthandback', 'researcher-subagent-stop', 'project-agent-pre-tool-use-subagenthandback', 'project-agent-subagent-stop', 'implementer-subagent-stop', 'code-reviewer-pre-tool-use-subagenthandback', 'code-reviewer-subagent-stop', 'code-reviewer-post-tool-use-write', 'qa-pre-tool-use-subagenthandback', 'qa-subagent-stop', 'qa-post-tool-use-write']) {
       const r = hook(label);
       if (verdict(r) !== 'allow') report(`${label} as recorded: expected allow, got ${verdict(r)} ${JSON.stringify(r.out)}`);
     }
@@ -3710,6 +3876,33 @@ slowStep('hooks (recorded payloads)', (report) => {
     gitIn(unborn, 'init', '-q', '-b', 'main');
     const early = hook('main-session-start', { projectDir: unborn }).out?.hookSpecificOutput?.additionalContext ?? '';
     if (!/Stage: planning/.test(early)) report(`the brief before the skeleton's commit must give the planning stage:\n${early}`);
+    // L-18: a kickoff that stopped after its documents is not over, and the brief must not send the session on to
+    // discovery: no commit holds the skeleton yet, or the planning branch is not there yet.
+    {
+      const stopped = join(dir, 'stopped');
+      if (layOut(stopped).status !== 0) throw new Error('layout failed');
+      gitIn(stopped, 'init', '-q', '-b', 'main');
+      writeFileSync(join(stopped, 'docs', 'IDEA.md'), '# Idea\n\nWritten at stage 0.\n\n## Problem\n\nI sit too long.\n\n## Who it is for\n\nMe, on my own laptop.\n\n## Out of scope\n\n- Phones.\n\n## Process level\n\nlite: one user, no money, no personal data.\n');
+      const stage = () => /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: stopped }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
+      if (docsCheck(stopped, ['--stage', 'kickoff']).status !== 0) report(`the stopped kickoff of this case must pass kickoff's docs check:\n${docsCheck(stopped, ['--stage', 'kickoff']).stdout}`);
+      if (!/kickoff is not finished \(no commit holds the skeleton yet\): \/pitwall:continue goes on with it, by the kickoff skill/.test(stage())) report(`the brief of a kickoff that stopped before its commit must name kickoff as not finished: ${stage()}`);
+      gitIn(stopped, 'add', '-A');
+      gitIn(stopped, 'commit', '-qm', 'skeleton');
+      if (!/kickoff is not finished \(the branch plan\/initial is not there yet\)/.test(stage())) report(`the brief of a kickoff that stopped before its planning branch must name kickoff as not finished: ${stage()}`);
+      gitIn(stopped, 'switch', '-qc', 'plan/initial');
+      if (!/the next stage is discovery/.test(stage())) report(`the brief after kickoff's last step must name discovery: ${stage()}`);
+      // Review round 3: a new clone in the middle of the planning has main checked out and the planning branch
+      // only as origin's. Kickoff is over there too: naming it would cut a second planning branch from main.
+      const planOrigin = join(dir, 'stopped-origin.git');
+      gitIn(dir, 'init', '-q', '--bare', '-b', 'main', planOrigin);
+      gitIn(stopped, 'remote', 'add', 'origin', planOrigin);
+      gitIn(stopped, 'push', '-q', 'origin', 'main', 'plan/initial');
+      const cloned = join(dir, 'stopped-clone');
+      gitIn(dir, 'clone', '-q', planOrigin, cloned);
+      const inClone = /^- Stage: (.*)$/m.exec(hook('main-session-start', { projectDir: cloned }).out?.hookSpecificOutput?.additionalContext ?? '')?.[1] ?? '';
+      if (gitIn(cloned, 'branch', '--show-current').stdout.trim() !== 'main' || gitIn(cloned, 'rev-parse', '--verify', '-q', 'refs/heads/plan/initial').status === 0) report('the clone of this case must stand on main, without a local planning branch');
+      if (/kickoff is not finished/.test(inClone) || !/the next stage is discovery/.test(inClone)) report(`the brief of a new clone whose origin holds the planning branch must name discovery, not kickoff: ${inClone}`);
+    }
     // While the plan is made, the brief gives the stage, not E0.
     // A docs folder the brief cannot read is said in the brief, and warns no one that the guards are off.
     const odd = makeProject('odd', 1);
@@ -3718,7 +3911,7 @@ slowStep('hooks (recorded payloads)', (report) => {
     const oddBrief = hook('main-session-start', { projectDir: odd }).out;
     if (!/could not read the docs/.test(oddBrief?.hookSpecificOutput?.additionalContext ?? '') || oddBrief?.systemMessage) report(`a brief that cannot read the docs must say so in the brief alone: ${JSON.stringify(oddBrief)}`);
     const planning = hook('main-session-start', { projectDir: fresh }).out?.hookSpecificOutput?.additionalContext ?? '';
-    if (!/Stage: planning on plan\/initial; the next stage is kickoff/.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage:\n${planning}`);
+    if (!/Stage: planning on plan\/initial; the next stage is kickoff \(its docs check does not pass yet\): \/pitwall:continue runs it, by the kickoff skill\./.test(planning) || /Current epic/.test(planning)) report(`the brief of a project being planned must give its stage, and the conductor as the way on:\n${planning}`);
 
     // AC1: failing closed. A copy of the plugin breaks one part at a time.
     const copy = (name, breakIt) => {

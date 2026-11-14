@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 > Status: built in T4a; bugs by severity and unconfirmed bugs since T4b; releases since T4c.
 
-Gathers what waits for the owner with a script, shows it in one message and goes through it with them, one question at a time. Whatever an agent may not write, it hands over as a command for the owner's own terminal.
+Gathers what waits for the owner with a script, shows it in one message and goes through it with them, one question at a time. Whatever an agent may not write, it hands over as a command for the owner's own terminal; the owner's choice of merges it records through Claude Code's permission prompt.
 
 Plugin files used: `${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs`, `bugs.mjs` for an answer about a bug, and `merge.mjs` for a merge the owner says yes to.
 
@@ -16,7 +16,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/scripts/owner-calls.mjs`, `bugs.mjs` f
 
 - Run each command as written, from the project root, one command per call.
 - One question per message, then wait. Never answer for the owner.
-- Never record the owner's choice of merges without them (ADR-0010) or the merge protection mode: only their own scripts write them, and the guard keeps agents out. Hand over the command the list gives, verbatim, under "Run this yourself, in bash or PowerShell:" (L-6).
+- Never write the owner's choice of merges without them (ADR-0010) or the merge protection mode yourself: only their own scripts write them. The choice of merges: ask the owner the question, then run the command the list gives for their answer (`merge-choice.mjs --allow` or `--deny`), alone in its call, as `/pitwall:continue` does under "The owner's choice of merges": pitwall's guard sends it to Claude Code's permission prompt, and their yes there records it. Anything else, and that command when Claude Code does not ask, hand over verbatim, under "Run this yourself, in bash or PowerShell:" (L-6).
 - Write plain Markdown the docs check reads, keeping the template's headings. Never write `docs/BUGS.md`, `docs/RISKS.md` or `docs/LESSONS.md` by hand: an answer about a bug goes through `bugs.mjs`, which keeps it in the git directory until the next branch's first commit.
 
 ## Steps

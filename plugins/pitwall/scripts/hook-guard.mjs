@@ -888,11 +888,23 @@ export function guard(call, ctx) {
       }
     }
 
-    // T3b-AC6: the scripts only the owner runs, in a terminal (hooks.ownerOnly): the one that records
-    // whether merges may run without them (ADR-0010). No agent runs them, the main conversation included.
+    // T3b-AC6, T5a: the scripts that record a choice of the owner (hooks.ownerOnly): the one that records whether
+    // merges may run without them (ADR-0010). The main conversation runs one only through Claude Code's permission
+    // prompt: the guard answers "ask", which no allow rule and no mode's classifier answers for the owner (probed
+    // on Claude Code 2.1.323), and only for the script run alone (a cd before it may stand), so that the prompt
+    // shows the owner the whole command. No sub-agent runs one, and neither does a session whose mode never prompts.
     const ownerOnly = (h.ownerOnly ?? []).find((s) => argv.some((w) => basename(String(w).split('\\').join('/')).toLowerCase() === s) || (code !== null && code.includes(s)));
     if (ownerOnly && (INTERPRETERS.has(p) || basename(String(argv[0] ?? '').split('\\').join('/')).toLowerCase() === ownerOnly)) {
-      return refuse('owner', `${ownerOnly} records a choice of the owner (pitwall ADR-0010): the owner runs it in a terminal, not an agent. Hand them the command.`);
+      const what = `${ownerOnly} records a choice of the owner (pitwall ADR-0010)`;
+      if (agentId) return refuse('owner', `${what}: only the main conversation runs it, at the owner's permission prompt, never a sub-agent. Return the question to the main conversation.`);
+      const alone = cmds.every((c, k) => k === i || ['cd', 'set-location', 'sl', 'pushd'].includes(program(c.argv[0])));
+      if (!alone || code !== null || redirects.length > 0 || inputs.length > 0 || xargs) return refuse('owner', `${what}: run it alone, one command in the call (node "<plugin>/scripts/${ownerOnly}" --allow or --deny), so that Claude Code's permission prompt shows the owner exactly what runs.`);
+      // From the project root, or with --project: the prompt is for this project, and so is the guard's note of it.
+      // --project must name this project, and without it the command runs from the project root (review rounds 1, 2).
+      const named = argv.includes('--project') ? argv[argv.indexOf('--project') + 1] : null;
+      if (named === null ? norm(dir, cwd, home) !== root : !named || norm(named, norm(dir, cwd, home), home) !== root) return refuse('owner', `${what}: run it from the project root, or with --project "<the project root>", so that the answer is recorded for this project.`);
+      if ((h.noPromptModes ?? []).includes(call.permissionMode)) return refuse('owner', `${what}, and this session's permission mode (${call.permissionMode}) never asks them: hand the owner the command to run themselves in a terminal, from the project folder.`);
+      return { rule: 'owner', ask: true, what, reason: `${what}: allow it only if this is your own answer. pitwall asks through this prompt whatever the session's mode or allow rules are, and never adds an allow rule for it.` };
     }
 
     // AC4: review-status.mjs only from the reviewers.

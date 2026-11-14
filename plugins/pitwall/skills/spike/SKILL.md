@@ -1,6 +1,6 @@
 ---
 name: spike
-description: Stage 3 of pitwall. Proves the riskiest technical assumption with a throwaway prototype against a success criterion committed before the work, and records the measured result in docs/spikes/<topic>.md. The owner runs it as /pitwall:spike after decide, optionally naming an assumption such as A-2.
+description: Stage 3 of pitwall. Proves the riskiest technical assumption with a throwaway prototype against a success criterion committed before the work, and records the measured result in docs/spikes/<topic>.md. /pitwall:continue runs it after decide when the level asks for a spike or the owner wants one; the owner can also run it as /pitwall:spike, optionally naming an assumption such as A-2.
 argument-hint: "[assumption A-n or topic]"
 disable-model-invocation: true
 ---
@@ -24,8 +24,10 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
 
 ## Steps
 
+Arguments, as the owner gave them (nothing after the colon means none): $ARGUMENTS
+
 1. **Preflight.** Read `.claude/pitwall.json`; without it, stop: run `/pitwall:kickoff` first. Run `git status --porcelain`; if it prints anything, stop and ask the owner to commit or drop those changes, before any branch is switched. Switch to the planning branch (`planning.branch`). Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage decide`; if it fails, stop: finish `/pitwall:decide` first. Read `docs/DISCOVERY.md` (the assumptions), `docs/STACK.md`, `docs/adr/` and the files in `docs/spikes/`.
-2. **The assumption.** `$ARGUMENTS` may name an assumption (`A-n`) or a topic. Otherwise take the riskiest assumption that no concluded spike in `docs/spikes/` has tested. Tell the owner which one and why, in one message. When the level's `spikeRequired` is false (see `processLevels`), say that the spike is optional at this level and ask whether to run it; on no, stop and hand over to `/pitwall:plan`.
+2. **The assumption.** This skill's arguments (the line under "Steps") may name an assumption (`A-n`) or a topic. Otherwise take the riskiest assumption that no concluded spike in `docs/spikes/` has tested. Tell the owner which one and why, in one message. When the level's `spikeRequired` is false (see `processLevels`) and the owner has not already chosen the spike in this conversation, say that the spike is optional at this level and ask whether to run it; on no, stop: the next stage is the plan.
 3. **Hypothesis and criterion.** Draft them from the assumption and its "How to check it": the hypothesis in one or two sentences; for each metric, how it is measured and the number that counts as success. Prefer a measurement a command can make on this machine; when a person has to look (a notification over a full-screen app, a sound, a device), say that the owner will measure it by hand and how. Show both in one message. The owner confirms or edits; nothing is committed before that.
 4. **Write the spike file.** Pick a topic: two or three lower-case words joined by hyphens. Copy `docs/spikes/template.md` to `docs/spikes/<topic>.md` and fill the title, the fields (`Assumption: A-n`, `Branch: spike/<topic>`, today's `Date`, `Outcome: pending`, `Prototype: -`, `Follow-up: -`), the Hypothesis and the Criterion table. Leave the Result table with its header only, and the Conclusion as `Pending.`
 5. **Check it, then commit the criterion.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage spike-criterion` and fix what it reports until it passes: once committed, the criterion cannot change, so a rule it breaks could never be met. Then commit it on the planning branch: `git add docs/spikes/<topic>.md`, then `git commit -m "docs: spike <topic> criterion"`. With a remote, `git push -u origin <planning branch>`.
@@ -36,7 +38,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`processLevels`
    - Accept: add a row to `docs/RISKS.md` (the next `R-n`, the risk, the owner's fallback, today's date in "Accepted on") and set `Follow-up: R-n`.
 9. **Docs check.** Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/docs-check.mjs" --stage spike`. It reads git: the criterion has not changed since its commit, that commit held no result, the prototype commit comes after it and is not reachable from the planning branch, and with a remote the spike branch is pushed. Fix what it reports and run it again until it passes. Never fix a criterion report by editing history or the criterion.
 10. **Commit** on the planning branch: `git add docs/`, then `git commit -m "docs: spike <topic> result"`. With a remote, `git push -u origin <planning branch>`.
-11. **Hand over.** Tell the owner, in a few lines, the outcome and its numbers, and the next stage: `/pitwall:decide <area>` when the follow-up is a revisit; another `/pitwall:spike` when the level asks for one (`spikeRequired`) or another high-risk assumption needs one; otherwise `/pitwall:plan`.
+11. **Hand over.** Tell the owner, in a few lines, the outcome and its numbers, and the next stage: decide for that area when the follow-up is a revisit; another spike when the level asks for one (`spikeRequired`) or another high-risk assumption needs one; otherwise the plan. `/pitwall:continue`, or just "continue", runs it; when `/pitwall:continue` runs this stage, it asks whether to move on.
 
 ## Output
 

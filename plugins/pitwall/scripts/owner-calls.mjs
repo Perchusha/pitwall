@@ -70,7 +70,7 @@ if (settings.mergeProtection === 'pending' || !cfg.mergeProtection.modes.include
 }
 const choice = settings[cfg.loop.ownerChoice];
 if (typeof choice !== 'boolean') {
-  groups.switches.push({ what: 'you have not chosen whether low and normal risk epics merge without you (ADR-0010): the first command says yes, the second no', default: 'every merge waits for you', run: [script('merge-choice.mjs', '--allow'), script('merge-choice.mjs', '--deny')] });
+  groups.switches.push({ what: 'you have not chosen whether low and normal risk epics merge without you (ADR-0010): the first command says yes, the second no; a session runs the one you name, once you allow it at Claude Code\'s permission prompt', default: 'every merge waits for you', run: [script('merge-choice.mjs', '--allow'), script('merge-choice.mjs', '--deny')] });
 }
 
 // A release merged and not tagged: the owner makes its tag, and no release starts before it (ADR-0013).

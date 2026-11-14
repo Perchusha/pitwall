@@ -37,6 +37,10 @@ Gaps in the plan: a scenario no criterion covers, a criterion QA cannot check, a
 | # | Finding | Severity | Closed by (epic, ADR) or accepted risk |
 | --- | --- | --- | --- |
 
+## Notes for the implementers
+
+Smaller points of the review that block nothing, where the process level sends them here (pitwall's `planReviewNotes`): one list item each, starting with the epic it concerns and a colon. `/pitwall:continue` hands each epic's notes to its implementer as advice; none of them is a finding, and nobody has to answer them.
+
 ## Approval
 
 Filled in by the first commit of E0's branch, from the plan's merge commit: who approved the plan, when, and the merge commit.

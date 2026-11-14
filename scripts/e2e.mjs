@@ -5,7 +5,11 @@
 //   node scripts/e2e.mjs --hooks [--record]     the hooks alone (scripts/e2e-hooks.mjs, T3a-AC8)
 //
 // Stages, in order: kickoff, discovery, decide, spike, plan, then the epic loop's e0, e1, bug and release
-// (scripts/e2e-loop.mjs). With no flags it runs e1 from the state e0 saved, the cheap run after a
+// (scripts/e2e-loop.mjs). The planning stages run through the conductor (T5a): kickoff starts as
+// `/pitwall:continue <idea>` in an empty folder, and every later stage as a fresh session whose owner says
+// only "continue", which the template's CLAUDE.md turns into /pitwall:continue; the hooks' record of the
+// session's tool calls must show that skill started and the stage's own skill file read, and when a stage's
+// check passes, the scripted owner is asked once more: a conductor that did not ask whether to move on fails the run. With no flags it runs e1 from the state e0 saved, the cheap run after a
 // change; --from e0 runs E0 and E1, the run before a PR; --from bug runs a blocking bug's fix
 // through the loop from the state e1 saved (T4b-AC4); --from release runs /pitwall:release from the
 // state bug saved (T4c-AC9); --until plan runs the planning stages from
@@ -35,7 +39,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readOwner, resultWord, UNSCRIPTED_RULE } from './e2e-owner.mjs';
+import { readOwner, resultWord, TEST_PROJECT, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,9 +83,19 @@ const cfg = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'ut
 const version = JSON.parse(readFileSync(join(plugin, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 const cliVersion = spawnSync('claude', ['--version'], { encoding: 'utf8' }).stdout?.trim().split(' ')[0] ?? '?';
 console.log(`e2e: pitwall ${version} from ${pluginCommit}${dirty} of ${join(root, 'plugins', 'pitwall').split('\\').join('/')}, copied to ${plugin.split('\\').join('/')} (--plugin-dir), Claude Code ${cliVersion}`);
-const installed = spawnSync('claude', ['plugin', 'list'], { encoding: 'utf8' }).stdout ?? '';
-if (/\bpitwall@/.test(installed)) {
-  console.error('e2e: pitwall is installed from a marketplace (claude plugin list), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.');
+// A copy of pitwall installed for every project would load beside this checkout in the test project, which
+// enables pitwall@pitwall. One installed for another project alone (scope local or project, with that project's
+// path) does not: there a headless session lists one pitwall, the --plugin-dir copy (probed on 2.1.323, T5a).
+let installed = [];
+try {
+  installed = JSON.parse(spawnSync('claude', ['plugin', 'list', '--json'], { encoding: 'utf8' }).stdout || '[]');
+} catch {
+  console.error('e2e: claude plugin list --json did not answer with JSON, so the run cannot tell whether an installed pitwall would load beside this checkout.');
+  process.exit(2);
+}
+const everywhere = installed.filter((p) => /^pitwall@/.test(p.id ?? '') && !(['local', 'project'].includes(p.scope) && p.projectPath));
+if (everywhere.length) {
+  console.error(`e2e: pitwall is installed from a marketplace for every project (claude plugin list: ${everywhere.map((p) => `${p.id} ${p.version}, scope ${p.scope}`).join('; ')}), and the test project enables pitwall@pitwall, so its sessions would load that copy beside this checkout. Uninstall it (claude plugin uninstall pitwall@pitwall) or run with HOME set to a scratch folder.`);
   process.exit(2);
 }
 // The hooks have a run of their own (T3a-AC8): scripts/e2e-hooks.mjs, which exits when done.
@@ -119,7 +133,15 @@ if (bad || (from === 'kickoff' && seedArg) || !(maxTurns > 0) || argv.some((a) =
 }
 if (loop) {
   const { runLoop } = await import('./e2e-loop.mjs');
-  process.exit(await runLoop({ stages: span, stateDir, maxTurns, github }));
+  // What the harness itself could not do (a push, the plan's merge, a gate that never came) ends the run with its
+  // reason in the log: a run in a process of its own has no terminal to show a stack to.
+  let code = 1;
+  try {
+    code = await runLoop({ stages: span, stateDir, maxTurns, github });
+  } catch (err) {
+    console.error(`\nE2E LOOP: FAIL - the harness stopped before a result: ${err?.stack ?? err}`);
+  }
+  process.exit(code);
 }
 const stages = span;
 // A later stage starts from a project: the seed, or what the stage before it saved.
@@ -136,7 +158,7 @@ Facts you answer from:
 - It shows a reminder every 45 minutes of active use, lets you snooze for 10 minutes, and pauses when the computer is idle or locked.
 - Out of scope: phones, teams, statistics dashboards, cloud sync.
 - Monthly budget: zero. Platforms: Windows and macOS desktop. Hosting: none, it is a local app; releases go on GitHub. Personal data: none. Licence: MIT, open source. Time for reviews: about 30 minutes a day.
-- You expect 2 or 3 epics. The project name is move-reminder.
+- You expect 2 or 3 epics. The project name is ${TEST_PROJECT}.
 - Launch: no app stores, the installers are attached to GitHub releases; support is GitHub issues; no domain, no analytics.
 - A spike: yes, run one on the riskiest assumption, even though the lite level makes it optional. Accept the criterion the assistant proposes if it has a number.
 - When asked to measure something by hand, say that you ran it as described today and give numbers that meet the criterion the assistant proposed.`;
@@ -149,6 +171,8 @@ const OWNER_RULES = `Answer as this owner, in English, in one to three sentences
 - When asked whether low and normal risk epics may merge without you, say no: every merge waits for you.
 - When asked whether to create a GitHub repository, push, or set up GitHub now, answer: not now, later.
 - When the assistant has run a command that you are told to run yourself, say you will do it later, and ask it to go on.
+- When the assistant says that a stage is finished in this conversation and asks whether to move on to the next stage (or which of two stages comes next), reply exactly: NEXT
+- When the assistant asks, at the start of a conversation, which stage to run now, answer from the facts.
 ${UNSCRIPTED_RULE}
 - When the assistant asks nothing and reports that the stage is done, reply exactly: DONE`;
 
@@ -160,7 +184,7 @@ function run(cmd, args, opts = {}) {
 
 // Scratch folders: the project, an empty gh config (signed out), an empty folder for the owner.
 const scratch = mkdtempSync(join(tmpdir(), 'pitwall-e2e-'));
-const project = join(scratch, 'move-reminder');
+const project = join(scratch, TEST_PROJECT);
 const ghConfig = join(scratch, 'gh');
 const ownerDir = join(scratch, 'owner');
 for (const d of [ghConfig, ownerDir]) mkdirSync(d, { recursive: true });
@@ -184,7 +208,10 @@ writeFileSync(ghLog, '');
 // The commit identity comes from the environment, so a fresh run starts from a folder with
 // nothing in it, and kickoff's preflight has to set up git itself.
 const identity = { GIT_AUTHOR_NAME: 'pitwall e2e', GIT_AUTHOR_EMAIL: 'e2e@pitwall.invalid', GIT_COMMITTER_NAME: 'pitwall e2e', GIT_COMMITTER_EMAIL: 'e2e@pitwall.invalid' };
-const env = { ...process.env, ...identity, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog, GIT_CEILING_DIRECTORIES: scratch };
+// Every tool call the hooks see, so that a stage can show which skills led it (scripts/hook.mjs, PITWALL_HOOK_RECORD).
+const hookRecord = join(scratch, 'hook-record.jsonl');
+writeFileSync(hookRecord, '');
+const env = { ...process.env, ...identity, GH_CONFIG_DIR: ghConfig, PITWALL_GH: JSON.stringify([process.execPath, fakeGh]), E2E_GH_LOG: ghLog, GIT_CEILING_DIRECTORIES: scratch, PITWALL_HOOK_RECORD: hookRecord };
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete env[k];
 if (run('gh', ['auth', 'status'], { env }).status === 0) {
   console.error('e2e: gh is still signed in with an empty GH_CONFIG_DIR; refusing to run so nothing reaches GitHub.');
@@ -301,10 +328,34 @@ const promises = {
   },
 };
 
+// T5a: the conductor led the stage. From the stage's first tool call on (recorded), the session started the
+// continue skill by itself, on the owner's one word, and read the stage's own skill file. Kickoff is asked for by
+// its command, and the hooks see nothing before it lays the project out.
+let recordedBefore = 0;
+function conducted(stage) {
+  if (stage === 'kickoff') return [];
+  // A last line still being written does not parse: it is left for the next look.
+  const parse = (l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return null;
+    }
+  };
+  const calls = readFileSync(hookRecord, 'utf8').split('\n').slice(recordedBefore).filter(Boolean).map(parse).filter((r) => r?.event === 'pre-tool-use' && !r.input?.agent_id);
+  const unmet = [];
+  if (!calls.some((r) => r.input?.tool_name === 'Skill' && /(^|:)continue$/.test(String(r.input?.tool_input?.skill ?? '')))) unmet.push('the session did not start the continue skill on the owner\'s "continue"');
+  if (!calls.some((r) => new RegExp(`skills/${stage}/SKILL\\.md`).test(JSON.stringify(r.input?.tool_input ?? {}).split('\\\\').join('/')))) unmet.push(`the session did not read the ${stage} skill's file`);
+  return unmet;
+}
+
+// off: the stage's documents and git state pass, but the conductor did not lead it. Such a stage fails at once: it
+// cannot become right by going on, and going on would start the next stage in this one's session (review round 2).
 function status(stage) {
   const check = docsCheck(stage);
   const unmet = check.status === 0 ? promises[stage]() : [];
-  return { done: check.status === 0 && unmet.length === 0, check: check.stdout.trim(), unmet };
+  const off = check.status === 0 && unmet.length === 0 ? conducted(stage) : [];
+  return { done: check.status === 0 && unmet.length === 0 && off.length === 0, off: off.length > 0, check: check.stdout.trim(), unmet: [...unmet, ...off] };
 }
 
 // A passing stage saves the project as it left it, for runs that start after it.
@@ -324,15 +375,24 @@ function save(stage, numbers) {
 const results = [];
 // Questions the scripted owner had no answer for (scripts/e2e-owner.mjs): printed at the end.
 const unscripted = [];
+// Stages after which the conductor asks whether to move on (T5a), and the ones where it did not.
+const ASKS_NEXT = ['kickoff', 'discovery', 'decide', 'spike'];
+const CLOSING_TURNS = 3;
+const unasked = [];
 for (const stage of stages) {
   const started = Date.now();
   const history = [];
   let cost = 0;
   let turns = 0;
   let sessionId;
-  let prompt = stage === 'kickoff' ? `/pitwall:kickoff ${IDEA}` : `/pitwall:${stage}`;
+  // The conductor leads every stage (T5a): in an empty folder by its command, afterwards by the owner's one word.
+  let prompt = stage === 'kickoff' ? `/pitwall:continue ${IDEA}` : 'continue';
   let verdict = { done: false };
   let error = '';
+  let closing = 0;
+  // Whether the conductor's question whether to move on came: the stages that end the planning ask none.
+  let asked = !ASKS_NEXT.includes(stage);
+  recordedBefore = readFileSync(hookRecord, 'utf8').split('\n').length - 1;
   console.log(`\n== ${stage}`);
   try {
     while (turns < maxTurns) {
@@ -342,10 +402,41 @@ for (const stage of stages) {
       cost += out.total_cost_usd ?? 0;
       history.push({ who: 'Owner', text: prompt }, { who: 'Assistant', text: String(out.result ?? '') });
       console.log(`  turn ${turns}: ${String(out.result ?? '').split('\n')[0].slice(0, 110)}`);
+      // The owner's one word must start the conductor in the session's first turn: a stage that began without it is
+      // not paid for to its end (review round 3).
+      if (turns === 1 && conducted(stage).some((u) => /continue skill/.test(u))) {
+        error = 'the session did not start the continue skill on the owner\'s "continue"';
+        break;
+      }
       verdict = status(stage);
-      if (verdict.done) break;
+      if (verdict.off) {
+        error = 'the stage\'s documents and git state pass, but the conductor did not lead it';
+        break;
+      }
+      if (verdict.done && !ASKS_NEXT.includes(stage)) break;
       const reply = ownerReply(history.slice(-12));
       cost += reply.cost;
+      if (verdict.done) {
+        // The stage's check passes: the conductor ends the stage by asking whether to move on, which the scripted
+        // owner answers with NEXT. A stage may still have a step or two after the commit that made its check pass
+        // (a question about merges, the hand-over), so the conversation gets a few more turns to reach that question.
+        if (/^\W*NEXT\b/i.test(reply.text)) {
+          asked = true;
+          break;
+        }
+        closing += 1;
+        if (closing > CLOSING_TURNS || /^DONE.?$/i.test(reply.text)) {
+          unasked.push(stage);
+          console.log(`  NO QUESTION WHETHER TO MOVE ON: the owner replied "${reply.text.split('\n')[0].slice(0, 110)}" to: ${String(out.result ?? '').trim().split('\n').pop().slice(0, 160)}`);
+          break;
+        }
+      }
+      // The conductor asked whether to move on while the stage's check does not pass: answering would start the
+      // next stage inside this one, so the stage ends here, failed, with what its check still wants.
+      if (/^\W*NEXT\b/i.test(reply.text)) {
+        error = 'the conductor asked whether to move on, but the stage does not pass its check yet';
+        break;
+      }
       const read = readOwner(reply.text, history[history.length - 1].text);
       reply.text = read.text;
       if (read.question) {
@@ -364,10 +455,14 @@ for (const stage of stages) {
     error = err.message;
   }
   if (!verdict.done) verdict = status(stage);
+  // A stage whose closing turns ran out, or ended in an error, never got the question either.
+  if (verdict.done && !asked && !unasked.includes(stage)) unasked.push(stage);
   const minutes = (Date.now() - started) / 60000;
   if (verdict.done) save(stage, { turns, minutes, cost, unscripted: unscripted.filter((u) => u.stage === stage).map((u) => u.question), overridden: unscripted.filter((u) => u.stage === stage && u.override).map((u) => u.question) });
-  results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done ? '' : error, check: verdict.check, unmet: verdict.unmet });
-  if (!verdict.done) break;
+  // An error in a closing turn is kept for the results, beside the missing question it caused.
+  results.push({ stage, pass: verdict.done, turns, cost, minutes, error: verdict.done && !unasked.includes(stage) ? '' : error, check: verdict.check, unmet: verdict.unmet });
+  // A stage that failed, or that ended without the conductor's question, ends the run: the later stages would only spend.
+  if (!verdict.done || unasked.includes(stage)) break;
 }
 
 console.log('\n== results');
@@ -380,7 +475,11 @@ for (const r of results) {
   }
 }
 for (const u of unscripted) console.log(`UNSCRIPTED ${u.override ? 'STOP OVERRIDDEN' : 'QUESTION'} (${u.stage}, turn ${u.turn}): ${u.question}`);
-const passed = results.length === stages.length && results.every((r) => r.pass);
+// A stage that ended without the conductor's question whether to move on fails the run (T5a): its state is saved,
+// since its documents are sound, but the path the owner walks is not the one the skill promises.
+for (const s of unasked) console.log(`FAIL ${s}: the conductor ended the stage without asking whether to move on${results.find((r) => r.stage === s)?.error ? ` (${results.find((r) => r.stage === s).error})` : ''}`);
+const passed = results.length === stages.length && results.every((r) => r.pass) && unasked.length === 0;
+if (results.length < stages.length) console.log(`not run: ${stages.slice(results.length).join(', ')}`);
 // A stop the scripted owner overrode is read by a person before the run counts (T4a-AC5).
 console.log(`\nE2E: ${resultWord(passed, unscripted)}   scratch folder: ${scratch}   saved state: ${stateDir}`);
 process.exit(passed ? 0 : 1);

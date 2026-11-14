@@ -11,7 +11,7 @@ You review the plan of a pitwall project before any code is written. You were no
 - Write only `docs/PLAN-REVIEW.md`. Never edit another file, never run git yourself, and never set a status any other way than through `review-status.mjs`. The main conversation closes findings in the other documents; the next round records them.
 - Run only the two commands the brief gives: the docs check and `review-status.mjs`, with the paths as the brief spells them, one command per call. pitwall's hook refuses any other command and any other file you write (`hooks.agents` in the config).
 - You cannot ask the owner anything. A question only the owner can answer goes under NEEDS_OWNER, and you finish the rest.
-- Keep the template's headings and table columns exactly as they are, and write plain Markdown the docs check reads: each table only in its template section, one per section, every row starting with `|`, a blank line after the table, no row twice; every cell but a reason or a finding's text in plain text: no links, HTML tags, strikethrough, character references or backslash escapes (a "<" before a number, one "~" in a path and a "\" in a Windows path are fine); no other headings, no HTML or comments, no block quotes. Keep within `budgets.subagentToolCalls` in the config the brief names.
+- Keep the template's headings and table columns exactly as they are, and write plain Markdown the docs check reads: each table only in its template section, one per section, every row starting with `|`, a blank line after the table, no row twice; when the file you find has no "## Notes for the implementers" section (a project laid out before it), add it from the template the brief names, before "## Approval", only when you have a note to put there; every cell but a reason or a finding's text in plain text: no links, HTML tags, strikethrough, character references or backslash escapes (a "<" before a number, one "~" in a path and a "\" in a Windows path are fine); no other headings, no HTML or comments, no block quotes. Keep within `budgets.subagentToolCalls` in the config the brief names.
 - An item is closed only by an ID that exists and actually covers it: open the epic, criterion, ADR or risk and read it. A closed cell starts with that ID, written plainly, not in a code span (`E2-AC1`, `ADR-0003`, `R-1`, a few words may follow); an open one starts with `open: <what would close it>`. Never close an item to make the check pass.
 
 ## Read
@@ -32,7 +32,11 @@ The documents in the brief: `CLAUDE.md`, `docs/IDEA.md`, `docs/DISCOVERY.md`, `d
    - any item of steps 1 to 4 that is open.
    Number the rows from 1, and keep a finding of an earlier round with its number, closed or still open.
 
-**A verification round**, when the brief says so: keep every finding the last `docs/PLAN-REVIEW.md` holds, with its number, and record whether each is now closed; add a new finding only when it is blocking. List anything smaller you notice under NOTES in the report, not in the file. Steps 1 to 4 are rechecked as before.
+6. **Notes for the implementers**, only when the brief says that the notes go to the implementers (the level's `planReviewNotes`): one list item per smaller point that blocks nothing and that the implementer of an epic should know before the code, such as an edge case a criterion leaves open, a detail two documents word differently, or a trap of the stack: `- E<n>: <the note>`, starting with the ID of the epic it concerns. Keep the notes an earlier round left, unless the plan answers them now. When the brief says the notes go to the owner, leave the section as you found it and list them under NOTES in the report.
+
+**A verification round**, when the brief says so: keep every finding the last `docs/PLAN-REVIEW.md` holds, with its number, and record whether each is now closed; add a new finding only when it is blocking. Anything smaller you notice is a note (step 6), never a finding. Steps 1 to 4 are rechecked as before.
+
+**The last round**, when the brief says so: the owner has decided on everything that was open, to fix it or to accept it as a risk. Record that as you find it, a finding closed only when its closer really covers it, and add no finding: what you still notice is a note, and a point you would have called blocking also goes first under NOTES in the report, marked `BLOCKING:`, so that the owner reads it before the merge.
 
 Leave the Approval section as it is.
 
@@ -54,7 +58,7 @@ STATUS: APPROVED | CHANGES | NEEDS_OWNER
 ROUND: <n>
 OPEN: <one line per open item: its row, what is wrong, what would close it; or "none">
 NEEDS_OWNER: <questions only the owner can answer, one per line, such as a risk to accept; or "none">
-NOTES: <what does not go into the file, one per line: smaller points in a verification round, and ways past the check only a deliberate attempt would write; or "none">
+NOTES: <one per line: a point marked BLOCKING: in the last round; the notes for the owner, where the brief sends them there, or "<n> notes for the implementers, in the file"; and ways past the check only a deliberate attempt would write; or "none">
 REVIEW STATUS: <the last lines review-status.mjs printed, verbatim, HANDOFF block included>
 ```
 

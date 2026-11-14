@@ -31,7 +31,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readOwner, resultWord, UNSCRIPTED_RULE } from './e2e-owner.mjs';
+import { readOwner, resultWord, TEST_PROJECT, UNSCRIPTED_RULE } from './e2e-owner.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // The copy e2e.mjs made at the start of the run (PITWALL_E2E_PLUGIN), never the checkout itself.
@@ -43,7 +43,7 @@ export const LOOP_STAGES = ['e0', 'e1', 'bug', 'release'];
 // The stage each loop stage starts from, after e0.
 const SEEDED_FROM = { e1: 'e0', bug: 'e1', release: 'bug' };
 // The defect the bug stage files: the harness breaks it on main before the stage (injectDefect).
-const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1-AC1 says Quit removes the icon and ends them. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
+const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1 made Quit remove the icon and end the app. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
 
 const IDEA = 'A desktop app that reminds me to stand up and move every 45 minutes';
 const SCENARIO = `You are the owner of a project: ${IDEA}. Its plan is merged, and the epic loop builds it now.
@@ -80,7 +80,7 @@ function run(cmd, args, opts = {}) {
 export async function runLoop({ stages, stateDir, maxTurns, github }) {
   const tag = github ? 'github-' : '';
   const scratch = mkdtempSync(join(tmpdir(), 'pitwall-loop-'));
-  const project = join(scratch, 'move-reminder');
+  const project = join(scratch, TEST_PROJECT);
   const originDir = join(scratch, 'origin.git');
   const ghState = join(scratch, 'github');
   const bin = join(scratch, 'bin');
@@ -101,7 +101,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     PATH: `${bin}${delimiter}${process.env.PATH}`,
     PITWALL_GH: JSON.stringify([process.execPath, ghScript]),
     GIT_CEILING_DIRECTORIES: scratch,
-    ...(github ? { GH_REAL: realGh, GH_RECORD: record } : { FAKE_GH_LIVE: ghState, FAKE_GH_ORIGIN: originDir, FAKE_GH_REPO: 'e2e/move-reminder', GH_CONFIG_DIR: join(scratch, 'gh-config') }),
+    ...(github ? { GH_REAL: realGh, GH_RECORD: record } : { FAKE_GH_LIVE: ghState, FAKE_GH_ORIGIN: originDir, FAKE_GH_REPO: `e2e/${TEST_PROJECT}`, GH_CONFIG_DIR: join(scratch, 'gh-config') }),
   };
   // The session's commands are never Claude Code's own variable: the owner's script refuses under it.
   const ownerEnv = { ...env };
@@ -158,7 +158,7 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
     if (github) waitFor(180, () => (api('actions/workflows')?.workflows ?? []).some((w) => /\/ci\.ya?ml$/.test(w.path)), 'GitHub Actions did not register .github/workflows/ci.yml after the push of main');
     for (const ref of ['plan/initial', ...git('for-each-ref', '--format=%(refname:short)', 'refs/heads/spike/').stdout.split('\n').filter(Boolean)]) pushOne(ref);
     // The world before the epic loop: the plan PR, reviewed, its gate green, merged after the owner's yes.
-    gh('pr', 'create', '--base', 'main', '--head', 'plan/initial', '--title', 'Plan: move-reminder', '--body', 'Stages 1 to 5, from the headless planning run.');
+    gh('pr', 'create', '--base', 'main', '--head', 'plan/initial', '--title', `Plan: ${TEST_PROJECT}`, '--body', 'Stages 1 to 5, from the headless planning run.');
     const planHead = git('rev-parse', 'plan/initial').stdout.trim();
     if (github) waitFor(180, () => (api(`commits/${planHead}/check-suites`)?.check_suites ?? []).some((s) => s.app?.slug === 'github-actions'), `GitHub Actions started no check suite on the plan PR's head ${planHead.slice(0, 7)}`);
     git('switch', '-q', 'plan/initial');
@@ -314,34 +314,72 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   };
 
   // The bug stage's defect, broken on main as a careless merge would break it: Quit no longer quits, and the
-  // tests named for it are gone, so the gate stays green (checked on the saved e1 of 2026-11-10 with
-  // scripts/gate --full). It needs the E1 that e1 run built; another E1 needs another defect.
+  // test named for it is gone, so the gate stays green. Each E1 the e1 stage has built so far has its own shape; the
+  // first that fits is broken (each was checked on its saved e1 with scripts/gate --full: 2026-11-10 and 2026-11-14).
+  // An E1 built some other way needs a shape of its own here.
+  const DEFECTS = [
+    {
+      // Electron, the tray in src/main/tray.ts, its tests in tests/main/ (2026-11-10).
+      code: 'src/main/tray.ts',
+      breakCode: (code) => code.replace(/click: \(\) => \{\s*onQuit\(\);\s*\}/, "click: () => {\n        if (status === '') {\n          onQuit();\n        }\n      }"),
+      tests: () => (existsSync(join(project, 'tests', 'main')) ? readdirSync(join(project, 'tests', 'main')).filter((x) => x.endsWith('.test.ts')).map((x) => `tests/main/${x}`) : []),
+      breakTest: (text) => text.replace(/\n([ \t]*)it\('"Quit"[^'\n]*', (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/g, ''),
+    },
+    {
+      // Electron, the tray's menu in src/main/main.ts, its test beside it (2026-11-14).
+      code: 'src/main/main.ts',
+      breakCode: (code) => code.replace('template.push({ label: QUIT_LABEL, click: () => app.quit() });', 'template.push({ label: QUIT_LABEL, click: () => undefined });'),
+      tests: () => ['src/main/main.test.ts'],
+      breakTest: (text) => text.replace(/\n\n([ \t]*)it\("ends the app with Quit", (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/, '\n'),
+    },
+    {
+      // Electron, the tray's menu in src/main/menu.ts with its actions, Quit's test in src/main/main.test.ts (2026-11-14).
+      code: 'src/main/menu.ts',
+      breakCode: (code) => code.replace('{ label: "Quit", click: () => actions.quit() }', '{ label: "Quit", click: () => undefined }'),
+      tests: () => ['src/main/main.test.ts'],
+      breakTest: (text) => text.replace(/\n\n([ \t]*)\/\/ E1-AC\d+\.\n\1it\("[^"\n]*Quit ends the app", (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/, '\n'),
+    },
+  ];
   function injectDefect() {
-    const tray = join(project, 'src', 'main', 'tray.ts');
-    const code = existsSync(tray) ? readFileSync(tray, 'utf8') : '';
-    const brokenCode = code.replace(/click: \(\) => \{\s*onQuit\(\);\s*\}/, "click: () => {\n        if (status === '') {\n          onQuit();\n        }\n      }");
-    const dir = join(project, 'tests', 'main');
-    const changed = [];
-    for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith('.test.ts')) : []) {
-      const text = readFileSync(join(dir, f), 'utf8');
-      const without = text.replace(/\n([ \t]*)it\('"Quit"[^'\n]*', (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/g, '');
-      if (without === text) continue;
-      writeFileSync(join(dir, f), without);
-      changed.push(`tests/main/${f}`);
+    for (const d of DEFECTS) {
+      const file = join(project, d.code);
+      const code = existsSync(file) ? readFileSync(file, 'utf8') : '';
+      const brokenCode = d.breakCode(code);
+      if (!code || brokenCode === code) continue;
+      const changed = [];
+      for (const rel of d.tests()) {
+        if (!existsSync(join(project, rel))) continue;
+        const text = readFileSync(join(project, rel), 'utf8');
+        const without = d.breakTest(text);
+        if (without === text) continue;
+        writeFileSync(join(project, rel), without);
+        changed.push(rel);
+      }
+      if (changed.length === 0) continue;
+      writeFileSync(file, brokenCode);
+      git('switch', '-q', 'main');
+      git('commit', '-q', '-m', 'refactor(E1): the tray menu', '--', d.code, ...changed);
+      const p = git('push', '-q', 'origin', 'main');
+      if (p.status !== 0) throw new Error(`push of the broken main failed: ${p.stderr}`);
+      console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
+      return;
     }
-    if (brokenCode === code || changed.length === 0) throw new Error('the saved e1 has no Quit item calling onQuit() in src/main/tray.ts, or no test in tests/main/ named for "Quit": E1 was built anew, so give the bug stage a defect of the new code (scripts/e2e-loop.mjs, injectDefect)');
-    writeFileSync(tray, brokenCode);
-    git('switch', '-q', 'main');
-    git('commit', '-q', '-m', 'refactor(E1): the tray menu', '--', 'src/main/tray.ts', ...changed);
-    const p = git('push', '-q', 'origin', 'main');
-    if (p.status !== 0) throw new Error(`push of the broken main failed: ${p.stderr}`);
-    console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
+    throw new Error('the saved e1 has a tray menu of a shape the bug stage does not know: E1 was built anew, so give the bug stage a defect of the new code (scripts/e2e-loop.mjs, DEFECTS)');
   }
 
   // The release stage's build: the owner adds scripts/build to a project laid out before 0.9.0 (T4c-AC4), a commit
   // on main that is no merge of the loop, which the release must name and leave out of the changelog.
   function addBuild() {
     git('switch', '-q', 'main');
+    // A project laid out from 0.9.0 on has a scripts/build, and its E0 wrote the real one: the owner adds nothing,
+    // and the release builds what E0 built (2026-11-14: the harness's own build had replaced a real one, and the qa
+    // agent rightly failed the release on it).
+    const stub = readFileSync(join(plugin, 'template', 'scripts', 'build'), 'utf8');
+    const ownBuild = git('show', 'main:scripts/build');
+    if (ownBuild.status === 0 && ownBuild.stdout.replace(/\r\n/g, '\n') !== stub.replace(/\r\n/g, '\n')) {
+      console.log('main has a scripts/build of its own, from E0: the owner adds none');
+      return;
+    }
     writeFileSync(join(project, 'scripts', 'build'), '#!/usr/bin/env bash\n# The release build: the compiled app, for the release of pitwall\'s headless run.\nset -euo pipefail\nnpm run build >&2\necho "ARTIFACT: dist/main/main.js"\n');
     git('add', 'scripts/build');
     git('update-index', '--chmod=+x', 'scripts/build');
