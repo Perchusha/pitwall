@@ -205,6 +205,11 @@ step('skills', (report) => {
     if (argLines.length > 1 || argLines.some((l) => !/^\s*Arguments, .*: \$ARGUMENTS$/.test(l))) report(`skills/${name}: the arguments placeholder stands once at most, at the end of a line "Arguments, ...: ", and nowhere inside a sentence, where an empty one leaves a gap (L-17)`);
   }
   if (!conductor.split('\n').some((l) => /^Arguments, .*: \$ARGUMENTS$/.test(l))) report('skills/continue: it takes arguments (the idea, or how many changes to merge), on a line "Arguments, ...: "');
+  // BUG-7: kickoff asks before pitwall's hook replaces hooks the owner set, as /pitwall:continue does: it reads the
+  // setting first, and sets it for this repository alone.
+  const kickoffText = readFileSync(join(dir, 'kickoff', 'SKILL.md'), 'utf8');
+  const reads = kickoffText.indexOf('`git config --get core.hooksPath`');
+  if (reads < 0 || reads > kickoffText.indexOf('`git config core.hooksPath .githooks`') || !/may pitwall's hook replace them in this project/.test(kickoffText)) report('skills/kickoff: it must read core.hooksPath and ask the owner before pitwall\'s hook replaces hooks of their own (BUG-7)');
   if (!/run `\/pitwall:continue`/.test(readFileSync(join(plugin, 'template', 'CLAUDE.md.tmpl'), 'utf8'))) report('the template\'s CLAUDE.md does not tell the session to run /pitwall:continue when the owner says to continue');
   // The plan review's rounds at a level never exceed the general limit, and its full rounds come before its last.
   const cfgAll = JSON.parse(readFileSync(join(plugin, 'config', 'defaults.json'), 'utf8'));
@@ -2401,6 +2406,28 @@ slowStep('bugs and lessons', (report) => {
     expect('a line before any field', bugs(['file'], `and more\n${bug()}`), 1, ['names no field']);
     expect('confirmed left out', bugs(['file'], bug({ confirmed: null })), 1, ['lacks confirmed']);
 
+    // BUG-5: a row written by hand with a "|" that lost its backslash has a cell too many. A rewrite would shift
+    // its cells and lose the last, so every write of the table refuses it and writes nothing, and the docs check names it.
+    {
+      const q = join(dir, 'ragged');
+      if (layOut(q).status !== 0) return report('layout failed');
+      gitIn(q, 'init', '-q', '-b', 'main');
+      const f = join(q, 'docs', 'BUGS.md');
+      const byHand = `${readFileSync(f, 'utf8').trimEnd()}\n| BUG-1 | By hand | review | Run it | One line | a | b | not blocking | normal | open | - |\n`;
+      writeFileSync(f, byHand);
+      gitIn(q, 'add', '-A');
+      gitIn(q, 'commit', '-qm', 'skeleton, and a row by hand');
+      gitIn(q, 'switch', '-qc', 'epic/E1-x');
+      const run = (args, input) => runScript('bugs.mjs', [...args, '--project', q], { input: input ?? '' });
+      expect('file beside a row with a cell too many', run(['file'], bug({ title: 'Another' })), 0, ['FILED: BUG-2']);
+      expect('flush over a row with a cell too many', run(['flush']), 1, ['the row BUG-1 has 11 cells', 'the table has 10 columns', 'nothing was written']);
+      if (readFileSync(f, 'utf8') !== byHand) report('bugs.mjs flush changed docs/BUGS.md though it refused the row with a cell too many');
+      if (!/the row BUG-1 has 11 cells/.test(docsCheck(q, ['--stage', 'bug']).stdout)) report('the docs check must name a row with a cell too many');
+      writeFileSync(f, byHand.replace('| a | b |', '| a \\| b |'));
+      expect('flush once the pipe is escaped', run(['flush']), 0, []);
+      if (!/\| BUG-1 \| By hand \|.*\| a \\\| b \| not blocking \| normal \| open \| - \|/.test(readFileSync(f, 'utf8')) || !/\| BUG-2 \| Another \|/.test(readFileSync(f, 'utf8'))) report(`bugs.mjs flush after the row was put right must keep its cells and add the new bug:\n${readFileSync(f, 'utf8')}`);
+    }
+
     // Changes: an unconfirmed bug is confirmed by its severity; the owner's no makes a risk.
     expect('a confirmation', bugs(['set', 'BUG-2', '--severity', 'not blocking']), 0, ['SET: BUG-2 severity']);
     const two = listed().find((b) => b.id === 'BUG-2');
@@ -3469,7 +3496,8 @@ slowStep('hooks (recorded payloads)', (report) => {
     bash('git push origin --delete main', 'deny:push');
     bash('git push --all', 'deny:push');
     bash('git push --mirror origin', 'deny:push');
-    bash('git push --tags', 'allow');
+    // BUG-10: every tag goes with it, a release's among them.
+    bash('git push --tags', 'deny:tag');
     bash('git push -n origin main', 'allow');
     bash('git push -u origin epic/E1-x', 'allow');
     bash('git push --force-with-lease origin epic/E1-x', 'allow');
@@ -3906,6 +3934,170 @@ slowStep('hooks (recorded payloads)', (report) => {
     expect('other-plugin-pre-tool-use-bash', 'another plugin\'s agent runs merge-choice.mjs', { input: { tool_input: { command: choice } } }, 'deny:owner');
     crBash('merge-choice.mjs', choice, 'deny:agent');
 
+    // T7: the guard's bugs, each with the cases that failed before its fix and the ones beside them that must keep passing.
+    {
+      const t7 = makeProject('t7');
+      const T = (command, want, extra = {}) => bash(command, want, { projectDir: t7, ...extra });
+      const PS = (command, want) => expect('main-pre-tool-use-bash', `PowerShell: ${command.slice(0, 110)}`, { projectDir: t7, tool: 'PowerShell', input: { tool_input: { command } } }, want);
+      mkdirSync(join(t7, 'src'), { recursive: true });
+      writeFileSync(join(t7, 'src', 'a.js'), 'export const a = 1;\n');
+      gitIn(t7, 'add', 'src');
+      gitIn(t7, 'commit', '-qm', 'a file');
+      // A clean tree: nothing to lose, so nothing is refused.
+      for (const c of ['git rm -f src/a.js', 'git rm -rf src', 'git reset --merge']) T(c, 'allow');
+      writeFileSync(join(t7, 'CLAUDE.md'), `${readFileSync(join(t7, 'CLAUDE.md'), 'utf8')}\nchanged\n`);
+      writeFileSync(join(t7, 'src', 'a.js'), 'export const a = 2;\n');
+      // BUG-1: git rm -f over a changed file removes the change with it.
+      for (const c of ['git rm -f CLAUDE.md', 'git rm --force CLAUDE.md', 'git rm -rf src', 'git rm -f -- src/a.js', 'git rm -fq CLAUDE.md', 'git ls-files -m | xargs git rm -f']) T(c, 'deny:uncommitted');
+      for (const c of ['git rm --cached CLAUDE.md', 'git rm -f docs/INDEX.md', 'git rm -n -f CLAUDE.md', 'git rm --dry-run -f CLAUDE.md', 'git rm CLAUDE.md', 'git stash push -- CLAUDE.md && git rm -f CLAUDE.md']) T(c, 'allow');
+      PS('git rm -f CLAUDE.md', 'deny:uncommitted');
+      // BUG-3: git reset --merge puts the index back: what is staged and not committed is gone; what is not staged stays.
+      T('git reset --merge', 'allow');
+      gitIn(t7, 'add', 'CLAUDE.md');
+      for (const c of ['git reset --merge', 'git reset --merge HEAD', 'git reset -q --merge']) T(c, 'deny:uncommitted');
+      T('git reset --keep HEAD', 'allow');
+      T('git reset', 'allow');
+      gitIn(t7, 'reset', '-q');
+      // BUG-2: git worktree remove --force over a work tree that holds uncommitted work, changed or new.
+      const dirty = join(dir, 't7-dirty');
+      const clean = join(dir, 't7-clean');
+      gitIn(t7, 'worktree', 'add', '-q', dirty, '-b', 't7-dirty');
+      gitIn(t7, 'worktree', 'add', '-q', clean, '-b', 't7-clean');
+      writeFileSync(join(dirty, 'docs', 'IDEA.md'), 'work that is nowhere else\n');
+      for (const c of ['git worktree remove --force ../t7-dirty', 'git worktree remove -f ../t7-dirty', `git worktree remove --force "${fwd(dirty)}"`]) T(c, 'deny:uncommitted');
+      PS('git worktree remove --force ../t7-dirty', 'deny:uncommitted');
+      for (const c of ['git worktree remove --force ../t7-clean', 'git worktree remove ../t7-dirty', 'git worktree remove --force ../t7-gone', 'git worktree list', 'git worktree prune']) T(c, 'allow');
+      rmSync(join(dirty, 'docs', 'IDEA.md'));
+      writeFileSync(join(dirty, 'new.txt'), 'a new file\n');
+      T('git worktree remove --force ../t7-dirty', 'deny:uncommitted');
+      // A work tree named only when the line runs stands for every linked one: refused while one of them holds work.
+      const loopWay = T('for wt in t7-dirty t7-clean; do git worktree remove --force ../$wt; done', 'deny:uncommitted').out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      // Review round 2: which work tree it removes is unknown, so the way on names the ones that hold work, by path, and
+      // asks for each to be named plainly; it never advises keeping work in a work tree the line may not touch.
+      if (!/names its work tree only when the line runs/.test(loopWay) || !loopWay.includes('t7-dirty') || !/one call each/.test(loopWay) || /stash it there/.test(loopWay)) report(`the refusal of a work tree named only at run time must name the dirty ones and ask for plain names: ${loopWay}`);
+      // A PowerShell expression in parentheses is left out of the words: no target, so every linked work tree counts.
+      PS("git worktree remove --force (Join-Path $env:TEMP 'wt')", 'deny:uncommitted');
+      PS("foreach ($wt in 't7-dirty','t7-clean') { git worktree remove --force ../$wt }", 'deny:uncommitted');
+      // Review round 1: xargs hands it a work tree only the run knows; a work tree under the home folder by "~"; and the
+      // refusal's way on keeps the work in that work tree.
+      T("git worktree list --porcelain | grep ^worktree | tail -n +2 | cut -d' ' -f2 | xargs -n1 git worktree remove --force", 'deny:uncommitted');
+      const homeTree = join(home, 't7-home');
+      gitIn(t7, 'worktree', 'add', '-q', homeTree, '-b', 't7-home');
+      writeFileSync(join(homeTree, 'docs', 'IDEA.md'), 'work under the home folder\n');
+      T('git worktree remove --force ~/t7-home', 'deny:uncommitted');
+      const way = T('git worktree remove --force ../t7-dirty', 'deny:uncommitted').out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      if (!/stash it there \(git -C <the work tree> stash push -u\)/.test(way) || /git stash push -- \.\.\//.test(way)) report(`the refusal of git worktree remove --force must say how to keep the work in that work tree: ${way}`);
+      gitIn(homeTree, 'checkout', '-q', '--', '.');
+      // A dry run of a push sends no tag.
+      for (const c of ['git push -n origin v0.1.0', 'git push --dry-run --tags']) T(c, 'allow');
+      gitIn(dirty, 'checkout', '-q', '--', '.');
+      rmSync(join(dirty, 'new.txt'));
+      T('for wt in t7-dirty t7-clean; do git worktree remove --force ../$wt; done', 'allow');
+      T('git worktree remove --force ../t7-dirty', 'allow');
+      // BUG-4: a PowerShell assignment of one word is a value, whatever the word; a command after "=" is still a command.
+      for (const c of ["$r = 'review-status.mjs'", "$r='review-status.mjs'", '$script = "merge-choice.mjs"', "$f = '.env'", "$r = 'review-status.mjs'; Write-Output $r"]) PS(c, 'allow');
+      PS(`$r = node "${P}/scripts/review-status.mjs" --review code --state success`, 'deny:review');
+      PS("$r = 'x' > .claude/pitwall.json", 'deny:switch');
+      PS('$r = $(git reset --hard)', 'deny:uncommitted');
+      PS("$f = '.env'; Get-Content $f", 'deny:secrets');
+      // BUG-6: an inline node script that only reads the plugin's data files.
+      for (const c of [
+        `node -e "const c=require('${P}/config/defaults.json'); console.log(c.bugs)"`,
+        `node -e "console.log(JSON.parse(require('fs').readFileSync('${P}/config/defaults.json','utf8')).review.maxRounds)"`,
+        `node -p "require('${P}/config/defaults.json').budgets.epicsPerSession"`,
+      ]) T(c, 'allow');
+      for (const c of [
+        `node -e "require('fs').writeFileSync('${P}/config/defaults.json', '{}')"`,
+        `node -e "require('${P}/scripts/hook.mjs')"`,
+        `node -e "require('child_process').execSync('rm -rf ${P}/config')"`,
+        `node -e "import('${P}/scripts/merge-choice.mjs')"`,
+        `node -e "console.log(require('${fwd(t7)}/.claude/pitwall.json'))"`,
+        `node -e "const c=require('${P}/config/defaults.json'); console.log(c.bugs)" > ${P}/config/out.json`,
+      ]) T(c, 'deny:switch');
+      // BUG-8: core.hooksPath for the whole account or machine, whatever the value.
+      for (const c of ['git config --global core.hooksPath .githooks', 'git config --system core.hooksPath .githooks', 'git config set --global core.hooksPath .githooks', 'git config --global core.hooksPath ~/hooks']) T(c, 'deny:precommit');
+      for (const c of ['git config core.hooksPath .githooks', 'git config --local core.hooksPath .githooks', 'git config --global --get core.hooksPath', 'git config --global user.name "A B"', 'git config --global core.autocrlf false']) T(c, 'allow');
+      // BUG-10: the tag of a release, its push and its GitHub release are the owner's; any other tag is the project's.
+      for (const c of [
+        'git tag -a v0.1.0 HEAD -m "v0.1.0"', 'git tag v1.2.3', 'git tag -d v0.1.0', 'git tag -f v0.1.0 HEAD', 'git tag -a --cleanup=verbatim -F notes.txt v0.1.0 HEAD',
+        'git push origin v0.1.0', 'git push origin refs/tags/v0.1.0', 'git push origin :refs/tags/v0.1.0', 'git push origin --delete v0.1.0', 'git push --tags', 'git push origin --tags', 'git push origin epic/E1-x v0.1.0',
+        'gh release create v0.1.0 --notes-file notes.md', 'gh release upload v0.1.0 dist/app.zip', 'gh release delete v0.1.0 --yes', 'gh release edit v0.1.0 --draft=false',
+        'gh api -X POST repos/o/r/releases -f tag_name=v0.1.0',
+      ]) T(c, 'deny:tag');
+      PS('git tag -a v0.1.0 HEAD -m "v0.1.0"', 'deny:tag');
+      for (const c of ['git tag', 'git tag -l "v*"', 'git tag --list', 'git tag --contains HEAD', 'git tag -n1', 'git tag spike-done', 'git tag -a before-rewrite -m "a mark"', 'git push origin spike-done', 'gh release list', 'gh release view v0.1.0', 'gh api repos/o/r/releases', 'git describe --tags']) T(c, 'allow');
+      gitIn(t7, 'switch', '-qc', 'release/v0.1.0');
+      T('git push -u origin release/v0.1.0', 'allow');
+    }
+
+    // T7-AC2: the 52 variants T4a's verifying round wrote of one command, a rollback of paths held in a variable, with
+    // the guard's verdicts at T4a's merge (a29a8d5): on a tree where CLAUDE.md and docs/IDEA.md hold uncommitted
+    // changes, 48 are refused and 4 pass, the ones R-3 names (git checkout without "--" over paths only the run
+    // knows). None is a copy of a command line of the local transcripts: scripts/guard-corpus.mjs is where those run.
+    {
+      const v = makeProject('variants');
+      for (const f of ['CLAUDE.md', join('docs', 'IDEA.md')]) writeFileSync(join(v, f), `${readFileSync(join(v, f), 'utf8')}\nchanged\n`);
+      writeFileSync(join(v, 'new.js'), 'console.log(1)\n');
+      const VARIANTS = [
+      ['B', 'P=\'CLAUDE.md docs/IDEA.md\'; git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'P=CLAUDE.md\\ docs/IDEA.md; git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'export P="CLAUDE.md docs/IDEA.md"; git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"\ngit checkout -- $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md" && git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git checkout -- ${P}', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git checkout $P', 'allow'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git checkout HEAD $P', 'allow'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git checkout HEAD -- $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git restore --source=HEAD $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; git restore -- $P', 'deny:uncommitted'],
+      ['B', 'P="new.js docs/IDEA.md"; git clean -fd -- $P', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; bash -c "git checkout -- $P"', 'deny:uncommitted'],
+      ['B', 'P="CLAUDE.md docs/IDEA.md"; echo $P | xargs git checkout --', 'deny:uncommitted'],
+      ['B', 'P=$(git diff --name-only); git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'P=`git diff --name-only`; git checkout -- $P', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; F=`git diff --name-only`; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; F=$(git diff --name-only | head -1); git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'f=docs/IDEA.md; git diff --name-only | while read f; do git checkout -- "$f"; done', 'deny:uncommitted'],
+      ['B', 'f=docs/IDEA.md; git diff --name-only | while IFS= read -r f; do git checkout -- "$f"; done', 'deny:uncommitted'],
+      ['B', 'f=docs/IDEA.md; while read -r f; do git checkout -- "$f"; done < <(git diff --name-only)', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; for F in CLAUDE.md docs/IDEA.md; do git checkout -- "$F"; done', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; F+=" CLAUDE.md"; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; Q="CLAUDE.md docs/IDEA.md"; F=$Q; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'Q="CLAUDE.md docs/IDEA.md"; F=$Q; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; declare F="CLAUDE.md docs/IDEA.md"; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; local F="CLAUDE.md docs/IDEA.md"; git checkout -- $F', 'deny:uncommitted'],
+      ['B', 'P=(CLAUDE.md docs/IDEA.md); git checkout -- "${P[@]}"', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; F=(CLAUDE.md docs/IDEA.md); git checkout -- "${F[@]}"', 'deny:uncommitted'],
+      ['B', 'F=docs/IDEA.md; F=(CLAUDE.md docs/IDEA.md); git checkout -- $F', 'deny:uncommitted'],
+      ['P', '$p = \'CLAUDE.md\', \'docs/IDEA.md\'; git checkout -- $p', 'deny:uncommitted'],
+      ['P', '$p = "CLAUDE.md","docs/IDEA.md"; git checkout -- $p', 'deny:uncommitted'],
+      ['P', '$p=\'CLAUDE.md\',\'docs/IDEA.md\'; git checkout -- $p', 'deny:uncommitted'],
+      ['P', '$p = @(\'CLAUDE.md\', \'docs/IDEA.md\'); git restore $p', 'deny:uncommitted'],
+      ['P', '$p = \'CLAUDE.md\',\'docs/IDEA.md\'; git checkout $p', 'allow'],
+      ['P', '$p = \'CLAUDE.md\',\'docs/IDEA.md\'; git checkout HEAD $p', 'allow'],
+      ['P', '$p = \'CLAUDE.md\',\'docs/IDEA.md\'; git checkout HEAD -- $p', 'deny:uncommitted'],
+      ['P', '$P = \'CLAUDE.md\',\'docs/IDEA.md\'; git checkout -- $p', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f = (git diff --name-only); git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f = $(git diff --name-only); git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f = @(git diff --name-only); git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f=git diff --name-only; git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; [string[]]$f = git diff --name-only; git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f = Get-ChildItem -Name *.md; git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; foreach ($f in (git diff --name-only)) { git checkout -- $f }', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; foreach ($f in \'CLAUDE.md\',\'docs/IDEA.md\') { git checkout -- $f }', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; git diff --name-only | ForEach-Object { $f = $_; git checkout -- $f }', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; git diff --name-only | % { git checkout -- $_ }', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'\n$f = git diff --name-only\ngit checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; $f += \'CLAUDE.md\'; git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = @(\'docs/IDEA.md\'); $f += \'CLAUDE.md\'; git checkout -- $f', 'deny:uncommitted'],
+      ['P', '$f = \'docs/IDEA.md\'; Set-Variable f \'CLAUDE.md\'; git checkout -- $f', 'deny:uncommitted'],
+      ];
+      if (VARIANTS.length !== 52) report(`the variants of T4a's verifying round are 52, found ${VARIANTS.length}`);
+      for (const [tool, command, want] of VARIANTS) {
+        expect('main-pre-tool-use-bash', `variant (${tool === 'P' ? 'PowerShell' : 'Bash'}): ${command.slice(0, 100)}`, { projectDir: v, ...(tool === 'P' ? { tool: 'PowerShell' } : {}), input: { tool_input: { command } } }, want);
+      }
+    }
+
     // T4d-AC3: the rule precommit, narrow by the owner's decision: git commit with --no-verify or -n, and git config that
     // sets core.hooksPath to anything but .githooks or unsets it. Each form it refuses, and each it lets through.
     const psCase = (command, want) => expect('main-pre-tool-use-bash', `PowerShell: ${command}`, { tool: 'PowerShell', input: { tool_input: { command } } }, want);
@@ -3921,7 +4113,7 @@ slowStep('hooks (recorded payloads)', (report) => {
     for (const c of [
       'git commit -m "wip"', 'git commit -am "wip"', 'git commit -mn', 'git commit -m -n', 'git commit -m "docs: never use -n or --no-verify"', 'git commit --message=--no-verify', 'git commit -m x -- --no-verify',
       'git commit --amend --no-edit', 'git commit --no-verify --verify -m "wip"', 'git commit -F msg.txt', 'git log -n 3', 'git add -n .', 'grep -n verify CLAUDE.md', 'git merge --no-verify --no-edit main',
-      'git config core.hooksPath .githooks', 'git config --local core.hooksPath .githooks', 'git config --global core.hooksPath .githooks', 'git config set core.hooksPath .githooks', 'git config core.hooksPath ./.githooks', 'git config core.hooksPath .githooks/',
+      'git config core.hooksPath .githooks', 'git config --local core.hooksPath .githooks', 'git config set core.hooksPath .githooks', 'git config core.hooksPath ./.githooks', 'git config core.hooksPath .githooks/',
       'git config core.hooksPath', 'git config --get core.hooksPath', 'git config get core.hooksPath', 'git config --list', 'git config user.email "e2e@pitwall.invalid"', 'git config --unset user.signingkey',
       // R-5: outside the narrow rule on purpose.
       'git -c core.hooksPath=/dev/null commit -m "wip"', 'git commit --no-veri -m "wip"',

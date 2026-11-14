@@ -207,7 +207,11 @@ export function bugTable(text) {
   if (first >= 0) while (end < lines.length && lines[end].startsWith('|')) end += 1;
   const header = first >= 0 ? cellsOf(lines[first]) : null;
   const keys = (header ?? []).map((h) => Object.keys(BUG_KEYS).find((k) => BUG_KEYS[k].toLowerCase() === h.toLowerCase()) ?? null);
-  const rows = first < 0 ? [] : lines.slice(first + 1, end).map(cellsOf).filter((c) => !separatorRow(c)).map((cells) => {
+  const cellRows = first < 0 ? [] : lines.slice(first + 1, end).map(cellsOf).filter((c) => !separatorRow(c));
+  // BUG-5: a row with more cells than the table has columns, as a "|" written without its backslash makes it: a
+  // rewrite would shift its cells and drop the last.
+  const ragged = header ? cellRows.filter((c) => c.length > header.length).map((c) => ({ id: c[0] ?? '', cells: c.length })) : [];
+  const rows = cellRows.map((cells) => {
     const row = {};
     keys.forEach((k, i) => {
       if (k) row[k] = cells[i] ?? '';
@@ -215,7 +219,7 @@ export function bugTable(text) {
     return row;
   });
   const old = Boolean(header) && header.map((h) => h.toLowerCase()).join('|') === OLD_BUG_COLUMNS.map((h) => h.toLowerCase()).join('|');
-  return { lines, first, end, header, keys, rows, old };
+  return { lines, first, end, header, keys, rows, old, ragged };
 }
 // The table of a project laid out before T4b.
 export const OLD_BUG_COLUMNS = ['ID', 'Found in', 'Steps', 'Expected', 'Actual', 'Status', 'Fix PR'];

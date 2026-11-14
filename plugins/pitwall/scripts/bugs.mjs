@@ -170,6 +170,10 @@ function treeTable() {
   if (!table.old && table.header.map((h) => h.toLowerCase()).join('|') !== want.map((h) => h.toLowerCase()).join('|')) {
     refuse(`docs/BUGS.md has the columns | ${table.header.join(' | ')} |: neither the template's (| ${want.join(' | ')} |) nor the seven of a project laid out before T4b. Put the template's back (pitwall ADR-0006), then run this again; nothing was written.`);
   }
+  // BUG-5: a row with a cell too many would be rewritten with its cells shifted and its last one lost.
+  if (table.ragged.length) {
+    refuse(`docs/BUGS.md: ${table.ragged.map((r) => `the row ${r.id || 'without an ID'} has ${r.cells} cells`).join(', ')}, and the table has ${table.header.length} columns: a "|" inside a cell is written "\\|". Put the row right by hand, then run this again; nothing was written.`);
+  }
   const rows = table.rows.map((r) => (table.old ? { ...r, ...oldDefaults(r, cfg) } : { ...r }));
   return { path, table, rows };
 }

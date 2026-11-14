@@ -24,7 +24,7 @@ L-14: a commit ran after the check before it had failed, because the check and t
 - It runs nothing on a `spike/*` branch, where a prototype is committed while the gate is still the template's stub: the one branch exception, so that a branch with a new name is checked by default (owner, 2026-11-11).
 - It runs nothing for a commit that changes only Markdown under `docs/` and `.claude/pitwall.json`: such a commit cannot turn the code's checks red (a gate that also checks `docs/` is caught by CI), and it must land while the gate is red, as the first commit of the fix for a red `main` does (proposed by the agent, accepted by the owner, 2026-11-12).
 - `/pitwall:kickoff` sets `core.hooksPath` to `.githooks` before the skeleton commit; `/pitwall:continue` sets it in a clone where the hook is tracked, and lays the hook out in a project laid out before T4d.
-- The hooks' guard refuses `git commit` with `--no-verify` or `-n`, and `git config` that sets `core.hooksPath` to anything but `.githooks` or unsets it. Nothing else: the rule is narrow, and what it does not read is R-5 (owner, 2026-11-12).
+- The hooks' guard refuses `git commit` with `--no-verify` or `-n`, and `git config` that sets `core.hooksPath` to anything but `.githooks` or unsets it. Nothing else: the rule is narrow, and what it does not read is R-5 (owner, 2026-11-12). Amended in T7 (2026-11-14), by the owner's decision in T4b that BUG-8 recorded: it also refuses `core.hooksPath` set for every repository of the account or the machine (`--global`, `--system`), whatever the value, and kickoff asks the owner before pitwall's hook replaces hooks of their own (BUG-7).
 - pitwall's own repository has a hook of its own that runs `node scripts/check.mjs --fast` (owner, 2026-11-12).
 
 ## Consequences

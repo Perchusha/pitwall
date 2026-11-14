@@ -21,7 +21,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`release`, `bug
 
 - Run each command as written, from the project root, one command per call.
 - One question per message, then wait. Never answer for the owner, and never pass `--owner-approved` without their yes to this merge in this conversation.
-- Never make, move or push a tag, and never run `gh release`: `release.mjs --tag` hands those commands to the owner, and you show them verbatim (owner, 2026-11-12). The same for any HANDOFF a script prints.
+- Never make, move or push a tag, and never run `gh release`: `release.mjs --tag` hands those commands to the owner, and you show them verbatim (owner, 2026-11-12); pitwall's guard refuses them to every agent (the rule `tag`). The same for any HANDOFF a script prints.
 - No release while a blocking bug is open, an unconfirmed one included (ADR-0013): `release.mjs`, the qa agent's check and `merge.mjs` each refuse. Never work around a refusal; a blocking bug goes first, through `/pitwall:continue`.
 - This conversation writes only the release's records: what `release.mjs --write` writes, the entries of `docs/JOURNAL.md`, and a `.claude/pitwall.json` the owner's answer changed. Never edit `CHANGELOG.md` by hand, never write `docs/reviews/`, and never set `ai-review`: the review file and the status are the qa agent's.
 - Wait for the qa agent: run it in the foreground and read its report before you go on or end your turn.

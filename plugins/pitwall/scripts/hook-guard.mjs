@@ -432,6 +432,11 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
         return expand(x);
       });
     }
+    // BUG-4: PowerShell's "$r = 'review-status.mjs'" assigns one word and runs nothing the rules could refuse for
+    // what it does: a string, or a command with no argument. The parser keeps no quotes, so a single word after an
+    // assignment is read as the value it almost always is; a command inside it ("$r = $(git reset --hard)") is a
+    // command of its own and is judged as ever.
+    const psValue = ps && cmd.redirects.length === 0 && cmd.inputs.length === 0 && ((/^\$[\w:]+$/.test(argv[0] ?? '') && argv[1] === '=' && argv.length === 3) || (/^\$[\w:]+=$/.test(argv[0] ?? '') && argv.length === 2) || (/^\$[\w:]+=.+$/.test(argv[0] ?? '') && argv.length === 1));
     // xargs hands its command operands only the run knows.
     let xargs = false;
     for (;;) {
@@ -451,7 +456,7 @@ export function parseCommand(text, kind = 'bash', cwd = '.', home = '', depth = 
         while (argv.length && argv[0].startsWith('-')) argv = argv.slice(1);
       } else break;
     }
-    out.push({ argv, redirects: expanding ? cmd.redirects.map(expand) : cmd.redirects, inputs: expanding ? cmd.inputs.map(expand) : cmd.inputs, cwd: dir, ...(xargs ? { xargs } : {}) });
+    out.push({ argv, redirects: expanding ? cmd.redirects.map(expand) : cmd.redirects, inputs: expanding ? cmd.inputs.map(expand) : cmd.inputs, cwd: dir, ...(xargs ? { xargs } : {}), ...(psValue ? { value: true } : {}) });
     const p = program(argv[0]);
     if (['cd', 'pushd', 'chdir', 'set-location', 'sl'].includes(p)) {
       const target = argv.slice(1).find((a) => !a.startsWith('-'));
@@ -560,11 +565,14 @@ const CONFIG_VALUED = new Set(['-f', '--file', '--blob', '--type', '--default', 
 const CONFIG_SUBCOMMANDS = new Set(['set', 'unset', 'get', 'list', 'edit', 'rename-section', 'remove-section']);
 
 // What "git config <args>" does to core.hooksPath that the gate before every commit does not allow, in words ("unsets
-// core.hooksPath"), or null: a read, another key, or core.hooksPath set to .githooks, at any scope. Reads both forms,
+// core.hooksPath"), or null: a read, another key, or core.hooksPath set to .githooks in this repository. Set for the
+// whole account or machine (--global, --system) it is refused whatever the value: every other repository would then
+// look for its hooks in a folder named .githooks (BUG-8). Reads both forms,
 // "git config [--unset] <key> [<value>]" and "git config set|unset <key> [<value>]" (git 2.46).
 export function hooksPathChange(args) {
   const words = [];
   let action = null;
+  let wide = null;
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (a === '--') {
@@ -572,6 +580,7 @@ export function hooksPathChange(args) {
       break;
     }
     if (CONFIG_VALUED.has(a)) i += 1;
+    else if (a === '--global' || a === '--system') wide = a;
     else if (a === '--unset' || a === '--unset-all') action = 'unset';
     else if (/^--(get|get-all|get-regexp|get-urlmatch|get-color|get-colorbool|list|edit|rename-section|remove-section)$/.test(a) || a === '-l' || a === '-e') action ??= 'read';
     else if (!a.startsWith('-')) words.push(a);
@@ -581,6 +590,7 @@ export function hooksPathChange(args) {
   if (sub === 'unset' || action === 'unset') return 'unsets core.hooksPath';
   if (sub === 'get' || sub === 'list' || action === 'read' || words.length < 2) return null;
   // The same folder however it is spelled: "./.githooks", ".githooks/" (review round 1).
+  if (wide) return `sets core.hooksPath for every repository of the ${wide === '--global' ? 'account' : 'machine'} (${wide})`;
   const folder = words[1].replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/\/+$/, '');
   return folder === HOOKS_PATH ? null : `sets core.hooksPath to "${words[1]}"`;
 }
@@ -751,10 +761,12 @@ export function guard(call, ctx) {
   // repository (T4a-AC1).
   const lineState = keptInLine(ctx);
   // Whether a git command after each one in the line can throw work away.
-  const discarding = cmds.map((c) => program(c.argv[0]) === 'git' && ['checkout', 'switch', 'restore', 'reset', 'clean', 'stash'].includes(gitCommand(c.argv).sub));
+  const discarding = cmds.map((c) => program(c.argv[0]) === 'git' && ['checkout', 'switch', 'restore', 'reset', 'clean', 'stash', 'rm', 'worktree'].includes(gitCommand(c.argv).sub));
   const laterDiscard = discarding.map((_, i) => discarding.slice(i + 1).some(Boolean));
 
-  for (const [i, { argv, redirects, inputs, cwd: dir, xargs }] of cmds.entries()) {
+  for (const [i, { argv, redirects, inputs, cwd: dir, xargs, value }] of cmds.entries()) {
+    // A PowerShell assignment of one word: a value, not a command (BUG-4).
+    if (value) continue;
     const p = program(argv[0]);
     const words = pathWords(argv);
     const code = inlineCode(argv);
@@ -832,7 +844,15 @@ export function guard(call, ctx) {
     const named = words.filter(namesSwitch);
     const naming = named[0] ?? (code !== null && namesSwitch(code) ? 'this inline script' : null);
     const readsPlugin = pluginReader && named.length > 0 && !named.some(isSwitchFile);
-    if (naming && !readOnly && !pitwallScript && !readsPlugin) {
+    // BUG-6: an inline node script that only reads the plugin's own data, as a skill's "node -e" over the config
+    // does: every string in it that names the plugin's folder is a .json or .md file there, none is a switch file,
+    // and nothing in it writes, removes, runs a program or loads code.
+    const INLINE_ACTS = /\b(?:write|append|rm|rmdir|unlink|rename|copy|cp|mkdir|mkdtemp|truncate|chmod|chown|symlink|link|open|createWriteStream|exec|execFile|spawn|fork)(?:File)?(?:Sync)?\s*\(|child_process|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(|process\.(?:binding|dlopen)|\.promises\b/;
+    const inlineReadsPlugin =
+      p === 'node' && code !== null && named.every((w) => w === code) && redirects.length === 0 && !isSwitchFile(code) && !INLINE_ACTS.test(code) &&
+      [...code.matchAll(/(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)].map((m) => m[2]).filter(namesSwitch).every((s) => /\.(json|md)$/i.test(s)) &&
+      [...code.matchAll(/(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)].some((m) => namesSwitch(m[2]));
+    if (naming && !readOnly && !pitwallScript && !readsPlugin && !inlineReadsPlugin) {
       return refuse('switch', `${naming} names one of the switches of pitwall's guards (.claude/pitwall.json, the Claude Code settings, the plugin's folder). A command that names one may only read it (cat, head, grep, git diff, log, show) or stage it (git add); only the owner, or a pitwall script, changes it.`);
     }
     if (git?.sub === 'clean' && git.args.some((a) => /^-[a-zA-Z]*[xX]/.test(a)) && !git.args.some((a) => a === '--dry-run' || /^-[a-zA-Z]*n/.test(a))) return refuse('switch', 'git clean -x removes ignored files, and .claude/settings.local.json is one of the switches of pitwall\'s guards.');
@@ -855,8 +875,30 @@ export function guard(call, ctx) {
     }
     if (git?.sub === 'config') {
       const change = hooksPathChange(git.args);
-      if (change) return refuse('precommit', `this git config ${change}, the setting that runs the gate before every commit from ${HOOKS_PATH} (pitwall ADR-0012). The only change pitwall makes is git config core.hooksPath ${HOOKS_PATH}; anything else is the owner's, in a terminal.`);
+      if (change) return refuse('precommit', `this git config ${change}, the setting that runs the gate before every commit from ${HOOKS_PATH} (pitwall ADR-0012). The only change pitwall makes is git config core.hooksPath ${HOOKS_PATH}, for this repository alone; anything else is the owner's, in a terminal.`);
     }
+
+    // (g) BUG-10, R-6: the tag of a release and its GitHub release are the owner's to make, from the commands
+    // release.mjs --tag hands them (pitwall ADR-0013). Narrow: a tag named exactly like a version (release.tagPrefix
+    // and x.y.z) made, moved or deleted; a push that names such a tag or pushes every tag; and gh release create,
+    // edit, delete and upload, with the API's writes to releases. Any other tag is the project's own business.
+    const versionTag = new RegExp(`^(?:refs/tags/)?${String(ctx.cfg.release.tagPrefix).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\d+\\.\\d+\\.\\d+$`);
+    const ownersTag = 'is the owner\'s to make, from the commands release.mjs --tag hands them (pitwall ADR-0013): show them its HANDOFF, and never run them.';
+    if (git?.sub === 'tag') {
+      const lists = git.args.some((a) => /^(-l|--list|-n\d*|--contains|--no-contains|--points-at|--merged|--no-merged|-v|--verify)$/.test(a));
+      const { before, after } = gitOperands(git.args, ['-m', '--message', '-F', '--file', '-u', '--local-user', '--cleanup', '--sort', '--format', '--contains', '--no-contains', '--points-at', '--merged', '--no-merged']);
+      const name = [...before, ...(after ?? [])].find((n) => versionTag.test(n));
+      if (!lists && name) return refuse('tag', `git tag ${name}: the tag of a release ${ownersTag}`);
+    }
+    if (git?.sub === 'push') {
+      // A dry run pushes nothing (review round 1).
+      if (git.args.some((a) => a === '-n' || a === '--dry-run')) {
+        // nothing to judge
+      } else if (git.args.some((a) => a === '--tags' || a === '--mirror')) return refuse('tag', `git push ${git.args.includes('--mirror') ? '--mirror' : '--tags'} pushes every tag, a release's among them: the tag of a release ${ownersTag}`);
+      const pushed = git.args.some((a) => a === '-n' || a === '--dry-run') ? null : git.args.filter((a) => !a.startsWith('-')).flatMap((a) => a.replace(/^\+/, '').split(':')).find((x) => versionTag.test(x));
+      if (pushed) return refuse('tag', `git push of ${pushed}: the tag of a release ${ownersTag}`);
+    }
+    if (p === 'gh' && argv[1] === 'release' && /^(create|edit|delete|upload|delete-asset)$/.test(argv[2] ?? '')) return refuse('tag', `gh release ${argv[2]}: the GitHub release of a version ${ownersTag}`);
 
     // T4a-AC1, L-12: a git command that would throw away uncommitted work. What a stash, a commit or git add
     // earlier in the same line kept ("git stash push -- a.js && git checkout -- a.js") is judged kept; the
@@ -869,6 +911,11 @@ export function guard(call, ctx) {
       if (lost?.files.length) {
         const shown = lost.files.slice(0, 8).join(' ');
         const more = lost.files.length > 8 ? ` and ${lost.files.length - 8} more` : '';
+        // A work tree's work is kept in that work tree: a stash or a commit there, in a call of its own (review round 1).
+        // A work tree the line names only when it runs: which one it removes is unknown, so the guard names the work
+        // trees that hold work and asks for each to be named plainly, never to keep work it may not touch (review round 2).
+        if (lost.unnamed) return refuse('uncommitted', `git worktree remove --force here names its work tree only when the line runs, and ${lost.unnamed.length === 1 ? 'a linked work tree holds' : 'linked work trees hold'} uncommitted work: ${lost.unnamed.join(', ')} (L-12). Name each work tree to remove plainly, one call each: the guard then judges that one alone.`);
+        if (lost.worktree) return refuse('uncommitted', `git worktree remove --force would throw away uncommitted work in ${lost.worktree}: ${shown}${more} (L-12). Keep it first, in a call of its own: commit it in that work tree, or stash it there (git -C <the work tree> stash push -u); then remove the work tree, with --force no longer needed once it is clean.`);
         if (lost.stash) return refuse('uncommitted', `git stash ${git.args[0]} would throw away ${shown}${more}, uncommitted work kept in the stash (L-12). Apply it first (git stash pop), or leave the stash; the owner drops it in a terminal if it should go.`);
         // In a merge, a rebase, a cherry-pick or a revert, what it staged is its own, and git stash refuses
         // its unmerged paths: its --abort is the way back.
@@ -922,6 +969,7 @@ export function guard(call, ctx) {
       if (api.write && /\/branches\/[^/]+\/protection/.test(api.path)) return refuse('protection', `${api.method} ${api.path} changes branch protection, which only the owner changes (pitwall ADR-0005).`);
       if (api.write && /(^|\/)rulesets(\/|$)/.test(api.path)) return refuse('protection', `${api.method} ${api.path} changes a ruleset, which only the owner changes (pitwall ADR-0005).`);
       if (api.graphql && /\b(create|update|delete)(BranchProtectionRule|RepositoryRuleset)\b/.test(api.body)) return refuse('protection', 'this GraphQL mutation changes merge protection, which only the owner changes (pitwall ADR-0005).');
+      if (api.write && /(^|\/)releases(\/|$)/.test(api.path)) return refuse('tag', `${api.method} ${api.path} writes a GitHub release: the GitHub release of a version is the owner's to make, from the commands release.mjs --tag hands them (pitwall ADR-0013).`);
       if (api.write && /\/statuses\//.test(api.path)) return refuse('review', `${api.method} ${api.path} writes a commit status: ${ctx.cfg.review.statusContext} is set only through review-status.mjs (pitwall ADR-0007), and no other status is written by hand.`);
       const merges = (api.write && /\/pulls\/\d+\/merge$/.test(api.path)) || (api.graphql && /\bmergePullRequest\b/.test(api.body));
       if (merges && mode !== 'branch-protection') return refuse('merge', `merge protection is ${mode ?? 'not recorded'}: merge with gh pr merge, which pitwall checks.`);
@@ -1167,7 +1215,7 @@ function discards(git, dir, ctx, line) {
   const untrackedNow = (e, was) => was === 'removed' || (was === 'unstaged' && e.x === 'A');
   // fromIndex: the work tree is restored from the index, so what is staged stays there, unless the line
   // took it out of the index first. A file untracked by now is left alone by a restore and by a reset.
-  const tracked = (paths, fromIndex) => {
+  const tracked = (paths, fromIndex, stagedOnly = false) => {
     const s = treeStatus(dir, ctx, spec(paths), 'no');
     if (s.error) return s;
     const { st, show } = line(dir);
@@ -1175,7 +1223,7 @@ function discards(git, dir, ctx, line) {
     const files = s.entries.filter((e) => {
       if ((e.kind !== '1' && e.kind !== '2') || has(st.kept.tracked, e.path)) return false;
       const was = staging(st.index.tracked, e.path);
-      if (!fromIndex) return !(e.x === 'A' && untrackedNow(e, was)) && (changed(e.x) || changed(e.y));
+      if (!fromIndex) return !(e.x === 'A' && untrackedNow(e, was)) && (changed(e.x) || (!stagedOnly && changed(e.y)));
       if (untrackedNow(e, was)) return false;
       return was !== 'staged' && (changed(e.y) || (outOfIndex(was) && changed(e.x)));
     });
@@ -1217,8 +1265,45 @@ function discards(git, dir, ctx, line) {
     return tracked(!paths.length || runtime(paths) ? null : paths, !staged);
   }
   if (git.sub === 'reset') {
+    // BUG-3: --merge puts back the index and every file that differs between it and HEAD: what is staged and not
+    // committed is gone, as with --hard; a change that is not staged it keeps, or stops on.
+    if (flag('--merge')) return missing ? absent() : tracked(null, false, true);
     if (!flag('--hard')) return null;
     return missing ? absent() : tracked(null, false);
+  }
+  // BUG-1: git rm -f removes a file together with the changes it holds; without -f git refuses a changed file
+  // itself, and --cached leaves the file in the tree.
+  if (git.sub === 'rm') {
+    if (!(flag('-f', '--force') || short('f')) || flag('--cached', '-n', '--dry-run') || short('n')) return null;
+    if (missing) return absent();
+    const { before, after } = gitOperands(a, ['--pathspec-from-file']);
+    const paths = [...before, ...(after ?? [])];
+    return tracked(!paths.length || runtime(paths) ? null : paths, false);
+  }
+  // BUG-2: git worktree remove --force removes a work tree with what it holds uncommitted, changed or new;
+  // without --force git refuses a work tree that is not clean.
+  if (git.sub === 'worktree' && a[0] === 'remove') {
+    if (!(flag('-f', '--force') || short('f'))) return null;
+    const target = a.slice(1).find((x) => !x.startsWith('-'));
+    // A work tree only the run knows (a loop over them, a variable, xargs, a PowerShell expression in parentheses,
+    // which the parser leaves out of the words) stands for every linked work tree of the repository, as paths only
+    // the run knows stand for the whole tree: a clean-up loop over clean work trees passes (the corpus held four such
+    // lines). Without a target git fails anyway, so this refuses nothing that would have run (review rounds 1, 2).
+    let targets = target ? [[target.replace(/[\\/]+$/, ''), native(target, git.base ?? dir, ctx.home)]] : [];
+    if (!target || late(target)) {
+      const list = ctx.git(['worktree', 'list', '--porcelain'], dir);
+      if (!list.ok) return { error: list.err || `exit ${list.status}` };
+      targets = list.out.split('\n').filter((l) => l.startsWith('worktree ')).slice(1).map((l) => [basename(l.slice('worktree '.length)), l.slice('worktree '.length)]);
+    }
+    const files = [];
+    for (const [shown, where] of targets) {
+      if (!existsSync(where)) continue;
+      const s = treeStatus(where, ctx, null, 'all');
+      if (s.error) return s;
+      files.push(...s.entries.filter((e) => ['1', '2', 'u', '?'].includes(e.kind)).map((e) => `${shown}/${e.path}`));
+    }
+    const known = target && !late(target);
+    return { files, worktree: known ? target.replace(/[\\/]+$/, '') : null, unnamed: !known && files.length ? [...new Set(files.map((f) => f.split('/')[0]))].map((name) => targets.find(([shown]) => shown === name)?.[1] ?? name) : null };
   }
   if (git.sub === 'clean') {
     if (flag('-n', '--dry-run') || short('n') || !(flag('-f', '--force') || short('f'))) return null;
