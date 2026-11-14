@@ -677,7 +677,7 @@ step('layout', (report) => {
     writeFileSync(join(loose, '.vscode', 'settings.json'), '{}\n');
     git(loose, 'add', 'README.md');
     for (const [label, r] of [['--check', preflight(loose)], ['the layout', runScript('layout.mjs', ['--target', loose, '--name', 'scratch', '--idea', 'A scratch project for the checks', '--level', 'lite'], { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } })]]) {
-      if (r.status !== 1 || !/has no commit yet/.test(r.stderr) || !/move these files out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stderr) || !/^ {2}README\.md$/m.test(r.stderr) || !/^ {2}\.vscode\/settings\.json$/m.test(r.stderr) || existsSync(join(loose, 'CLAUDE.md'))) report(`${label} in a repository with files and no commit: exit ${r.status}, expected 1, the files named and what to do with them, nothing written\n${r.stderr}`);
+      if (r.status !== 1 || !/has no commit yet/.test(r.stderr) || !/move these files out of the folder, or commit them \(a file git ignores can only be moved\), then run \/pitwall:continue again/.test(r.stderr) || !/^ {2}README\.md$/m.test(r.stderr) || !/^ {2}\.vscode\/settings\.json$/m.test(r.stderr) || existsSync(join(loose, 'CLAUDE.md'))) report(`${label} in a repository with files and no commit: exit ${r.status}, expected 1, the files named and what to do with them, nothing written\n${r.stderr}`);
     }
     writeFileSync(join(committed, 'README.md'), '# Mine\n');
     const c3b = preflight(committed);
@@ -1133,6 +1133,25 @@ slowStep('adopt', (report) => {
     gitIn(empty, 'add', 'README.md');
     r = adopt(empty);
     if (r.status !== 1 || !/move them out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stdout) || !/^ {2}README\.md$/m.test(r.stdout) || !/^ {2}notes\.txt$/m.test(r.stdout) || /settings\.local\.json/.test(r.stdout)) report(`adopt in a repository with files and no commit must name them and say what to do: exit ${r.status}\n${r.stdout}`);
+    // ... but files kickoff lays out over, as its preflight judges them, still go to kickoff (review round 1 of BUG-15).
+    const forKickoff = {
+      'an operating system\'s file': ['.DS_Store', 'x'],
+      'a project-scope install\'s settings': ['.claude/settings.json', '{\n  "enabledPlugins": {\n    "pitwall@pitwall": true\n  }\n}\n'],
+    };
+    Object.entries(forKickoff).forEach(([label, [file, body]], i) => {
+      const k = join(dir, `for-kickoff-${i}`);
+      mkdirSync(join(k, '.claude'), { recursive: true });
+      gitIn(k, 'init', '-q', '-b', 'main');
+      writeFileSync(join(k, file), body);
+      const rk = adopt(k);
+      if (rk.status !== 1 || !/has no commit yet: a new project starts with \/pitwall:kickoff/.test(rk.stdout)) report(`adopt in a repository with no commit and ${label} must point to kickoff: exit ${rk.status}\n${rk.stdout}`);
+    });
+    // A layout kickoff has not committed yet: kickoff resumes it.
+    const uncommitted = join(dir, 'uncommitted-layout');
+    layOut(uncommitted);
+    gitIn(uncommitted, 'init', '-q', '-b', 'main');
+    r = adopt(uncommitted);
+    if (r.status !== 1 || !/is a pitwall project already/.test(r.stdout)) report(`adopt in a layout kickoff has not committed must point to /pitwall:continue: exit ${r.status}\n${r.stdout}`);
     r = adopt(join(p, 'src'));
     if (r.status !== 1 || !/not the top folder/.test(r.stdout)) report(`adopt in a subfolder must refuse: exit ${r.status}\n${r.stdout}`);
     const laid = join(dir, 'laid');

@@ -163,4 +163,4 @@ The runs above came to about $320 at API prices.
 
 **Next:** T6, the adoption of a project that exists already, then T7, the guard's corpus and the open bugs; 1.0 after them (owner, 2026-11-13).
 
-Older entries: T4a to T4c in [archive/JOURNAL-T4a-T4c.md](archive/JOURNAL-T4a-T4c.md), T0 to T3b in [archive/JOURNAL-T0-T3b.md](archive/JOURNAL-T0-T3b.md).
+Older entries: T4a to T4c, T4d among them, in [archive/JOURNAL-T4a-T4c.md](archive/JOURNAL-T4a-T4c.md), T0 to T3b in [archive/JOURNAL-T0-T3b.md](archive/JOURNAL-T0-T3b.md).

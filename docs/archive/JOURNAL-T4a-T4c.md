@@ -1,6 +1,6 @@
 # Journal, T4a to T4c
 
-The entries of the epics T4a to T4c, moved out of `docs/JOURNAL.md` to keep it under its size limit (`docsLimits.stateFileMaxKB`). Newest first.
+The entries of the epics T4a, T4b, T4d and T4c, in the order they merged, moved out of `docs/JOURNAL.md` to keep it under its size limit (`docsLimits.stateFileMaxKB`). Newest first.
 
 ## T4c - Releases and a minimal QA (2026-11-13)
 
