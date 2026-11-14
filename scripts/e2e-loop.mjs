@@ -43,7 +43,7 @@ export const LOOP_STAGES = ['e0', 'e1', 'bug', 'release'];
 // The stage each loop stage starts from, after e0.
 const SEEDED_FROM = { e1: 'e0', bug: 'e1', release: 'bug' };
 // The defect the bug stage files: the harness breaks it on main before the stage (injectDefect).
-const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1-AC1 says Quit removes the icon and ends them. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
+const BUG_REPORT = "Quit in the tray menu does nothing since the last change merged: start the app, open the icon's menu and pick Quit; the menu closes, and the icon and the app's processes stay, though E1 made Quit remove the icon and end the app. I found it today on my Windows laptop; the only way out is to end the process in Task Manager.";
 
 const IDEA = 'A desktop app that reminds me to stand up and move every 45 minutes';
 const SCENARIO = `You are the owner of a project: ${IDEA}. Its plan is merged, and the epic loop builds it now.
@@ -314,28 +314,50 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
   };
 
   // The bug stage's defect, broken on main as a careless merge would break it: Quit no longer quits, and the
-  // tests named for it are gone, so the gate stays green (checked on the saved e1 of 2026-11-10 with
-  // scripts/gate --full). It needs the E1 that e1 run built; another E1 needs another defect.
+  // test named for it is gone, so the gate stays green. Each E1 the e1 stage has built so far has its own shape; the
+  // first that fits is broken (each was checked on its saved e1 with scripts/gate --full: 2026-11-10 and 2026-11-14).
+  // An E1 built some other way needs a shape of its own here.
+  const DEFECTS = [
+    {
+      // Electron, the tray in src/main/tray.ts, its tests in tests/main/ (2026-11-10).
+      code: 'src/main/tray.ts',
+      breakCode: (code) => code.replace(/click: \(\) => \{\s*onQuit\(\);\s*\}/, "click: () => {\n        if (status === '') {\n          onQuit();\n        }\n      }"),
+      tests: () => (existsSync(join(project, 'tests', 'main')) ? readdirSync(join(project, 'tests', 'main')).filter((x) => x.endsWith('.test.ts')).map((x) => `tests/main/${x}`) : []),
+      breakTest: (text) => text.replace(/\n([ \t]*)it\('"Quit"[^'\n]*', (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/g, ''),
+    },
+    {
+      // Electron, the tray's menu in src/main/main.ts, its test beside it (2026-11-14).
+      code: 'src/main/main.ts',
+      breakCode: (code) => code.replace('template.push({ label: QUIT_LABEL, click: () => app.quit() });', 'template.push({ label: QUIT_LABEL, click: () => undefined });'),
+      tests: () => ['src/main/main.test.ts'],
+      breakTest: (text) => text.replace(/\n\n([ \t]*)it\("ends the app with Quit", (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/, '\n'),
+    },
+  ];
   function injectDefect() {
-    const tray = join(project, 'src', 'main', 'tray.ts');
-    const code = existsSync(tray) ? readFileSync(tray, 'utf8') : '';
-    const brokenCode = code.replace(/click: \(\) => \{\s*onQuit\(\);\s*\}/, "click: () => {\n        if (status === '') {\n          onQuit();\n        }\n      }");
-    const dir = join(project, 'tests', 'main');
-    const changed = [];
-    for (const f of existsSync(dir) ? readdirSync(dir).filter((x) => x.endsWith('.test.ts')) : []) {
-      const text = readFileSync(join(dir, f), 'utf8');
-      const without = text.replace(/\n([ \t]*)it\('"Quit"[^'\n]*', (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/g, '');
-      if (without === text) continue;
-      writeFileSync(join(dir, f), without);
-      changed.push(`tests/main/${f}`);
+    for (const d of DEFECTS) {
+      const file = join(project, d.code);
+      const code = existsSync(file) ? readFileSync(file, 'utf8') : '';
+      const brokenCode = d.breakCode(code);
+      if (!code || brokenCode === code) continue;
+      const changed = [];
+      for (const rel of d.tests()) {
+        if (!existsSync(join(project, rel))) continue;
+        const text = readFileSync(join(project, rel), 'utf8');
+        const without = d.breakTest(text);
+        if (without === text) continue;
+        writeFileSync(join(project, rel), without);
+        changed.push(rel);
+      }
+      if (changed.length === 0) continue;
+      writeFileSync(file, brokenCode);
+      git('switch', '-q', 'main');
+      git('commit', '-q', '-m', 'refactor(E1): the tray menu', '--', d.code, ...changed);
+      const p = git('push', '-q', 'origin', 'main');
+      if (p.status !== 0) throw new Error(`push of the broken main failed: ${p.stderr}`);
+      console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
+      return;
     }
-    if (brokenCode === code || changed.length === 0) throw new Error('the saved e1 has no Quit item calling onQuit() in src/main/tray.ts, or no test in tests/main/ named for "Quit": E1 was built anew, so give the bug stage a defect of the new code (scripts/e2e-loop.mjs, injectDefect)');
-    writeFileSync(tray, brokenCode);
-    git('switch', '-q', 'main');
-    git('commit', '-q', '-m', 'refactor(E1): the tray menu', '--', 'src/main/tray.ts', ...changed);
-    const p = git('push', '-q', 'origin', 'main');
-    if (p.status !== 0) throw new Error(`push of the broken main failed: ${p.stderr}`);
-    console.log(`the harness broke Quit on main: ${git('log', '-1', '--format=%h %s').stdout.trim()}`);
+    throw new Error('the saved e1 has a tray menu of a shape the bug stage does not know: E1 was built anew, so give the bug stage a defect of the new code (scripts/e2e-loop.mjs, DEFECTS)');
   }
 
   // The release stage's build: the owner adds scripts/build to a project laid out before 0.9.0 (T4c-AC4), a commit
