@@ -15,7 +15,7 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T4c](epics/T4c-release-and-qa.md) | Releases and a minimal QA: tags and changelog from merge commits, the lite level's local build, a qa agent for the closed epics' criteria | high | T4d | merged (#9) |
 | [T5a](epics/T5a-lite-reminder.md) | Validation on the lite system: the move reminder, from scratch to its first merged epic, and the plugin changes the run asked for | normal | T4c | merged (#10) |
 | [T6](epics/T6-adopt-existing-project.md) | Adopt an existing project: lay out only what is missing, keep what is there | normal | T5a | merged (#11) |
-| [T7](epics/T7-guard-corpus.md) | The guard's corpus run before each review round (L-13), and the open bugs fixed with it | high | T6 | in review |
+| [T7](epics/T7-guard-corpus.md) | The guard's corpus run before each review round (L-13), and the open bugs fixed with it | high | T6 | merged (#12) |
 | [T5b](epics/T5b-full-last-ones-down.md) | Validation on the full system: Last Ones Down, adopted after a dry run, to a release | normal | T7 | planned |
 | [T8](epics/T8-staging-and-serving-by-tag.md) | Staging by type of application, QA in a browser, pitwall served by tag | high | T7 | planned |
 
