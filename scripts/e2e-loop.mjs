@@ -332,6 +332,13 @@ export async function runLoop({ stages, stateDir, maxTurns, github }) {
       tests: () => ['src/main/main.test.ts'],
       breakTest: (text) => text.replace(/\n\n([ \t]*)it\("ends the app with Quit", (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/, '\n'),
     },
+    {
+      // Electron, the tray's menu in src/main/menu.ts with its actions, Quit's test in src/main/main.test.ts (2026-11-14).
+      code: 'src/main/menu.ts',
+      breakCode: (code) => code.replace('{ label: "Quit", click: () => actions.quit() }', '{ label: "Quit", click: () => undefined }'),
+      tests: () => ['src/main/main.test.ts'],
+      breakTest: (text) => text.replace(/\n\n([ \t]*)\/\/ E1-AC\d+\.\n\1it\("[^"\n]*Quit ends the app", (?:async )?\(\) => \{[\s\S]*?\n\1\}\);\n/, '\n'),
+    },
   ];
   function injectDefect() {
     for (const d of DEFECTS) {
