@@ -18,7 +18,7 @@ Plugin files used: `${CLAUDE_PLUGIN_ROOT}/config/defaults.json` (`runtime`, `kic
 - Run each command in the steps as written, from the project root, one command per call.
 - One question per message, then wait for the answer. Use the question tool when it is there, plain text otherwise. Never answer for the owner.
 - The question tool refuses a question with a single option: a proposal to confirm is asked in plain text, and options are offered only where they really differ. What you only inferred from the idea or an earlier answer is not a question each: such facts go to the owner as one numbered list, to confirm as a whole or correct by number.
-- Never overwrite a file, never delete one, and never adopt an existing project: that is a later pitwall epic. Say so and stop.
+- Never overwrite a file, never delete one, and never adopt an existing project: that is `/pitwall:adopt`, which `/pitwall:continue` runs in a folder that already holds a project. Say so and stop.
 - The skeleton commit is the only commit that goes to `main` directly. Every change to GitHub settings goes through `protect.mjs`.
 - When a script hands a step over, show its HANDOFF lines to the owner verbatim. Never retry a refused write another way.
 

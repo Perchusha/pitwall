@@ -281,7 +281,9 @@ function planningStage(root, cfg, branch) {
   const stages = ['kickoff', 'discovery', 'decide', ...(spikes ? ['spike'] : []), 'plan', 'plan-review'];
   for (const stage of stages) {
     const r = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'docs-check.mjs'), '--root', root, '--stage', stage], { encoding: 'utf8' });
-    if (r.status !== 0) return `planning on ${plan}; the next stage is ${stage} (its docs check does not pass yet): /pitwall:continue runs it, by the ${stage === 'plan-review' ? 'plan' : stage} skill.`;
+    // Stage 0 of a project that exists already is the adopt skill's (T6, startStage in its settings).
+    const adoptedHere = stage === 'kickoff' && Object.hasOwn((existsSync(join(root, '.claude', 'pitwall.json')) && parseJson(readFileSync(join(root, '.claude', 'pitwall.json'), 'utf8'))) || {}, cfg.adopt.key);
+    if (r.status !== 0) return `planning on ${plan}; the next stage is ${adoptedHere ? 'the adoption' : stage} (its docs check does not pass yet): /pitwall:continue runs it, by the ${stage === 'plan-review' ? 'plan' : adoptedHere ? 'adopt' : stage} skill.`;
     // Kickoff's documents are only its first half (review round 2): it is over when a commit holds the project's
     // settings and the planning branch exists. Until then the way on is still kickoff, which resumes.
     if (stage === 'kickoff') {
@@ -289,7 +291,9 @@ function planningStage(root, cfg, branch) {
       // The planning branch is there when this clone has it or origin does: a new clone of a project in the
       // middle of its planning holds it only as origin's (review round 3).
       const branched = [`refs/heads/${plan}`, `refs/remotes/origin/${plan}`].some((ref) => git(['rev-parse', '--verify', '-q', ref], root).ok);
-      if (!committed || !branched) return `planning on ${plan}; kickoff is not finished (${!committed ? 'no commit holds the skeleton yet' : `the branch ${plan} is not there yet`}): /pitwall:continue goes on with it, by the kickoff skill, which resumes.`;
+      // T6: stage 0 of a project that exists already is the adopt skill's (startStage in its settings).
+      const adopted = Object.hasOwn(parseJson(readFileSync(join(root, '.claude', 'pitwall.json'), 'utf8')) ?? {}, cfg.adopt.key);
+      if (!committed || !branched) return `planning on ${plan}; ${adopted ? 'the adoption' : 'kickoff'} is not finished (${!committed ? `no commit holds ${adopted ? 'what pitwall laid out' : 'the skeleton'} yet` : `the branch ${plan} is not there yet`}): /pitwall:continue goes on with it, by the ${adopted ? 'adopt' : 'kickoff'} skill, which resumes.`;
     }
   }
   return `planning on ${plan}; the plan is reviewed and waits for its merge: /pitwall:continue goes on with it, by the plan skill.`;

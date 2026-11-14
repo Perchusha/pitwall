@@ -428,13 +428,26 @@ function requireHeadings(rel, templateRel) {
 }
 
 const filesIn = (rel) => (has(rel) && statSync(join(root, rel)).isDirectory() ? readdirSync(join(root, rel)) : []);
-const adrFiles = filesIn('docs/adr').filter((f) => /^\d{4}-.+\.md$/.test(f) && !f.startsWith('0000-'));
-const epicFiles = filesIn('docs/epics').filter((f) => f.endsWith('.md'));
-const spikeFiles = filesIn('docs/spikes').filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md');
+// T6: what an adopted project wrote before pitwall in the folders read by convention (its own ADRs, plans and
+// reviews, in formats of their own) is kept as it is, and no check holds it to pitwall's template; its IDs still
+// resolve, and its numbers still count (.claude/pitwall.json ownDocs, written by adopt.mjs).
+const ownDocs = (() => {
+  try {
+    const list = JSON.parse(read('.claude/pitwall.json'))?.[cfg.adopt.ownDocsKey];
+    return new Set(Array.isArray(list) ? list.filter((x) => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+})();
+const notOwn = (folder) => (f) => !ownDocs.has(`${folder}/${f}`);
+const allAdrFiles = filesIn('docs/adr').filter((f) => /^\d{4}-.+\.md$/.test(f) && !f.startsWith('0000-'));
+const adrFiles = allAdrFiles.filter(notOwn('docs/adr'));
+const epicFiles = filesIn('docs/epics').filter((f) => f.endsWith('.md')).filter(notOwn('docs/epics'));
+const spikeFiles = filesIn('docs/spikes').filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md').filter(notOwn('docs/spikes'));
 // The code reviews (ADR-0011). The folder came with template 0.5.0: a project laid out before gets it
 // with its first review, so its README and template are not required, and reviews follow the plugin's template.
 const REVIEW_TEMPLATE = `${cfg.loop.reviews}/template.md`;
-const reviewFiles = filesIn(cfg.loop.reviews).filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md');
+const reviewFiles = filesIn(cfg.loop.reviews).filter((f) => f.endsWith('.md') && f !== 'README.md' && f !== 'template.md').filter(notOwn(cfg.loop.reviews));
 
 if (kinds.includes('sections')) {
   for (const { rel, dest } of templateDocs) if (!dest.startsWith(`${cfg.loop.reviews}/`)) requireHeadings(dest, rel);
@@ -458,7 +471,7 @@ function epicPrefix() {
 if (kinds.includes('ids')) {
   const P = epicPrefix();
   const defined = new Set();
-  for (const f of adrFiles) defined.add(`ADR-${f.slice(0, 4)}`);
+  for (const f of allAdrFiles) defined.add(`ADR-${f.slice(0, 4)}`);
   const firstCells = (rel) => (has(rel) ? read(rel).split('\n').filter((l) => l.trim().startsWith('|')).map((l) => splitRow(l)[0]) : []);
   const idIn = (cell) => /^\[?([A-Z]+-?\d+[a-z]?)\]?(?:\(.*\))?$/.exec(cell.replace(/`/g, ''))?.[1];
   const rowFiles = ['docs/EPICS.md', 'docs/BUGS.md', 'docs/LESSONS.md', 'docs/RISKS.md', 'docs/DISCOVERY.md', ...filesIn('docs/archive').map((f) => `docs/archive/${f}`)];
@@ -472,7 +485,8 @@ if (kinds.includes('ids')) {
   }
 
   const patterns = [/\bADR-\d{4}\b/g, new RegExp(`\\b${P}\\d+[a-z]?(?:-AC\\d+)?\\b`, 'g'), /\bBUG-\d+\b/g, /\bL-\d+\b/g, /\bA-\d+\b/g, /\bR-\d+\b/g];
-  const scan = ['CLAUDE.md', ...(has('docs') ? listFiles(join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`) : [])].filter(has);
+  // An adopted project's own documents keep the IDs they were written with (T6 review, round 2).
+  const scan = ['CLAUDE.md', ...(has('docs') ? listFiles(join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`) : [])].filter(has).filter((rel) => !ownDocs.has(rel));
   for (const rel of scan) {
     stripCode(read(rel))
       .split('\n')
@@ -549,6 +563,34 @@ function checkKickoff() {
     }
   }
   requireFilled('docs/IDEA.md', 'docs/IDEA.md', ['Problem', 'Who it is for', 'Out of scope', 'Process level']);
+  // T6: an adopted project records the stage it starts from, and holds code from its first day, so its gate
+  // runs its real checks: the template's stub, which fails on any code, is not one.
+  const start = adoptedStage(true);
+  if (start) {
+    if (!has('scripts/gate')) report('scripts/gate', 'missing: an adopted project\'s gate runs its real checks (adopt.mjs --gate)');
+    else if (readFileSync(join(root, 'scripts/gate')).equals(readFileSync(join(templateRoot, 'scripts', 'gate')))) report('scripts/gate', 'still the template\'s stub: an adopted project\'s gate runs its real checks (adopt.mjs --gate)');
+  }
+}
+
+// The stage an adopted project starts from (T6-AC4, .claude/pitwall.json startStage): undefined in a project
+// kickoff laid out. With report, a value that is no stage, or a plan file that is gone, is reported.
+function adoptedStage(reportIt = false) {
+  let s;
+  try {
+    s = JSON.parse(read('.claude/pitwall.json'));
+  } catch {
+    return undefined;
+  }
+  const key = cfg.adopt.key;
+  if (!s || typeof s !== 'object' || !Object.hasOwn(s, key)) return undefined;
+  if (!cfg.adopt.stages.includes(s[key])) {
+    if (reportIt) report('.claude/pitwall.json', `${key} "${s[key]}" is not one of ${cfg.adopt.stages.join(', ')}`);
+    return undefined;
+  }
+  if (reportIt && Object.hasOwn(s, 'planFile') && (typeof s.planFile !== 'string' || !has(s.planFile))) report('.claude/pitwall.json', `planFile "${s.planFile}" is not a file of the project`);
+  const own = s[cfg.adopt.ownDocsKey];
+  if (reportIt && own !== undefined && (!Array.isArray(own) || own.some((x) => typeof x !== 'string' || !x.startsWith(`${cfg.adopt.ownDocsFolder}/`)))) report('.claude/pitwall.json', `${cfg.adopt.ownDocsKey} must list files under ${cfg.adopt.ownDocsFolder}/`);
+  return s[key];
 }
 
 const ADR_STRUCTURE = { tables: 'any', quotes: true, fields: ['Status', 'Date', 'Class', 'Decided by'] };
@@ -612,7 +654,7 @@ function checkDecide() {
   const twoWay = tableRows(s.get('Two-way decisions') ?? []);
   const adrId = (cell) => /ADR-\d{4}/.exec(cell ?? '')?.[0];
   const adrFields = (id) => {
-    const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+    const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
     if (!f) return null;
     const text = read(`docs/adr/${f}`);
     const field = (name) => new RegExp(`^- ${name}: *(.+)$`, 'm').exec(text)?.[1].trim() ?? '';
@@ -664,7 +706,7 @@ function checkDecide() {
     const id = adrId(r[4]);
     if (id && !adrFields(id)) report(rel, `"${r[0]}" cites ${id}, which has no file in docs/adr/`);
   }
-  const numbers = adrFiles.map((f) => f.slice(0, 4));
+  const numbers = allAdrFiles.map((f) => f.slice(0, 4));
   for (const n of new Set(numbers.filter((x, i) => numbers.indexOf(x) !== i))) report('docs/adr', `two ADR files share the number ${n}`);
   for (const [area, choice, version, source, adr] of decisions) {
     if (!version) report(rel, `"${area}: ${choice ?? ''}" has no version (use - when there is none)`);
@@ -863,11 +905,11 @@ function risksAccepted() {
 // The ADR that a failed spike led to cites the spike: /pitwall:decide <area> links it in the new
 // ADR, so neither the ADR the spike disproved nor an unrelated one can stand in for it.
 const adrCites = (id, spikeFile) => {
-  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && read(`docs/adr/${f}`).includes(`spikes/${spikeFile}`));
 };
 function adrAccepted(id) {
-  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && field(read(`docs/adr/${f}`), 'Status').startsWith('accepted'));
 }
 
@@ -967,7 +1009,7 @@ function checkPlan() {
     const adrLine = field(text, 'ADR', false);
     const cited = plainIds(adrLine, /\bADR-\d{4}\b/g);
     if (cited.length === 0 && !same(adrLine, 'none')) report(file, `the "ADR:" line is "${adrLine}": list the ADR IDs, or none`);
-    for (const id of cited) if (!adrFiles.some((name) => name.startsWith(id.slice(4) + '-'))) report(file, `cites ${id}, which has no file in docs/adr/`);
+    for (const id of cited) if (!allAdrFiles.some((name) => name.startsWith(id.slice(4) + '-'))) report(file, `cites ${id}, which has no file in docs/adr/`);
     if (e.id === p.firstEpic && cited.length === 0 && adrFiles.length > 0) report(file, `${p.firstEpic} lays down the stack: its "ADR:" line cites the stack ADRs`);
     const items = listItems(sections(text).get('Acceptance criteria') ?? []);
     if (items.length === 0) report(file, 'no acceptance criteria');
@@ -1080,7 +1122,7 @@ function checkPlanReview() {
     // Every ID is settled, or an ADR a newer one superseded with that successor named in the same
     // cell, and at least one ID is settled.
     const superseded = (id) => {
-      const f = id.startsWith('ADR-') && adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+      const f = id.startsWith('ADR-') && allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
       const by = f ? /^superseded by (ADR-\d{4})\b/.exec(field(read(`docs/adr/${f}`), 'Status'))?.[1] : null;
       return Boolean(by && ids.includes(by));
     };
@@ -1437,13 +1479,21 @@ function checkLessons() {
 }
 
 const checks = { kickoff: checkKickoff, discovery: checkDiscovery, decide: checkDecide, 'spike-criterion': checkSpikeCriterion, spike: checkSpike, plan: checkPlan, 'plan-review': checkPlanReview, 'code-review': checkCodeReview, release: checkRelease, bug: checkBugs, lesson: checkLessons };
-for (const s of stages) checks[s]();
+// T6: an adopted project starts at the stage it had reached. The stages before it were done before pitwall, in
+// the project's own way, so their checks have nothing to hold the project to: they are skipped, and said so.
+const startAt = adoptedStage();
+const before = startAt ? cfg.adopt.stages.slice(0, cfg.adopt.stages.indexOf(startAt)) : [];
+const skipped = stages.filter((s) => before.includes(s));
+for (const s of stages) if (!skipped.includes(s)) checks[s]();
 
 const what = `${kinds.join(',')}${stages.length ? `, stage ${stages.join(',')}` : ''}`;
+const notes = skipped.map((s) => `NOTE ${s} was done before pitwall: this project was adopted at the ${startAt} stage (${cfg.adopt.key} in .claude/pitwall.json), so its check is skipped`);
 if (problems.length === 0) {
   console.log(`PASS docs-check (${what}) in ${root}`);
+  for (const n of notes) console.log(n);
 } else {
   console.log(`FAIL docs-check (${what}) in ${root}`);
   for (const p of new Set(problems)) console.log(`  - ${p}`);
+  for (const n of notes) console.log(n);
   process.exit(1);
 }

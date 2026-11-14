@@ -130,7 +130,7 @@ const LITTER = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 const present = existsSync(target) ? listFiles(target, ['.git']).filter((f) => !IGNORED.has(f) && !LITTER.has(f.split('/').pop())) : [];
 if (present.length > 0) {
   const existing = present.some((f) => f === 'CLAUDE.md' || f.startsWith('docs/'));
-  refuse(`${target} is not empty. pitwall lays out new projects only${existing ? ', and this looks like an existing project' : ''}`, present);
+  refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }
 
 if (args.check) {
