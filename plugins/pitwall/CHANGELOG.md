@@ -2,6 +2,10 @@
 
 One section per version, newest first. Up to 0.12.0 each version is one epic, named as its merge commit on `main` names it; the epic's file holds its acceptance criteria.
 
+## 1.0.1 - 2026-11-14
+
+BUG-14: kickoff lays a project out in a clone where a project-scope install of pitwall wrote `.claude/settings.json`, and puts the template's own settings, which hold all of it, in its place; settings with more in them are kept, and the refusal says what to do ([#14](https://github.com/Perchusha/pitwall/pull/14), [the bug](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md)).
+
 ## 1.0.0 - 2026-11-14
 
 The first stable version of pitwall: epics T0 to T7 as they merged, with no new features since 0.12.0.
