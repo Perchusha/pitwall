@@ -912,6 +912,9 @@ export function guard(call, ctx) {
         const shown = lost.files.slice(0, 8).join(' ');
         const more = lost.files.length > 8 ? ` and ${lost.files.length - 8} more` : '';
         // A work tree's work is kept in that work tree: a stash or a commit there, in a call of its own (review round 1).
+        // A work tree the line names only when it runs: which one it removes is unknown, so the guard names the work
+        // trees that hold work and asks for each to be named plainly, never to keep work it may not touch (review round 2).
+        if (lost.unnamed) return refuse('uncommitted', `git worktree remove --force here names its work tree only when the line runs, and ${lost.unnamed.length === 1 ? 'a linked work tree holds' : 'linked work trees hold'} uncommitted work: ${lost.unnamed.join(', ')} (L-12). Name each work tree to remove plainly, one call each: the guard then judges that one alone.`);
         if (lost.worktree) return refuse('uncommitted', `git worktree remove --force would throw away uncommitted work in ${lost.worktree}: ${shown}${more} (L-12). Keep it first, in a call of its own: commit it in that work tree, or stash it there (git -C <the work tree> stash push -u); then remove the work tree, with --force no longer needed once it is clean.`);
         if (lost.stash) return refuse('uncommitted', `git stash ${git.args[0]} would throw away ${shown}${more}, uncommitted work kept in the stash (L-12). Apply it first (git stash pop), or leave the stash; the owner drops it in a terminal if it should go.`);
         // In a merge, a rebase, a cherry-pick or a revert, what it staged is its own, and git stash refuses
@@ -1282,11 +1285,10 @@ function discards(git, dir, ctx, line) {
   if (git.sub === 'worktree' && a[0] === 'remove') {
     if (!(flag('-f', '--force') || short('f'))) return null;
     const target = a.slice(1).find((x) => !x.startsWith('-'));
-    // xargs hands it the work tree only the run knows (review round 1).
-    if (!target && !git.runtime) return null;
-    // A work tree only the run knows (a loop over them, a variable, xargs) stands for every linked work tree of the
-    // repository, as paths only the run knows stand for the whole tree: a clean-up loop over clean work trees
-    // passes (the corpus held four such lines).
+    // A work tree only the run knows (a loop over them, a variable, xargs, a PowerShell expression in parentheses,
+    // which the parser leaves out of the words) stands for every linked work tree of the repository, as paths only
+    // the run knows stand for the whole tree: a clean-up loop over clean work trees passes (the corpus held four such
+    // lines). Without a target git fails anyway, so this refuses nothing that would have run (review rounds 1, 2).
     let targets = target ? [[target.replace(/[\\/]+$/, ''), native(target, git.base ?? dir, ctx.home)]] : [];
     if (!target || late(target)) {
       const list = ctx.git(['worktree', 'list', '--porcelain'], dir);
@@ -1300,7 +1302,8 @@ function discards(git, dir, ctx, line) {
       if (s.error) return s;
       files.push(...s.entries.filter((e) => ['1', '2', 'u', '?'].includes(e.kind)).map((e) => `${shown}/${e.path}`));
     }
-    return { files, worktree: !target || late(target) ? 'each linked work tree that holds it' : target.replace(/[\\/]+$/, '') };
+    const known = target && !late(target);
+    return { files, worktree: known ? target.replace(/[\\/]+$/, '') : null, unnamed: !known && files.length ? [...new Set(files.map((f) => f.split('/')[0]))].map((name) => targets.find(([shown]) => shown === name)?.[1] ?? name) : null };
   }
   if (git.sub === 'clean') {
     if (flag('-n', '--dry-run') || short('n') || !(flag('-f', '--force') || short('f'))) return null;

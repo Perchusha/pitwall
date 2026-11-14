@@ -163,7 +163,7 @@ const gitOnce = (args, cwd = root) => {
 };
 // The plugin folders a line names: a folder called pitwall that holds the plugin's own parts.
 const pluginScripts = readdirSync(`${plugin}/scripts`).filter((f) => f.endsWith('.mjs')).map((f) => f.replace(/\./g, '\\.')).join('|');
-const COPY = new RegExp(`([A-Za-z]:[\\\\/]|/)[^\\s"'\`;&|<>()=]*?[\\\\/]pitwall(?=[\\\\/]+(?:config[\\\\/]+defaults\\.json|skills[\\\\/]|template[\\\\/]|hooks[\\\\/]+hooks\\.json|scripts[\\\\/]+(?:${pluginScripts})))`, 'g');
+const COPY = new RegExp(`([A-Za-z]:[\\\\/]|/)[^\\s"'\`;&|<>()=]*?[\\\\/]pitwall(?:[\\\\/]+\\d+\\.\\d+\\.\\d+)?(?=[\\\\/]+(?:config[\\\\/]+defaults\\.json|skills[\\\\/]|template[\\\\/]|hooks[\\\\/]+hooks\\.json|scripts[\\\\/]+(?:${pluginScripts})))`, 'g');
 let named = 0;
 const rootsOf = (command) => {
   const found = [...new Set([...command.matchAll(COPY)].map((m) => m[0]))];
@@ -190,6 +190,7 @@ const KNOWN = new Set([
   'set-location', 'get-location', 'remove-item', 'copy-item', 'move-item', 'new-item', 'set-content', 'add-content', 'out-file', 'write-output', 'write-host', 'select-object',
   'where-object', 'foreach-object', 'sort-object', 'measure-object', 'start-process', 'stop-process', 'get-process', 'get-ciminstance', 'invoke-webrequest', 'invoke-restmethod', 'start-sleep',
 ]);
+const GIT_SUBS = new Set(['add', 'am', 'apply', 'bisect', 'blame', 'branch', 'bundle', 'cat-file', 'check-ignore', 'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'config', 'describe', 'diff', 'diff-tree', 'fetch', 'for-each-ref', 'format-patch', 'gc', 'grep', 'hash-object', 'init', 'log', 'ls-files', 'ls-remote', 'ls-tree', 'merge', 'merge-base', 'mv', 'notes', 'pull', 'push', 'rebase', 'reflog', 'remote', 'reset', 'restore', 'rev-list', 'rev-parse', 'revert', 'rm', 'shortlog', 'show', 'show-ref', 'sparse-checkout', 'stash', 'status', 'submodule', 'switch', 'symbolic-ref', 'tag', 'update-index', 'update-ref', 'verify-commit', 'worktree']);
 const SCRIPT_NAMES = new Set(readdirSync(`${plugin}/scripts`).filter((f) => f.endsWith('.mjs')));
 const form = (tool, command) => {
   const out = [];
@@ -204,8 +205,9 @@ const form = (tool, command) => {
     if (!prog) continue;
     let name = KNOWN.has(prog) ? prog : 'other';
     if (prog === 'git') {
-      const sub = argv.slice(1).find((w, k, all) => !w.startsWith('-') && !['-C', '-c'].includes(all[k - 1]));
-      if (sub && /^[a-z][a-z-]{1,24}$/.test(sub)) name = `git ${sub}`;
+      // Only git's own subcommands are named: a word after an option with a value, or an alias, prints as "git other".
+      const sub = argv.slice(1).find((w, k, all) => !w.startsWith('-') && !['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env'].includes(all[k - 1]));
+      name = sub && GIT_SUBS.has(sub) ? `git ${sub}` : 'git other';
     }
     if (prog === 'node') {
       const script = String(argv.slice(1).find((w) => /\.m?js$/.test(w)) ?? '').split(/[\\/]/).pop();

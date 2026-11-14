@@ -3971,7 +3971,12 @@ slowStep('hooks (recorded payloads)', (report) => {
       writeFileSync(join(dirty, 'new.txt'), 'a new file\n');
       T('git worktree remove --force ../t7-dirty', 'deny:uncommitted');
       // A work tree named only when the line runs stands for every linked one: refused while one of them holds work.
-      T('for wt in t7-dirty t7-clean; do git worktree remove --force ../$wt; done', 'deny:uncommitted');
+      const loopWay = T('for wt in t7-dirty t7-clean; do git worktree remove --force ../$wt; done', 'deny:uncommitted').out?.hookSpecificOutput?.permissionDecisionReason ?? '';
+      // Review round 2: which work tree it removes is unknown, so the way on names the ones that hold work, by path, and
+      // asks for each to be named plainly; it never advises keeping work in a work tree the line may not touch.
+      if (!/names its work tree only when the line runs/.test(loopWay) || !loopWay.includes('t7-dirty') || !/one call each/.test(loopWay) || /stash it there/.test(loopWay)) report(`the refusal of a work tree named only at run time must name the dirty ones and ask for plain names: ${loopWay}`);
+      // A PowerShell expression in parentheses is left out of the words: no target, so every linked work tree counts.
+      PS("git worktree remove --force (Join-Path $env:TEMP 'wt')", 'deny:uncommitted');
       PS("foreach ($wt in 't7-dirty','t7-clean') { git worktree remove --force ../$wt }", 'deny:uncommitted');
       // Review round 1: xargs hands it a work tree only the run knows; a work tree under the home folder by "~"; and the
       // refusal's way on keeps the work in that work tree.
