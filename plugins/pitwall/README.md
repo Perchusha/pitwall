@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, and a tagged release that a QA agent and you check. Every stage ends with a check, every decision keeps its reason, and the state lives in the repository, so work can stop and resume at any time.
 
-> **Status: 1.0.0, stages 0 to 5, the adoption of a project that exists already, the hooks, the epic loop, bugs and lessons, the gate before every commit, releases and a minimal QA, and one conductor for the whole path.** `/pitwall:continue` leads from the idea to the last epic: say "continue" and it takes the next step. `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:release` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep`, `code-reviewer` and `qa` agents, and the hooks guard every pitwall project. A release is a local build at every level for now: staging, production and QA in a browser come later. What changed in each version: [CHANGELOG.md](CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
+> **Status: 1.0.1, stages 0 to 5, the adoption of a project that exists already, the hooks, the epic loop, bugs and lessons, the gate before every commit, releases and a minimal QA, and one conductor for the whole path.** `/pitwall:continue` leads from the idea to the last epic: say "continue" and it takes the next step. `/pitwall:kickoff`, `/pitwall:discovery`, `/pitwall:decide`, `/pitwall:spike`, `/pitwall:plan`, `/pitwall:gate`, `/pitwall:owner-calls`, `/pitwall:bug`, `/pitwall:lesson` and `/pitwall:release` work, with the `researcher`, `plan-reviewer`, `implementer`, `implementer-deep`, `code-reviewer` and `qa` agents, and the hooks guard every pitwall project. A release is a local build at every level for now: staging, production and QA in a browser come later. What changed in each version: [CHANGELOG.md](CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](https://github.com/Perchusha/pitwall/blob/main/docs/EPICS.md).
 
 ## Install
 
@@ -13,7 +13,7 @@ pitwall takes a new project from a one-line idea through research, decisions rec
 /plugin install pitwall@pitwall
 ```
 
-Choose the user scope when the install asks: a project-scope install writes `.claude/settings.json` into the folder, which is then refused as not empty; delete that file and install for your user. From a terminal, `claude plugin marketplace add Perchusha/pitwall` and `claude plugin install pitwall@pitwall` install for your user.
+Install it for your user or for the project. A project-scope install writes `.claude/settings.json` into the folder, and kickoff puts the template's own in its place, which enables pitwall too; settings with more in them it never overwrites, and says what to do. From a terminal, `claude plugin marketplace add Perchusha/pitwall` and `claude plugin install pitwall@pitwall` install for your user.
 
 ## Requirements
 
