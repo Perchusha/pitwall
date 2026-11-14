@@ -144,7 +144,7 @@ const installSettings = (() => {
   const file = join(target, SETTINGS);
   if (!templateSettings || !existsSync(file)) return false;
   try {
-    const mine = JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, ''));
+    const mine = JSON.parse(readFileSync(file, 'utf8').replace(new RegExp(`^${String.fromCodePoint(0xfeff)}`), ''));
     return isObject(mine) && within(mine, templateSettings);
   } catch {
     return false;
@@ -156,7 +156,7 @@ const present = existsSync(target)
 if (present.length > 0) {
   const existing = present.some((f) => f === 'CLAUDE.md' || f.startsWith('docs/'));
   if (present.length === 1 && present[0] === SETTINGS) {
-    refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold more than the template's own, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder, run kickoff again, then bring back into the template's ${SETTINGS} what you need of yours`);
+    refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold more than the template's own, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder and run kickoff again (when a new session no longer loads pitwall, install it for your user or for the project first), then bring back into the template's ${SETTINGS} what you need of yours`);
   }
   refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }

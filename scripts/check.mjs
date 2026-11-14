@@ -535,7 +535,8 @@ step('scripts parse', (report) => {
 });
 
 // 6d. T1-AC1: layout.mjs lays the template out complete and filled, and refuses any folder
-// that holds more than .git, so it can never overwrite or commit someone's files.
+// that holds more than .git, so it can never overwrite or commit someone's files: only a
+// .claude/settings.json that holds nothing the template's own does not is replaced (BUG-14).
 step('layout', (report) => {
   scratch('pitwall-layout-', (dir) => {
     const project = join(dir, 'p');
@@ -628,13 +629,16 @@ step('layout', (report) => {
     const installs = {
       'the plugin': '{\n  "enabledPlugins": {\n    "pitwall@pitwall": true\n  }\n}\n',
       'the plugin and its marketplace': `${JSON.stringify({ extraKnownMarketplaces: { pitwall: { source: { source: 'github', repo: 'Perchusha/pitwall' } } }, enabledPlugins: { 'pitwall@pitwall': true } }, null, 2)}\n`,
+      'the plugin, with a BOM and CRLF': `${String.fromCodePoint(0xfeff)}{\r\n  "enabledPlugins": {\r\n    "pitwall@pitwall": true\r\n  }\r\n}\r\n`,
     };
     Object.entries(installs).forEach(([label, body], i) => {
       const p = settingsCase(`install-${i}`, body);
+      writeFileSync(join(p, '.claude', 'settings.local.json'), '{"permissions":{"allow":["Bash(git init *)"]}}\n');
       const c = preflight(p);
       if (c.status !== 0 || !/^NOTE: .*project-scope install of pitwall/m.test(c.stdout)) report(`--check in a clone where a project-scope install wrote ${label}: exit ${c.status}, expected 0 and a NOTE that the template's settings take its place\n${c.stdout}${c.stderr}`);
       const l = layOut(p);
       if (l.status !== 0 || readFileSync(join(p, '.claude', 'settings.json'), 'utf8') !== templateSettings) report(`layout in a clone where a project-scope install wrote ${label}: exit ${l.status}, expected 0 and the template's .claude/settings.json in its place\n${l.stderr}`);
+      if (readFileSync(join(p, '.claude', 'settings.local.json'), 'utf8') !== '{"permissions":{"allow":["Bash(git init *)"]}}\n') report(`layout in a clone where a project-scope install wrote ${label} changed .claude/settings.local.json beside it`);
     });
     // ... and settings that hold more than the template's, or do not parse, are kept as they are, with a way on.
     const notInstalls = {
