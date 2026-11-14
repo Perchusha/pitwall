@@ -84,7 +84,13 @@ function requireProject() {
   const top = git('rev-parse', '--show-toplevel');
   if (!top.ok) refuse(`${target} is not in a git repository. A project that exists but is not under git yet: run git init and commit what it holds, then adopt it; a new one starts with /pitwall:kickoff in an empty folder.`);
   if (!sameFolder(top.out, target)) refuse(`${target} is not the top folder of its git repository (${top.out}): a project is adopted from there.`);
-  if (!git('rev-parse', '--verify', '-q', 'HEAD').ok) refuse(`the repository in ${target} has no commit yet: a new project starts with /pitwall:kickoff.`);
+  if (!git('rev-parse', '--verify', '-q', 'HEAD').ok) {
+    // Files no commit holds yet: kickoff lays out an empty folder only, so without a word on them the owner goes between
+    // the two refusals (BUG-15).
+    const loose = [...new Set([...git('ls-files').out.split('\n'), ...git('ls-files', '--others', '--exclude-standard').out.split('\n')])].filter((f) => f && f !== '.claude/settings.local.json').sort();
+    if (loose.length) refuse(`the repository in ${target} has no commit yet, and it holds files no commit has${loose.length > A.maxListed ? ` (${loose.length}, the first ${A.maxListed} below)` : ''}. kickoff lays out an empty folder only, and the adoption needs a commit: move them out of the folder, or commit them, then run /pitwall:continue again.`, loose);
+    refuse(`the repository in ${target} has no commit yet: a new project starts with /pitwall:kickoff.`);
+  }
   if (has(settingsFile)) refuse(`${target} is a pitwall project already (${settingsFile}): /pitwall:continue goes on with it.`);
   // The adoption lives on the planning branch until the plan merges: a session on main, or a new clone, finds it
   // there, here or on origin (review round 1).

@@ -668,6 +668,20 @@ step('layout', (report) => {
     git(committed, 'commit', '-q', '--allow-empty', '-m', 'first');
     const c3 = preflight(committed);
     if (c3.status !== 1 || !/already has commits/.test(c3.stderr)) report(`--check on a repository with commits: exit ${c3.status}, expected 1\n${c3.stderr}`);
+    // BUG-15: a clone with files and no commit, which /pitwall:adopt refuses too: the refusal names the files and says what
+    // to do with them. A repository with a commit still goes to the adoption.
+    const loose = join(dir, 'loose');
+    mkdirSync(join(loose, '.vscode'), { recursive: true });
+    git(loose, 'init', '-q', '-b', 'main');
+    writeFileSync(join(loose, 'README.md'), '# Mine\n');
+    writeFileSync(join(loose, '.vscode', 'settings.json'), '{}\n');
+    git(loose, 'add', 'README.md');
+    for (const [label, r] of [['--check', preflight(loose)], ['the layout', runScript('layout.mjs', ['--target', loose, '--name', 'scratch', '--idea', 'A scratch project for the checks', '--level', 'lite'], { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } })]]) {
+      if (r.status !== 1 || !/has no commit yet/.test(r.stderr) || !/move these files out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stderr) || !/^ {2}README\.md$/m.test(r.stderr) || !/^ {2}\.vscode\/settings\.json$/m.test(r.stderr) || existsSync(join(loose, 'CLAUDE.md'))) report(`${label} in a repository with files and no commit: exit ${r.status}, expected 1, the files named and what to do with them, nothing written\n${r.stderr}`);
+    }
+    writeFileSync(join(committed, 'README.md'), '# Mine\n');
+    const c3b = preflight(committed);
+    if (c3b.status !== 1 || /has no commit yet/.test(c3b.stderr) || !/adopted with \/pitwall:adopt/.test(c3b.stderr)) report(`--check on a repository with a commit and a file: exit ${c3b.status}, expected 1 and the adoption named\n${c3b.stderr}`);
     const nested = join(committed, 'sub');
     mkdirSync(nested);
     const c4 = preflight(nested);
@@ -1111,6 +1125,14 @@ slowStep('adopt', (report) => {
     gitIn(empty, 'init', '-q', '-b', 'main');
     r = adopt(empty);
     if (r.status !== 1 || !/has no commit yet: a new project starts with \/pitwall:kickoff/.test(r.stdout)) report(`adopt in a repository without a commit must point to kickoff: exit ${r.status}\n${r.stdout}`);
+    // BUG-15: with files no commit holds, kickoff refuses too: the refusal names them, staged or not, and says what to do.
+    mkdirSync(join(empty, '.claude'), { recursive: true });
+    writeFileSync(join(empty, '.claude', 'settings.local.json'), '{}\n');
+    writeFileSync(join(empty, 'README.md'), '# Mine\n');
+    writeFileSync(join(empty, 'notes.txt'), 'x\n');
+    gitIn(empty, 'add', 'README.md');
+    r = adopt(empty);
+    if (r.status !== 1 || !/move them out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stdout) || !/^ {2}README\.md$/m.test(r.stdout) || !/^ {2}notes\.txt$/m.test(r.stdout) || /settings\.local\.json/.test(r.stdout)) report(`adopt in a repository with files and no commit must name them and say what to do: exit ${r.status}\n${r.stdout}`);
     r = adopt(join(p, 'src'));
     if (r.status !== 1 || !/not the top folder/.test(r.stdout)) report(`adopt in a subfolder must refuse: exit ${r.status}\n${r.stdout}`);
     const laid = join(dir, 'laid');
