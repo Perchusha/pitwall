@@ -2,6 +2,10 @@
 
 One section per version, newest first. Up to 0.12.0 each version is one epic, named as its merge commit on `main` names it; the epic's file holds its acceptance criteria.
 
+## 1.0.2 - 2026-11-14
+
+BUG-15: in a clone with files and no commit, the refusals of kickoff and of the adoption name the files no commit holds and say what to do: move them out of the folder, or commit them, then run `/pitwall:continue` again ([#15](https://github.com/Perchusha/pitwall/pull/15), [the bug](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md)).
+
 ## 1.0.1 - 2026-11-14
 
 BUG-14: kickoff lays a project out in a clone where a project-scope install of pitwall wrote `.claude/settings.json`, and puts the template's own settings, which hold all of it, in its place; settings with more in them are kept, and the refusal says what to do ([#14](https://github.com/Perchusha/pitwall/pull/14), [the bug](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md)).
