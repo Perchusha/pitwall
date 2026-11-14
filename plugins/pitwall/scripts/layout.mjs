@@ -164,7 +164,7 @@ if (present.length > 0) {
   const git = (...a) => spawnSync('git', ['-C', target, ...a], { encoding: 'utf8' });
   const top = git('rev-parse', '--show-toplevel');
   if (top.status === 0 && same(top.stdout.trim(), target) && git('rev-parse', '--verify', '-q', 'HEAD').status !== 0) {
-    refuse(`${target} is not empty, and its repository has no commit yet. kickoff lays out an empty folder only, and /pitwall:adopt adopts a project with a commit: move these files out of the folder, or commit them (a file git ignores can only be moved), then run /pitwall:continue again`, present);
+    refuse(`${target} is not empty, and its repository has no commit yet. kickoff lays out an empty folder only, and /pitwall:adopt adopts a project with a commit: move these files out of the folder, or commit them, then run /pitwall:continue again (a commit leaves out what git ignores, which only kickoff needs moved)`, present);
   }
   refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }

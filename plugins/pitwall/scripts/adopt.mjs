@@ -87,12 +87,12 @@ function requireProject() {
   // A layout kickoff has not committed yet: kickoff resumes it (review round 1 of BUG-15).
   if (has(settingsFile)) refuse(`${target} is a pitwall project already (${settingsFile}): /pitwall:continue goes on with it.`);
   if (!git('rev-parse', '--verify', '-q', 'HEAD').ok) {
-    // Files no commit holds yet, which kickoff does not lay out over: without a word on them the owner goes between the two
-    // refusals (BUG-15). kickoff's own preflight judges which files those are, the ones an operating system leaves and a
-    // project-scope install's settings among them, so that no second list of them is kept here.
-    const loose = [...new Set([...git('ls-files').out.split('\n'), ...git('ls-files', '--others', '--exclude-standard').out.split('\n')])].filter((f) => f && f !== '.claude/settings.local.json').sort();
-    const kickoff = loose.length ? spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'layout.mjs'), '--check', '--target', target], { encoding: 'utf8' }) : { status: 0 };
-    if (kickoff.status !== 0) refuse(`the repository in ${target} has no commit yet, and it holds files no commit has${loose.length > A.maxListed ? ` (${loose.length}, the first ${A.maxListed} below)` : ''}. kickoff lays out an empty folder only, and the adoption needs a commit: move them out of the folder, or commit them, then run /pitwall:continue again.`, loose);
+    // kickoff lays out an empty folder only, and its preflight judges what makes a folder not empty (the files an
+    // operating system leaves and a project-scope install's settings do not). When it refuses this folder too, its
+    // refusal, which names those files and what to do with them, is the owner's way on: without it the owner goes
+    // between the two refusals (BUG-15), and no second list of what kickoff lays out over is kept here.
+    const kickoff = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'layout.mjs'), '--check', '--target', target], { encoding: 'utf8' });
+    if (kickoff.status !== 0) refuse(`the repository in ${target} has no commit yet, which the adoption needs, and kickoff refuses the folder too, as it says:`, `${kickoff.stderr ?? ''}${kickoff.error?.message ?? ''}`.split(/\r?\n/).filter(Boolean));
     refuse(`the repository in ${target} has no commit yet: a new project starts with /pitwall:kickoff.`);
   }
   // The adoption lives on the planning branch until the plan merges: a session on main, or a new clone, finds it

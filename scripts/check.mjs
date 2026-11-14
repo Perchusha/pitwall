@@ -677,7 +677,7 @@ step('layout', (report) => {
     writeFileSync(join(loose, '.vscode', 'settings.json'), '{}\n');
     git(loose, 'add', 'README.md');
     for (const [label, r] of [['--check', preflight(loose)], ['the layout', runScript('layout.mjs', ['--target', loose, '--name', 'scratch', '--idea', 'A scratch project for the checks', '--level', 'lite'], { env: { ...process.env, GIT_CEILING_DIRECTORIES: dir } })]]) {
-      if (r.status !== 1 || !/has no commit yet/.test(r.stderr) || !/move these files out of the folder, or commit them \(a file git ignores can only be moved\), then run \/pitwall:continue again/.test(r.stderr) || !/^ {2}README\.md$/m.test(r.stderr) || !/^ {2}\.vscode\/settings\.json$/m.test(r.stderr) || existsSync(join(loose, 'CLAUDE.md'))) report(`${label} in a repository with files and no commit: exit ${r.status}, expected 1, the files named and what to do with them, nothing written\n${r.stderr}`);
+      if (r.status !== 1 || !/has no commit yet/.test(r.stderr) || !/move these files out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stderr) || !/^ {2}README\.md$/m.test(r.stderr) || !/^ {2}\.vscode\/settings\.json$/m.test(r.stderr) || existsSync(join(loose, 'CLAUDE.md'))) report(`${label} in a repository with files and no commit: exit ${r.status}, expected 1, the files named and what to do with them, nothing written\n${r.stderr}`);
     }
     writeFileSync(join(committed, 'README.md'), '# Mine\n');
     const c3b = preflight(committed);
@@ -1125,14 +1125,16 @@ slowStep('adopt', (report) => {
     gitIn(empty, 'init', '-q', '-b', 'main');
     r = adopt(empty);
     if (r.status !== 1 || !/has no commit yet: a new project starts with \/pitwall:kickoff/.test(r.stdout)) report(`adopt in a repository without a commit must point to kickoff: exit ${r.status}\n${r.stdout}`);
-    // BUG-15: with files no commit holds, kickoff refuses too: the refusal names them, staged or not, and says what to do.
+    // BUG-15: with files no commit holds, kickoff refuses too: adopt gives kickoff's refusal, which names them, staged or
+    // not, and says what to do, and leaves out what kickoff lays out over (review round 2).
     mkdirSync(join(empty, '.claude'), { recursive: true });
     writeFileSync(join(empty, '.claude', 'settings.local.json'), '{}\n');
+    writeFileSync(join(empty, '.claude', 'settings.json'), '{\n  "enabledPlugins": {\n    "pitwall@pitwall": true\n  }\n}\n');
     writeFileSync(join(empty, 'README.md'), '# Mine\n');
     writeFileSync(join(empty, 'notes.txt'), 'x\n');
     gitIn(empty, 'add', 'README.md');
     r = adopt(empty);
-    if (r.status !== 1 || !/move them out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stdout) || !/^ {2}README\.md$/m.test(r.stdout) || !/^ {2}notes\.txt$/m.test(r.stdout) || /settings\.local\.json/.test(r.stdout)) report(`adopt in a repository with files and no commit must name them and say what to do: exit ${r.status}\n${r.stdout}`);
+    if (r.status !== 1 || !/kickoff refuses the folder too/.test(r.stdout) || !/move these files out of the folder, or commit them, then run \/pitwall:continue again/.test(r.stdout) || !/^ {4}README\.md$/m.test(r.stdout) || !/^ {4}notes\.txt$/m.test(r.stdout) || /settings(\.local)?\.json/.test(r.stdout)) report(`adopt in a repository with files and no commit must name them and say what to do: exit ${r.status}\n${r.stdout}`);
     // ... but files kickoff lays out over, as its preflight judges them, still go to kickoff (review round 1 of BUG-15).
     const forKickoff = {
       'an operating system\'s file': ['.DS_Store', 'x'],
