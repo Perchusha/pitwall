@@ -156,11 +156,11 @@ const present = existsSync(target)
 if (present.length > 0) {
   const existing = present.some((f) => f === 'CLAUDE.md' || f.startsWith('docs/'));
   if (present.length === 1 && present[0] === SETTINGS) {
-    refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold more than the template's own, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder and run kickoff again (when a new session no longer loads pitwall, install it for your user or for the project first), then bring back into the template's ${SETTINGS} what you need of yours`);
+    refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold something the template's own does not, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder and run kickoff again (when a new session no longer loads pitwall, install it for your user or for the project first), then bring back into the template's ${SETTINGS} what you need of yours`);
   }
   refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }
-const settingsNote = `${SETTINGS} holds only what a project-scope install of pitwall wrote, and the template's own holds all of it: the layout writes the template's in its place.`;
+const settingsNote = `${SETTINGS} holds nothing the template's own does not, as a project-scope install of pitwall writes it: the layout writes the template's in its place.`;
 
 if (args.check) {
   const git = (...a) => spawnSync('git', ['-C', target, ...a], { encoding: 'utf8' });
@@ -224,6 +224,6 @@ for (const f of plan) {
   if (f.mode & 0o111 || /^(scripts|\.githooks)\//.test(f.dest)) chmodSync(out, 0o755);
 }
 console.log(`layout: wrote ${plan.length} files into ${target}`);
-if (installSettings) console.log(`layout: ${SETTINGS} held only what a project-scope install of pitwall wrote, and the template's own, which holds all of it, is in its place`);
+if (installSettings) console.log(`layout: ${SETTINGS} held nothing the template's own does not, and the template's is in its place`);
 for (const f of plan.filter((p) => p.rel !== p.dest)) console.log(`  ${f.rel} -> ${f.dest}`);
 console.log(`layout: .claude/pitwall.json records level ${args.level}, template ${values.TEMPLATE_VERSION}, merge protection pending`);

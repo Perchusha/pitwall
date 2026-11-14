@@ -2,6 +2,19 @@
 
 One entry per epic, newest first.
 
+## 1.0.1 - BUG-14, a project-scope install (2026-11-14)
+
+A patch, first after 1.0 (owner, 2026-11-14): kickoff counts as empty a folder where the only thing besides `.git` is a `.claude/settings.json` with pitwall enabled. Claude Code 2.1.323, probed in a scratch home, writes `{"enabledPlugins": {"pitwall@pitwall": true}}` for a project-scope install, and the marketplace's GitHub source beside it when the marketplace was added for the project too. `layout.mjs` counts no such file that holds nothing the template's own does not, and writes the template's in its place; settings that hold more are never overwritten, and when they are all the folder holds, the refusal says what to do. The rule is a subset of the template's file rather than "pitwall enabled", so that the layout never loses a setting and needs no rule for conflicts. The check holds both forms, one with a BOM and CRLF, and six refusals; its cases fail on 1.0.0's `layout.mjs`.
+
+**What the review found.** Round one: nothing blocking, one to fix, the plugin README's "never overwrites a file", and notes, taken: the way on when the moved file was what loaded pitwall, the conductor's routing and kickoff's rule against overwriting, an invisible BOM in a regular expression, and a case with a BOM; T1's criterion and BUG-14's Actual cell stay as they are, records of their time. The loop of two refusals for a clone with any other file and no commit is a bug of its own, filed for the next branch. Round two approved, with notes, taken: the conductor's route for a bare clone, the wording of the note and the refusal for unusual settings, a case of the install's settings beside a file of the owner's.
+
+| Round | Blocking | To fix | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 1 | 152,812 | 33 | 7.0 |
+| 2 | 0 | 0 | 134,716 | 29 | 5.3 |
+
+**Next:** T5b, Last Ones Down adopted at the full level, once the owner has renamed its `master` to `main`; then T8, with BUG-9 and BUG-11 to BUG-13 after 1.0.
+
 ## 1.0 - The first stable version (2026-11-14)
 
 1.0 is a release, not an epic: no new features since 0.12.0 (owner, 2026-11-14). Twelve epics, T0 to T7, merged in twelve PRs between 2026-11-05 and 2026-11-14, each tagged as a 0.x version. The release holds:

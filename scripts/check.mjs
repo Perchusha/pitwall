@@ -655,6 +655,11 @@ step('layout', (report) => {
       if (c.status !== 1 || !/move the file out of the folder/.test(c.stderr)) report(`--check next to .claude/settings.json with ${label}: exit ${c.status}, expected 1 and the way on\n${c.stderr}`);
       if (l.status !== 1 || readFileSync(join(p, '.claude', 'settings.json'), 'utf8') !== body || existsSync(join(p, 'CLAUDE.md'))) report(`layout next to .claude/settings.json with ${label}: exit ${l.status}, expected 1 with the file untouched and nothing written`);
     });
+    // An install's settings beside a file of the owner's: refused as not empty, the settings untouched.
+    const beside = settingsCase('install-beside', installs['the plugin']);
+    writeFileSync(join(beside, 'README.md'), '# Mine\n');
+    const lb = layOut(beside);
+    if (lb.status !== 1 || !/is not empty/.test(lb.stderr) || readFileSync(join(beside, '.claude', 'settings.json'), 'utf8') !== installs['the plugin'] || existsSync(join(beside, 'CLAUDE.md'))) report(`layout next to an install's .claude/settings.json and a README.md: exit ${lb.status}, expected 1 as not empty, with the settings untouched and nothing written\n${lb.stderr}`);
     const c2 = preflight(code);
     if (c2.status !== 1) report(`--check on a folder with code: exit ${c2.status}, expected 1`);
     const committed = join(dir, 'committed');
