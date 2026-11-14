@@ -1229,7 +1229,7 @@ slowStep('adopt', (report) => {
       if (!/^BLOCKER E42 \(CLAUDE\.md:3\): an ID of pitwall's form that no pitwall document will define/m.test(out) || /E7 \(CLAUDE/.test(out)) report(`an ID that points nowhere in a kept CLAUDE.md must be a blocker, and one in a code span not:\n${out.slice(0, 700)}`);
       const long = make('long-claude', { files: { 'CLAUDE.md': `# tally\n\n## Workflow\n\n${Array.from({ length: JSON.parse(readFileSync(join(plugin, "config", "defaults.json"), "utf8")).docsLimits.claudeMdMaxLines - 20 }, (_, i) => `- rule ${i + 1}`).join('\n')}\n` } });
       if (!/^BLOCKER CLAUDE\.md would be about \d+ lines with the \d+ lines of pitwall's sections it lacks, over the limit/m.test(adopt(long).stdout)) report(`a CLAUDE.md that pitwall's sections would push over its size must be a blocker:\n${adopt(long).stdout.slice(0, 600)}`);
-      if (/would be about/.test(adopt(p).stdout)) report('a short CLAUDE.md must not be a blocker of its size');
+      if (/would be about/.test(adopt(make('short-claude')).stdout)) report('a short CLAUDE.md must not be a blocker of its size');
     }
     // A project with no CI of its own: the gate's workflow is laid out as ci.yml, and the dry run says it needs the setup.
     {

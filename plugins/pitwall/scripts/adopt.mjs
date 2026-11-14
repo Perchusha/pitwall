@@ -159,7 +159,11 @@ function blockers() {
   const originHead = git('symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
   const here = git('symbolic-ref', '--short', '-q', 'HEAD').out;
   const hasGuarded = git('rev-parse', '--verify', '-q', `refs/heads/${guarded}`).ok;
-  const other = originHead && originHead !== guarded ? originHead : !hasGuarded ? here || null : null;
+  // Without origin's HEAD on record (a remote never fetched by git 2.48 or later), GitHub is asked; the branch
+  // checked out names the default only where there is no remote at all (T6 review, round 3).
+  let fromRemote = originHead;
+  if (!fromRemote && remote) fromRemote = /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(git('ls-remote', '--symref', 'origin', 'HEAD').out)?.[1] ?? '';
+  const other = fromRemote ? (fromRemote !== guarded ? fromRemote : null) : !hasGuarded ? (remote ? '<the default branch>' : here || null) : null;
   if (other) {
     const steps = [
       ...(remote
@@ -170,7 +174,7 @@ function blockers() {
       `then whatever names ${other} by name: the workflows' branch filters, a deploy, a badge, scripts`,
     ];
     out.push(
-      `pitwall guards the branch "${guarded}", and this project's default branch is "${other}"${originHead === other ? ' on GitHub' : ''}. Rename it first, then adopt:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}`,
+      `pitwall guards the branch "${guarded}", and this project's default branch is ${other.startsWith('<') ? 'not it (GitHub could not be asked which it is)' : `"${other}"${fromRemote === other ? ' on GitHub' : ''}`}. Rename it first, then adopt:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}`,
     );
   }
   return out;
@@ -402,7 +406,8 @@ for (const f of plans) {
 }
 
 console.log('\n== the project\'s own documents');
-for (const f of ownDocs) console.log(`KEEP ${f} (written before pitwall: kept as it is, and the docs check leaves it alone, the IDs in it included)`);
+for (const f of ownDocs.slice(0, A.maxListed)) console.log(`KEEP ${f} (written before pitwall: kept as it is, and the docs check leaves it alone, the IDs in it included)`);
+if (ownDocs.length > A.maxListed) console.log(`KEEP and ${ownDocs.length - A.maxListed} more files under ${A.ownDocsFolder}/, kept as they are`);
 const docs = all.filter((f) => /\.md$/i.test(f) && !templateDests.has(f) && !plans.includes(f) && (f.split('/').length === 1 || /^docs?\//i.test(f)) && f.split('/').length <= 4);
 for (const f of docs.slice(0, A.maxListed)) console.log(`DOC ${f}: ${headings(read(f)).slice(0, 12).join(' | ') || 'no "##" headings'}`);
 if (docs.length > A.maxListed) console.log(`NOTE ${docs.length - A.maxListed} more documents are not listed.`);
