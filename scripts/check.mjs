@@ -100,7 +100,8 @@ const scratch = (prefix, fn) => {
   try {
     return fn(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // A detached fake CI may still hold the folder on Windows for a moment: EBUSY is retried.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 };
 const textFiles = all.filter((p) => !['.png', '.jpg', '.jpeg', '.ico'].includes(extname(p)));
@@ -402,7 +403,8 @@ step('template gate behaviour', (report) => {
     cpSync(join(plugin, 'template', 'scripts', 'gate'), join(nogit, 'gate'));
     expect('outside git', run('bash', ['gate'], nogit), 1);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // Windows may hold a folder a moment after a process in it ends: EBUSY is retried.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 });
 
