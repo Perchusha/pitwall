@@ -10,4 +10,5 @@
 | `BUGS.md` | Open and fixed bugs | Selecting work, fixing a bug |
 | `LESSONS.md` | Rules learned from mistakes | Before writing or reviewing anything |
 | `JOURNAL.md` | One entry per epic | Reviewing progress |
+| `release-notes-1.0.0.md` | The notes of the GitHub release of 1.0.0: the 1.0.0 section of the plugin's `CHANGELOG.md` | Publishing that release |
 | `archive/` | Older journal entries, moved out to keep `JOURNAL.md` under its size limit | Looking up an early epic |
