@@ -13,7 +13,7 @@ pitwall is built with its own process: epics in order, no dates, one PR each.
 | [T4b](epics/T4b-bugs-and-lessons.md) | Bugs and lessons: severity and a queue by it, every fix after the owner's yes, lessons that become guards | high | T4a | merged (#7) |
 | [T4d](epics/T4d-commit-gate.md) | The gate before every commit (L-14), with the guard's rule on skipping it, in projects and in pitwall itself | high | T4b | merged (#8) |
 | [T4c](epics/T4c-release-and-qa.md) | Releases and a minimal QA: tags and changelog from merge commits, the lite level's local build, a qa agent for the closed epics' criteria | high | T4d | merged (#9) |
-| [T5a](epics/T5a-lite-reminder.md) | Validation on the lite system: the move reminder, from scratch to its first merged epic, and the plugin changes the run asked for | normal | T4c | in progress |
+| [T5a](epics/T5a-lite-reminder.md) | Validation on the lite system: the move reminder, from scratch to its first merged epic, and the plugin changes the run asked for | normal | T4c | in review |
 | [T6](epics/T6-adopt-existing-project.md) | Adopt an existing project: lay out only what is missing, keep what is there | normal | T5a | planned |
 | [T7](epics/T7-guard-corpus.md) | The guard's corpus run before each review round (L-13), then the guard's bugs fixed | high | T6 | planned |
 | [T5b](epics/T5b-full-last-ones-down.md) | Validation on the full system: Last Ones Down, adopted after a dry run, to a release | normal | T7 | planned |
