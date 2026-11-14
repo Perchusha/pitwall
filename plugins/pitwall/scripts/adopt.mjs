@@ -39,7 +39,7 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { config, listFiles, parseArgs, pluginVersion, projectPath, requireNode, templateRoot, writeJson } from './lib.mjs';
+import { config, listFiles, parseArgs, pluginRoot, pluginVersion, projectPath, requireNode, templateRoot, writeJson } from './lib.mjs';
 
 requireNode();
 const usage =
@@ -152,9 +152,26 @@ function layoutPlan() {
 // What stops the adoption, whatever the owner decides.
 function blockers() {
   const out = [];
-  if (!git('rev-parse', '--verify', '-q', `refs/heads/${guarded}`).ok) {
-    const branch = git('symbolic-ref', '--short', '-q', 'HEAD').out || 'another name';
-    out.push(`pitwall guards the branch "${guarded}", and this repository has none (its branch is ${branch}). Rename it first: git branch -m ${branch} ${guarded}, and on GitHub: gh api -X POST repos/{owner}/{repo}/branches/${branch}/rename -f new_name=${guarded}`);
+  // The default branch: GitHub's, as origin's HEAD records it, else the branch this clone stands on. pitwall guards
+  // one branch, the same in every project, until 1.0 at least (owner, 2026-11-14): a project whose default branch has
+  // another name renames it first, and the dry run says how.
+  const remote = git('remote', 'get-url', 'origin').ok;
+  const originHead = git('symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD').out.replace(/^origin\//, '');
+  const here = git('symbolic-ref', '--short', '-q', 'HEAD').out;
+  const hasGuarded = git('rev-parse', '--verify', '-q', `refs/heads/${guarded}`).ok;
+  const other = originHead && originHead !== guarded ? originHead : !hasGuarded ? here || null : null;
+  if (other) {
+    const steps = [
+      ...(remote
+        ? [`on GitHub, which also moves its open PRs and its branch protection to the new name and keeps it the default: gh api -X POST repos/{owner}/{repo}/branches/${other}/rename -f new_name=${guarded}`]
+        : []),
+      `here: git branch -m ${other} ${guarded}`,
+      ...(remote ? [`here and in every other clone: git fetch origin, git branch -u origin/${guarded} ${guarded}, git remote set-head origin -a`] : []),
+      `then whatever names ${other} by name: the workflows' branch filters, a deploy, a badge, scripts`,
+    ];
+    out.push(
+      `pitwall guards the branch "${guarded}", and this project's default branch is "${other}"${originHead === other ? ' on GitHub' : ''}. Rename it first, then adopt:\n${steps.map((s, i) => `  ${i + 1}. ${s}`).join('\n')}`,
+    );
   }
   return out;
 }
@@ -244,16 +261,40 @@ const stops = blockers();
 const branch = git('symbolic-ref', '--short', '-q', 'HEAD').out;
 // Every file, not a collapsed folder: an untracked .claude/ that holds only Claude Code's local settings is no work.
 const dirty = git('status', '--porcelain', '--untracked-files=all').out.split('\n').filter((l) => l && !l.endsWith('.claude/settings.local.json'));
-// Files the project wrote before pitwall in the folders pitwall's checks read by convention: the project's own
-// decisions, plans and reviews, kept as they are and left alone by the docs check (review round 1).
-const ownDocs = all.filter((f) => A.conventionFolders.some((d) => f.startsWith(`${d}/`)) && !plan.some((p) => p.dest === f)).sort();
+// Files the project wrote before pitwall under docs/, which pitwall's checks read: its own decisions, plans, reviews and
+// notes, kept as they are and left alone by the docs check, their IDs included (review rounds 1 and 2).
+const ownDocs = all.filter((f) => f.startsWith(`${A.ownDocsFolder}/`) && !plan.some((p) => p.dest === f)).sort();
 // A path the project's .gitignore ignores would never be committed: the adoption could not finish (review round 1).
 const ignoredAdds = (() => {
   const adds = plan.filter((p) => !p.kept && !p.skip).map((p) => p.dest);
   const r = spawnSync('git', ['-C', target, 'check-ignore', '--no-index', '--stdin'], { encoding: 'utf8', input: adds.join('\n') + '\n' });
   return (r.stdout ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 })();
-if (ignoredAdds.length) stops.push(`the project's ignore rules ignore ${ignoredAdds.length > 3 ? `${ignoredAdds.slice(0, 3).join(', ')} and ${ignoredAdds.length - 3} more` : ignoredAdds.join(', ')}, which pitwall must commit: change the rule (git check-ignore -v <path> names it), or add "!<path>" after it, then adopt.`);
+if (ignoredAdds.length) stops.push(`the project's ignore rules ignore ${ignoredAdds.length > 3 ? `${ignoredAdds.slice(0, 3).join(', ')} and ${ignoredAdds.length - 3} more` : ignoredAdds.join(', ')}, which pitwall must commit: change the rule (git check-ignore -v <path> names it), or re-include the path after it with "!<path>", and when the rule names a folder that holds it (docs/, .claude/), re-include that folder itself ("!.claude/"), since git cannot re-include a file inside a folder it excludes; then adopt.`);
+// The documents pitwall keeps and reads (CLAUDE.md, a kept docs/SPEC.md): an ID in them that points nowhere fails the docs
+// check at every stage, and the adoption never changes the owner's lines; and pitwall's sections must still fit CLAUDE.md's
+// size (review round 2). Both are the owner's to put right on main, before the adoption.
+const keptDocs = plan.filter((p) => p.kept && p.dest.endsWith('.md')).map((p) => p.dest);
+if (keptDocs.length) {
+  const ids = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'docs-check.mjs'), '--root', target, '--only', 'ids'], { encoding: 'utf8' });
+  const loose = (ids.stdout ?? '').split(/\r?\n/).map((l) => /^ {2}- (.+?):(\d+): (\S+) points nowhere$/.exec(l)).filter((m) => m && keptDocs.includes(m[1]));
+  if (loose.length) stops.push(`${loose.slice(0, 6).map((m) => `${m[3]} (${m[1]}:${m[2]})`).join(', ')}${loose.length > 6 ? ` and ${loose.length - 6} more` : ''}: an ID of pitwall's form that no pitwall document will define, in a file pitwall keeps and its docs check reads. Put each in a code span, which marks an example, or reword it, on main; then adopt.`);
+}
+const claudeKept = plan.find((p) => p.dest === 'CLAUDE.md' && p.kept);
+if (claudeKept) {
+  const lines = (text) => text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
+  const tpl = lines(readFileSync(join(templateRoot, claudeKept.rel), 'utf8'));
+  const have = new Set(headings(read('CLAUDE.md')));
+  let added = 0;
+  tpl.forEach((l, i) => {
+    const h = /^##[ \t]+(.+?)[ \t]*$/.exec(l)?.[1];
+    if (!h || have.has(h)) return;
+    const end = tpl.findIndex((x, k) => k > i && /^##[ \t]/.test(x));
+    added += (end < 0 ? tpl.length : end) - i + 1;
+  });
+  const total = lines(read('CLAUDE.md')).length + added;
+  if (total > cfg.docsLimits.claudeMdMaxLines) stops.push(`CLAUDE.md would be about ${total} lines with the ${added} lines of pitwall's sections it lacks, over the limit of ${cfg.docsLimits.claudeMdMaxLines} lines the docs check holds it to. Move part of it into a file of its own that CLAUDE.md imports with one line, @<the file>, on main; then adopt.`);
+}
 
 if (args.write) {
   for (const key of ['name', 'idea', 'level', 'stage']) if (!args[key]?.trim()) bad(`--${key} is required`);
@@ -284,6 +325,8 @@ if (args.write) {
         if (left) refuse(`template/${f.rel} has a placeholder this script does not fill: ${left[0]}`);
         body = Buffer.from(text, 'utf8');
       }
+      // Beside the project's own workflow named ci, pitwall's has a name of its own in the list of Actions.
+      if (f.dest === A.gateWorkflow) body = Buffer.from(body.toString('utf8').replace(/^name: ci$/m, 'name: pitwall-gate'), 'utf8');
       return { ...f, body, mode: statSync(join(templateRoot, f.rel)).mode };
     });
   for (const f of files) {
@@ -359,7 +402,7 @@ for (const f of plans) {
 }
 
 console.log('\n== the project\'s own documents');
-for (const f of ownDocs) console.log(`KEEP ${f} (written before pitwall, in a folder pitwall's checks read: kept as it is, and the docs check leaves it alone)`);
+for (const f of ownDocs) console.log(`KEEP ${f} (written before pitwall: kept as it is, and the docs check leaves it alone, the IDs in it included)`);
 const docs = all.filter((f) => /\.md$/i.test(f) && !templateDests.has(f) && !plans.includes(f) && (f.split('/').length === 1 || /^docs?\//i.test(f)) && f.split('/').length <= 4);
 for (const f of docs.slice(0, A.maxListed)) console.log(`DOC ${f}: ${headings(read(f)).slice(0, 12).join(' | ') || 'no "##" headings'}`);
 if (docs.length > A.maxListed) console.log(`NOTE ${docs.length - A.maxListed} more documents are not listed.`);

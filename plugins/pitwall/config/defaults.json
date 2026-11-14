@@ -271,12 +271,7 @@
     ],
     "gateWorkflow": ".github/workflows/pitwall-gate.yml",
     "ownDocsKey": "ownDocs",
-    "conventionFolders": [
-      "docs/adr",
-      "docs/epics",
-      "docs/spikes",
-      "docs/reviews"
-    ],
+    "ownDocsFolder": "docs",
     "maxListed": 40
   },
   "bugs": {

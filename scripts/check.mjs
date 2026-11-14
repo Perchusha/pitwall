@@ -991,12 +991,15 @@ slowStep('adopt', (report) => {
       'CLAUDE.md': '# tally\n\n## Workflow\n\nCommit straight to main.\n\n## Commands\n\nnpm test\n',
       'docs/SPEC.md': '# Spec\n\n## Overview\n\nOurs, written before pitwall.\n',
       // An ADR in adr-tools' own format, in the folder pitwall's checks read by convention (review round 1).
-      'docs/adr/0001-record-architecture-decisions.md': '# 1. Record architecture decisions\n\nDate: 2025-03-01\n\n## Status\n\nAccepted\n\n## Context\n\nWe need to record the decisions.\n\n## Decision\n\nWe use ADRs.\n\n## Consequences\n\nSee them in docs/adr.\n',
+      'docs/adr/0001-record-architecture-decisions.md': '# 1. Record architecture decisions\n\nDate: 2025-03-01\n\n## Status\n\nAccepted\n\n## Context\n\nWe need to record the decisions.\n\n## Decision\n\nWe use ADRs. Refined by ADR-0007, which this project never wrote.\n\n## Consequences\n\nSee them in docs/adr.\n',
+      // Notes of the project's own with IDs of pitwall's form that no pitwall document defines (review round 2).
+      'docs/operations.md': '# Operations\n\n| R-1 | the disk fills up |\n| --- | --- |\n\nSee BUG-12 and E42.\n',
       '.github/workflows/ci.yml': 'name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n',
     };
     const make = (name, { branch = 'main', files: extra = {} } = {}) => {
       const p = join(dir, name);
       for (const [rel, body] of Object.entries({ ...FIXTURE, ...extra })) {
+        if (body === null) continue;
         mkdirSync(dirname(join(p, rel)), { recursive: true });
         writeFileSync(join(p, rel), body);
       }
@@ -1070,7 +1073,17 @@ slowStep('adopt', (report) => {
     // A repository without the branch the protection guards: said in the dry run, and --write refuses.
     const master = make('master', { branch: 'master' });
     r = adopt(master);
-    if (r.status !== 0 || !/^BLOCKER pitwall guards the branch "main".*git branch -m master main/m.test(r.stdout)) report(`a repository on master must show the blocker in the dry run: exit ${r.status}\n${r.stdout.slice(0, 400)}`);
+    if (r.status !== 0 || !/^BLOCKER pitwall guards the branch "main", and this project's default branch is "master"\. Rename it first, then adopt:\n {2}1\. here: git branch -m master main\n {2}2\. then whatever names master by name/m.test(r.stdout)) report(`a repository on master must show the blocker and its steps in the dry run: exit ${r.status}\n${r.stdout.slice(0, 600)}`);
+    // T6 (owner, 2026-11-14): the default branch on GitHub counts, even where this clone also has a main.
+    {
+      const bareMaster = join(dir, 'master-origin.git');
+      gitIn(dir, 'clone', '-q', '--bare', master, bareMaster);
+      const cloned = join(dir, 'master-clone');
+      gitIn(dir, 'clone', '-q', bareMaster, cloned);
+      gitIn(cloned, 'branch', 'main');
+      const out = adopt(cloned).stdout;
+      if (!/^BLOCKER pitwall guards the branch "main", and this project's default branch is "master" on GitHub\. Rename it first, then adopt:\n {2}1\. on GitHub, .*gh api -X POST repos\/\{owner\}\/\{repo\}\/branches\/master\/rename -f new_name=main\n {2}2\. here: git branch -m master main\n {2}3\. here and in every other clone: git fetch origin, git branch -u origin\/main main, git remote set-head origin -a/m.test(out)) report(`a clone whose origin's default branch is master must show the blocker with GitHub's rename:\n${out.slice(0, 900)}`);
+    }
     gitIn(master, 'switch', '-qc', 'plan/initial');
     r = adopt(master, wrote);
     if (r.status !== 1 || existsSync(join(master, '.claude'))) report(`--write without the guarded branch must refuse and write nothing: exit ${r.status}\n${r.stdout}`);
@@ -1097,7 +1110,7 @@ slowStep('adopt', (report) => {
     if (r.status !== 0 || !/RESULT: adopted at plan/.test(r.stdout)) report(`--write on the planning branch: exit ${r.status}\n${r.stdout}${r.stderr}`);
     for (const [rel, body] of before) if (after.get(rel) !== body) report(`--write changed ${rel}, a file the project had`);
     const settings = JSON.parse(readFileSync(join(p, '.claude', 'pitwall.json'), 'utf8'));
-    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending', autoMerge: false, startStage: 'plan', planFile: 'ROADMAP.md', ownDocs: ['docs/adr/0001-record-architecture-decisions.md'] };
+    const want = { templateVersion: version, processLevel: 'lite', mergeProtection: 'pending', autoMerge: false, startStage: 'plan', planFile: 'ROADMAP.md', ownDocs: ['docs/adr/0001-record-architecture-decisions.md', 'docs/operations.md'] };
     if (JSON.stringify(settings) !== JSON.stringify(want)) report(`.claude/pitwall.json of an adopted project is ${JSON.stringify(settings)}, expected ${JSON.stringify(want)}`);
     for (const rel of ['docs/EPICS.md', 'docs/IDEA.md', 'docs/epics/E0-skeleton.md', 'scripts/gate', 'scripts/build', '.githooks/pre-commit', '.github/workflows/pitwall-gate.yml', '.gitattributes', '.gitignore', 'CHANGELOG.md']) {
       if (!after.has(rel)) report(`--write did not lay out ${rel}`);
@@ -1180,9 +1193,51 @@ slowStep('adopt', (report) => {
       writeFileSync(f, JSON.stringify({ ...JSON.parse(kept), ownDocs: undefined }, null, 2));
       if (!/0001-record-architecture-decisions\.md: missing section "## Options"/.test(kick(p).stdout)) report('without ownDocs the project\'s own ADR must be held to the template: the exemption is what keeps it');
       writeFileSync(f, JSON.stringify({ ...JSON.parse(kept), ownDocs: ['src/tally.mjs'] }, null, 2));
-      if (!/ownDocs must list files under docs\/adr/.test(kick(p).stdout)) report('an ownDocs entry outside the convention folders must be reported');
+      if (!/ownDocs must list files under docs\//.test(kick(p).stdout)) report('an ownDocs entry outside docs/ must be reported');
       writeFileSync(f, kept);
     }
+    // Review round 2: the project's own documents keep their IDs; one of pitwall's own ADRs beside the project's still
+    // takes the next number, and the project's ADR resolves when an epic of the plan cites it.
+    if (/points nowhere/.test(kick(p).stdout)) report(`the IDs in the project's own documents must not be held to pitwall's documents:\n${kick(p).stdout}`);
+    {
+      const adrDir = join(p, 'docs', 'adr');
+      const pitwallAdr = readFileSync(join(adrDir, '0000-template.md'), 'utf8').replace(/^# ADR-NNNN: .*$/m, '# ADR-0001: Same number').replace(/^- Status: .*$/m, '- Status: accepted');
+      writeFileSync(join(adrDir, '0001-same-number.md'), pitwallAdr);
+      setStart(p, 'decide');
+      if (!/two ADR files share the number 0001/.test(stageCheck(p, 'decide').stdout)) report('a pitwall ADR with the number of one of the project\'s own must be reported: its numbers still count');
+      rmSync(join(adrDir, '0001-same-number.md'));
+      setStart(p, 'plan');
+      const e0 = join(p, 'docs', 'epics', 'E0-skeleton.md');
+      const e0Text = readFileSync(e0, 'utf8');
+      writeFileSync(e0, e0Text.replace(/^ADR: .*$/m, 'ADR: ADR-0001'));
+      if (/cites ADR-0001, which has no file/.test(stageCheck(p, 'plan').stdout)) report('an epic that cites the project\'s own ADR must find its file');
+      writeFileSync(e0, e0Text);
+      // The project's own file in docs/epics/ is neither an epic of the plan nor held to the epic's template.
+      writeFileSync(join(p, 'docs', 'epics', 'milestones.md'), '# Milestones\n\nOurs.\n');
+      const f = join(p, '.claude', 'pitwall.json');
+      const kept = readFileSync(f, 'utf8');
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(kept), ownDocs: [...JSON.parse(kept).ownDocs, 'docs/epics/milestones.md'] }, null, 2));
+      if (/milestones\.md/.test(stageCheck(p, 'plan').stdout)) report(`the project's own file in docs/epics/ must be left alone:\n${stageCheck(p, 'plan').stdout}`);
+      writeFileSync(f, kept);
+      rmSync(join(p, 'docs', 'epics', 'milestones.md'));
+    }
+    // Review round 2: an ID of pitwall's form that points nowhere in a document pitwall keeps (CLAUDE.md), and a
+    // CLAUDE.md that pitwall's sections would push over its size, are the owner's to put right before the adoption.
+    {
+      const loud = make('loud-claude', { files: { 'CLAUDE.md': '# tally\n\nSee E42 for the plan, and `E7` as an example.\n' } });
+      const out = adopt(loud).stdout;
+      if (!/^BLOCKER E42 \(CLAUDE\.md:3\): an ID of pitwall's form that no pitwall document will define/m.test(out) || /E7 \(CLAUDE/.test(out)) report(`an ID that points nowhere in a kept CLAUDE.md must be a blocker, and one in a code span not:\n${out.slice(0, 700)}`);
+      const long = make('long-claude', { files: { 'CLAUDE.md': `# tally\n\n## Workflow\n\n${Array.from({ length: JSON.parse(readFileSync(join(plugin, "config", "defaults.json"), "utf8")).docsLimits.claudeMdMaxLines - 20 }, (_, i) => `- rule ${i + 1}`).join('\n')}\n` } });
+      if (!/^BLOCKER CLAUDE\.md would be about \d+ lines with the \d+ lines of pitwall's sections it lacks, over the limit/m.test(adopt(long).stdout)) report(`a CLAUDE.md that pitwall's sections would push over its size must be a blocker:\n${adopt(long).stdout.slice(0, 600)}`);
+      if (/would be about/.test(adopt(p).stdout)) report('a short CLAUDE.md must not be a blocker of its size');
+    }
+    // A project with no CI of its own: the gate's workflow is laid out as ci.yml, and the dry run says it needs the setup.
+    {
+      const bare = make('no-ci', { files: { '.github/workflows/ci.yml': null } });
+      if (!/^ADD \.github\/workflows\/ci\.yml \(it runs scripts\/gate on a bare runner, so the adoption adds the setup/m.test(adopt(bare).stdout)) report(`the dry run of a project with no CI must say that the gate's workflow needs its setup:\n${adopt(bare).stdout.slice(0, 500)}`);
+    }
+    // The workflow beside the project's own has a name of its own.
+    if (!/^name: pitwall-gate$/m.test(readFileSync(join(p, '.github', 'workflows', 'pitwall-gate.yml'), 'utf8'))) report('the gate\'s workflow laid out beside the project\'s own must be named pitwall-gate');
     // Review round 1: a project whose ignore rules ignore a path pitwall must commit cannot finish its adoption.
     const hidden = make('hidden', { files: { '.gitignore': 'node_modules/\n.claude/\n' } });
     r = adopt(hidden);

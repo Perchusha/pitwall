@@ -485,7 +485,8 @@ if (kinds.includes('ids')) {
   }
 
   const patterns = [/\bADR-\d{4}\b/g, new RegExp(`\\b${P}\\d+[a-z]?(?:-AC\\d+)?\\b`, 'g'), /\bBUG-\d+\b/g, /\bL-\d+\b/g, /\bA-\d+\b/g, /\bR-\d+\b/g];
-  const scan = ['CLAUDE.md', ...(has('docs') ? listFiles(join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`) : [])].filter(has);
+  // An adopted project's own documents keep the IDs they were written with (T6 review, round 2).
+  const scan = ['CLAUDE.md', ...(has('docs') ? listFiles(join(root, 'docs')).filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`) : [])].filter(has).filter((rel) => !ownDocs.has(rel));
   for (const rel of scan) {
     stripCode(read(rel))
       .split('\n')
@@ -588,7 +589,7 @@ function adoptedStage(reportIt = false) {
   }
   if (reportIt && Object.hasOwn(s, 'planFile') && (typeof s.planFile !== 'string' || !has(s.planFile))) report('.claude/pitwall.json', `planFile "${s.planFile}" is not a file of the project`);
   const own = s[cfg.adopt.ownDocsKey];
-  if (reportIt && own !== undefined && (!Array.isArray(own) || own.some((x) => typeof x !== 'string' || !cfg.adopt.conventionFolders.some((d) => x.startsWith(`${d}/`))))) report('.claude/pitwall.json', `${cfg.adopt.ownDocsKey} must list files under ${cfg.adopt.conventionFolders.join(', ')}`);
+  if (reportIt && own !== undefined && (!Array.isArray(own) || own.some((x) => typeof x !== 'string' || !x.startsWith(`${cfg.adopt.ownDocsFolder}/`)))) report('.claude/pitwall.json', `${cfg.adopt.ownDocsKey} must list files under ${cfg.adopt.ownDocsFolder}/`);
   return s[key];
 }
 
@@ -653,7 +654,7 @@ function checkDecide() {
   const twoWay = tableRows(s.get('Two-way decisions') ?? []);
   const adrId = (cell) => /ADR-\d{4}/.exec(cell ?? '')?.[0];
   const adrFields = (id) => {
-    const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+    const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
     if (!f) return null;
     const text = read(`docs/adr/${f}`);
     const field = (name) => new RegExp(`^- ${name}: *(.+)$`, 'm').exec(text)?.[1].trim() ?? '';
@@ -904,11 +905,11 @@ function risksAccepted() {
 // The ADR that a failed spike led to cites the spike: /pitwall:decide <area> links it in the new
 // ADR, so neither the ADR the spike disproved nor an unrelated one can stand in for it.
 const adrCites = (id, spikeFile) => {
-  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && read(`docs/adr/${f}`).includes(`spikes/${spikeFile}`));
 };
 function adrAccepted(id) {
-  const f = adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+  const f = allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
   return Boolean(f && field(read(`docs/adr/${f}`), 'Status').startsWith('accepted'));
 }
 
@@ -1121,7 +1122,7 @@ function checkPlanReview() {
     // Every ID is settled, or an ADR a newer one superseded with that successor named in the same
     // cell, and at least one ID is settled.
     const superseded = (id) => {
-      const f = id.startsWith('ADR-') && adrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
+      const f = id.startsWith('ADR-') && allAdrFiles.find((name) => name.startsWith(id.slice(4) + '-'));
       const by = f ? /^superseded by (ADR-\d{4})\b/.exec(field(read(`docs/adr/${f}`), 'Status'))?.[1] : null;
       return Boolean(by && ids.includes(by));
     };
