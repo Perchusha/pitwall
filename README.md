@@ -61,7 +61,7 @@ pitwall asks you only what an agent should not decide. You:
 
 - A release is a local build at every level. The standard and full levels name staging, QA after every merge and a deployment to production with its smoke check: none of them is built yet, and T8 brings staging and QA in a browser.
 - The standard and full levels have not run on a real project. The adoption of an existing project has run headless on a test project, and as a dry run on one real project, which was then not adopted (T5b).
-- The adoption is built for a project with no agent process of its own and a gate that runs within a few minutes. The dry run does not see a project's own skills, agents and Claude Code hooks, nor a gate script of its own (BUG-16 to BUG-18), and pitwall's hooks give the gate 120 seconds after every edit and 540 before every stop (BUG-21).
+- The adoption is built for a project with no agent process of its own and a gate that runs within a few minutes. The dry run does not see a project's own skills, agents and Claude Code hooks, nor a gate of its own anywhere but `scripts/gate` and its CI (BUG-16 to BUG-18), and on a change's branch pitwall's hooks give the gate 120 seconds after an edit and 540 before a stop (BUG-21).
 - The default branch must be `main`: kickoff makes it so, and the adoption stops while it is not, with the steps of the rename.
 - The marketplace serves the plugin from `main`, not from a tag (T8).
 - On a private repository on GitHub Free there is no branch protection: a hook refuses `gh pr merge` until both checks are green, and a merge on GitHub's web page is not stopped.

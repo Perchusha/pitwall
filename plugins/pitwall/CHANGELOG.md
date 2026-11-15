@@ -4,7 +4,7 @@ One section per version, newest first. Up to 0.12.0 each version is one epic, na
 
 ## 1.0.3 - 2026-11-15
 
-Docs and bugs only, no code changed. T5b ended at its dry run: Last Ones Down, a real project with an agent process of its own, was not adopted. What the dry run missed is filed as BUG-16 to BUG-22, none blocking, and the README's limits now say that the adoption is built for a project with no agent process of its own and a gate that runs within a few minutes, and that the full level has not run on a real project ([the bugs](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md), [T5b](https://github.com/Perchusha/pitwall/blob/main/docs/epics/T5b-full-last-ones-down.md)).
+Docs and bugs only, no code changed. T5b ended at its dry run: Last Ones Down, a real project with an agent process of its own, was not adopted. What the dry run missed is filed as BUG-16 to BUG-22, none blocking, and the README's limits now say that the adoption is built for a project with no agent process of its own and a gate that runs within a few minutes, and that the full level has not run on a real project ([#16](https://github.com/Perchusha/pitwall/pull/16), [the bugs](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md), [T5b](https://github.com/Perchusha/pitwall/blob/main/docs/epics/T5b-full-last-ones-down.md)).
 
 ## 1.0.2 - 2026-11-15
 

@@ -26,6 +26,8 @@ One-way (2026-11-12): the full system of T5 is Last Ones Down, an existing proje
 
 ## Open questions
 
+- Answered (2026-11-14): the owner renames `master` to `main` in Last Ones Down before T5b (nothing there uses the branch by name); a guarded branch per project is not built before 1.0, and T6's dry run names a default branch other than `main` with the steps of the rename. The question as it was put: Last Ones Down's default branch is `master`, and pitwall guards `main` in every project (`mergeProtection.branch`), so T6's adoption stops with a blocker there and names the commands that rename it. Either the owner renames `master` to `main` before T5b (its CI, any deploy, open PRs and each clone follow the rename), or pitwall learns a guarded branch per project, a key of `.claude/pitwall.json` read by the guard, `protect.mjs`, `merge.mjs`, `release.mjs` and the brief, a minor version after 1.0. The agent's recommendation: rename, since nothing in pitwall changes and T5b tests the path every other project takes.
+
 ### The dry run of T5b-AC1 (2026-11-15)
 
 `adopt.mjs --dry-run` of pitwall 1.0.2 ran on Last Ones Down at `d112a83d` (branch `main`, 1849 tracked files, 1528 commits) and wrote nothing: `git status` was empty before and after. What follows is the list the owner decided from, kept as it was put: the owner closed T5b on it (Decisions, 2026-11-15), so the proposals below were not taken.
@@ -36,7 +38,7 @@ One-way (2026-11-12): the full system of T5 is Last Ones Down, an existing proje
 - ADD, 26 paths: `.claude/pitwall.json`, `.githooks/pre-commit`, `.github/pull_request_template.md`, `.github/workflows/ci.yml`, `.gitattributes` (pitwall's scripts only), `CHANGELOG.md`, `scripts/gate`, `scripts/build`, and under `docs/`: `EPICS.md`, `epics/E0-skeleton.md`, `IDEA.md`, `DISCOVERY.md`, `STACK.md`, `SPEC.md`, `BUGS.md`, `RISKS.md`, `LESSONS.md`, `JOURNAL.md`, `INDEX.md`, `PLAN-REVIEW.md`, `adr/0000-template.md`, `archive/README.md`, and `reviews/` and `spikes/` with their templates.
 - KEEP: `CLAUDE.md`, `.claude/settings.json`, `.editorconfig`, `.gitignore`, and the 33 files under `docs/` as the project's own.
 - PLAN: `ROADMAP.md` (445 checkbox items, 310 open) and `docs/archive/ROADMAP-closed.md` (710, all done).
-- CHECK: `yarn lint`, `yarn typecheck`, `yarn test`, `yarn build`. No CI and no git hooks.
+- CHECK: `yarn run lint`, `yarn run typecheck`, `yarn test`, `yarn run build`. No CI and no git hooks.
 
 **What it does not see**, read by hand. Each is a plugin finding for T5b-AC4, filed as BUG-16 to BUG-22 in this order:
 
@@ -50,7 +52,7 @@ One-way (2026-11-12): the full system of T5 is Last Ones Down, an existing proje
 
 **What collides with pitwall's workflow**, from `CLAUDE.md` and the `lod-*` skills:
 
-- Every change is committed on `main`, by the conductor and by the owner's own sessions alike (`lod-design-round`, `lod-model`, `lod-pool`, `lod-logs`, the record of `lod-ship`); pitwall's guard refuses a commit on `main`, and every change goes through a branch, a PR and `ai-review`.
+- Every change is committed on `main`, by the conductor and by the owner's own sessions alike (`lod-design-round`, `lod-model`, `lod-pool`, `lod-logs`, the record of `lod-ship`); pitwall's guard refuses a push to `main`, and every change goes through a branch, a PR and `ai-review`.
 - No CI, by the owner's ruling (GitHub Actions removed 2026-09-10); pitwall merges nothing without the check named `gate` from GitHub Actions, in either protection mode. The repository is private, so branch protection depends on the account's plan (`protect.mjs` falls back to `local-hook`).
 - The gate is asleep during Epic M (OQ-73): 47 client reds, no tests and no new tests until Epic Y; pitwall runs `scripts/gate --fast` before every commit and after every edit, and its definition of done asks for tests.
 - Bugs and follow-ups live in `ROADMAP.md` `## Open` (80 open), and `lod-logs` files a playtest's findings as P-n items and builds them in the same session; pitwall files BUG-n in `docs/BUGS.md` with a severity, and every fix waits for the owner's yes.
@@ -93,14 +95,14 @@ One-way (2026-11-12): the full system of T5 is Last Ones Down, an existing proje
 | U achievements, then C4, C3, then C2 (the live matrix) and C7 (release ops) | open | the last epics before 1.0 (April 2027), C2 with C7 as the release epic |
 | `# Post-1.0`: M13 to M15, trustless play, the rest | open | epics after the 1.0 epic |
 
-**Proposed values**, to confirm as one list: the name Last Ones Down; the idea "An online turn-based social survival game, Bunker-like, host-authoritative over Steam P2P, serverless" (`package.json`); the level full (T5b's word: it also asks for staging and a production smoke, which T8 brings); the stage `plan` (`SPEC.md`, `ARCHITECTURE.md`, `NETWORKING.md` and the stack in `CLAUDE.md` record the decisions, and the work left is in `ROADMAP.md`); the gate's fast list `yarn lint` and `yarn typecheck`, to be timed against the 120 s limit; the full list `node tools/gate.mjs`; in CI, what a Linux runner can pass, without the visual ratchet and the Electron steps.
+**Proposed values**, to confirm as one list: the name Last Ones Down; the idea "An online turn-based social survival game, Bunker-like, host-authoritative over Steam P2P, serverless" (`package.json`); the level full (T5b's word: it also asks for staging, which T8 brings, and a production smoke, which no epic holds yet); the stage `plan` (`SPEC.md`, `ARCHITECTURE.md`, `NETWORKING.md` and the stack in `CLAUDE.md` record the decisions, and the work left is in `ROADMAP.md`); the gate's fast list `yarn lint` and `yarn typecheck`, to be timed against the 120 s limit; the full list `node tools/gate.mjs`; in CI, what a Linux runner can pass, without the visual ratchet and the Electron steps.
 
 **The owner's decisions it asked for**, not taken, since the owner closed T5b instead:
 
 1. The BLOCKER, on `main` before the adoption: remove "Start here" (32 lines) with `lod-continue`, and move "Architecture" and "Conventions" (132 lines) into a file that `CLAUDE.md` imports with one line: about 114 lines, 154 with pitwall's sections.
 2. The plan: `docs/EPICS.md` takes it over, `ROADMAP.md` gets the line on top and is history; `ROADMAP-closed.md` stays the archive.
 3. The `lod-*` parts as in the table: those replaced are removed on `main` before the adoption, the rest kept.
-4. The workflow: every change through a branch and a PR, the owner's own sessions included; without it there is no adoption, since the guard refuses an agent's commit on `main`.
+4. The workflow: every change through a branch and a PR, the owner's own sessions included; without it there is no adoption, since the guard refuses an agent's push to `main`.
 5. The gate during Epic M (OQ-73): `scripts/gate` runs only what is green today (`packages/**`) until Epic Y, or the 47 client reds are fixed first.
 6. CI: the check named `gate` on GitHub Actions comes back, and which steps it runs.
 7. The open bugs: which of the 80 in `## Open` and of the P-n items become BUG-n now.
@@ -108,5 +110,3 @@ One-way (2026-11-12): the full system of T5 is Last Ones Down, an existing proje
 9. The definition of done: pitwall's section names `AAA_BRIEF.md` section 8 as the project's own.
 10. The spec: `docs/SPEC.md` points to the root `SPEC.md` instead of repeating it.
 11. Merge protection now or later, and whether low and normal risk PRs merge without the owner.
-
-- Answered (2026-11-14): the owner renames `master` to `main` in Last Ones Down before T5b (nothing there uses the branch by name); a guarded branch per project is not built before 1.0, and T6's dry run names a default branch other than `main` with the steps of the rename. The question as it was put: Last Ones Down's default branch is `master`, and pitwall guards `main` in every project (`mergeProtection.branch`), so T6's adoption stops with a blocker there and names the commands that rename it. Either the owner renames `master` to `main` before T5b (its CI, any deploy, open PRs and each clone follow the rename), or pitwall learns a guarded branch per project, a key of `.claude/pitwall.json` read by the guard, `protect.mjs`, `merge.mjs`, `release.mjs` and the brief, a minor version after 1.0. The agent's recommendation: rename, since nothing in pitwall changes and T5b tests the path every other project takes.
