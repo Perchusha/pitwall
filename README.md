@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, and a tagged release that a QA agent and you check.
 
-> **Status: 1.0.1.** The whole path works, from a one-line idea, or from a project that exists already, to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic. Checked with Claude Code 2.1.318 (see [Requirements](#requirements)). What changed in each version: [CHANGELOG](plugins/pitwall/CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](docs/EPICS.md).
+> **Status: 1.0.2.** The whole path works, from a one-line idea, or from a project that exists already, to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic. Checked with Claude Code 2.1.318 (see [Requirements](#requirements)). What changed in each version: [CHANGELOG](plugins/pitwall/CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](docs/EPICS.md).
 
 ## Quick start
 
@@ -31,7 +31,7 @@ What the plugin does, stage by stage: [plugins/pitwall/README.md](plugins/pitwal
 
 ## Requirements
 
-- Claude Code. pitwall 1.0.1 is checked with 2.1.318, the version CI pins in [.claude-code-version](.claude-code-version); its headless runs used 2.1.323.
+- Claude Code. pitwall 1.0.2 is checked with 2.1.318, the version CI pins in [.claude-code-version](.claude-code-version); its headless runs used 2.1.323.
 - Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of [config/defaults.json](plugins/pitwall/config/defaults.json) (ADR-0004): the plugin's scripts and hooks run on it. Your project's own stack can be anything.
 - bash: the gate, `scripts/gate`, is a bash script, and every hook starts through bash. On Windows, the bash of Git for Windows (Git Bash).
 - git, and the GitHub CLI (`gh`) signed in to github.com, with admin rights on the repository: pitwall opens every PR, sets the `ai-review` status and merges through `gh`, and sets up merge protection with it. GitHub.com only.

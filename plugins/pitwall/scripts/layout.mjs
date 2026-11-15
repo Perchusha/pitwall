@@ -48,6 +48,7 @@ const bad = (msg) => {
 const refuse = (msg, list = []) => {
   console.error(`layout: REFUSED - ${msg}; nothing was written.`);
   for (const e of list.slice(0, 20)) console.error(`  ${e}`);
+  if (list.length > 20) console.error(`  and ${list.length - 20} more`);
   process.exit(1);
 };
 const target = resolve(args.target ?? '.');
@@ -157,6 +158,13 @@ if (present.length > 0) {
   const existing = present.some((f) => f === 'CLAUDE.md' || f.startsWith('docs/'));
   if (present.length === 1 && present[0] === SETTINGS) {
     refuse(`${target} holds nothing but ${SETTINGS}, Claude Code's settings of this project, and they hold something the template's own does not, which enables pitwall and names its marketplace, or they do not parse. kickoff never overwrites them: move the file out of the folder and run kickoff again (when a new session no longer loads pitwall, install it for your user or for the project first), then bring back into the template's ${SETTINGS} what you need of yours`);
+  }
+  // The top folder of a repository with no commit: /pitwall:adopt refuses it too, so the refusal says what to do with the
+  // files, or the owner goes between the two (BUG-15).
+  const git = (...a) => spawnSync('git', ['-C', target, ...a], { encoding: 'utf8' });
+  const top = git('rev-parse', '--show-toplevel');
+  if (top.status === 0 && same(top.stdout.trim(), target) && git('rev-parse', '--verify', '-q', 'HEAD').status !== 0) {
+    refuse(`${target} is not empty, and its repository has no commit yet. kickoff lays out an empty folder only, and /pitwall:adopt adopts a project with a commit: move these files out of the folder, or commit them, then run /pitwall:continue again (a commit leaves out what git ignores, which only kickoff needs moved)`, present);
   }
   refuse(`${target} is not empty. kickoff lays out new projects only${existing ? ', and this looks like an existing project' : ''}: an existing project is adopted with /pitwall:adopt, which keeps what is there`, present);
 }

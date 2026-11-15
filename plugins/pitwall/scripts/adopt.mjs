@@ -84,8 +84,17 @@ function requireProject() {
   const top = git('rev-parse', '--show-toplevel');
   if (!top.ok) refuse(`${target} is not in a git repository. A project that exists but is not under git yet: run git init and commit what it holds, then adopt it; a new one starts with /pitwall:kickoff in an empty folder.`);
   if (!sameFolder(top.out, target)) refuse(`${target} is not the top folder of its git repository (${top.out}): a project is adopted from there.`);
-  if (!git('rev-parse', '--verify', '-q', 'HEAD').ok) refuse(`the repository in ${target} has no commit yet: a new project starts with /pitwall:kickoff.`);
+  // A layout kickoff has not committed yet: kickoff resumes it (review round 1 of BUG-15).
   if (has(settingsFile)) refuse(`${target} is a pitwall project already (${settingsFile}): /pitwall:continue goes on with it.`);
+  if (!git('rev-parse', '--verify', '-q', 'HEAD').ok) {
+    // kickoff lays out an empty folder only, and its preflight judges what makes a folder not empty (the files an
+    // operating system leaves and a project-scope install's settings do not). When it refuses this folder too, its
+    // refusal, which names those files and what to do with them, is the owner's way on: without it the owner goes
+    // between the two refusals (BUG-15), and no second list of what kickoff lays out over is kept here.
+    const kickoff = spawnSync(process.execPath, [join(pluginRoot, 'scripts', 'layout.mjs'), '--check', '--target', target], { encoding: 'utf8' });
+    if (kickoff.status !== 0) refuse(`the repository in ${target} has no commit yet, which the adoption needs, and kickoff refuses the folder too, as it says:`, `${kickoff.stderr ?? ''}${kickoff.error?.message ?? ''}`.split(/\r?\n/).filter(Boolean));
+    refuse(`the repository in ${target} has no commit yet: a new project starts with /pitwall:kickoff.`);
+  }
   // The adoption lives on the planning branch until the plan merges: a session on main, or a new clone, finds it
   // there, here or on origin (review round 1).
   const plan = cfg.planning.branch;
