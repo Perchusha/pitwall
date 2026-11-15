@@ -4,7 +4,7 @@ Idea to release with Claude Code. You sit on the pit wall and make the calls; ag
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, and a tagged release that a QA agent and you check.
 
-> **Status: 1.0.2.** The whole path works, from a one-line idea, or from a project that exists already, to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic. Checked with Claude Code 2.1.318 (see [Requirements](#requirements)). What changed in each version: [CHANGELOG](plugins/pitwall/CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](docs/EPICS.md).
+> **Status: 1.0.3.** The whole path works, from a one-line idea, or from a project that exists already, to a tagged release: `/pitwall:continue` conducts it, stage by stage and then epic by epic. Checked with Claude Code 2.1.318 (see [Requirements](#requirements)). What changed in each version: [CHANGELOG](plugins/pitwall/CHANGELOG.md); what comes after 1.0: [docs/EPICS.md](docs/EPICS.md).
 
 ## Quick start
 
@@ -31,7 +31,7 @@ What the plugin does, stage by stage: [plugins/pitwall/README.md](plugins/pitwal
 
 ## Requirements
 
-- Claude Code. pitwall 1.0.2 is checked with 2.1.318, the version CI pins in [.claude-code-version](.claude-code-version); its headless runs used 2.1.323.
+- Claude Code. pitwall 1.0.3 is checked with 2.1.318, the version CI pins in [.claude-code-version](.claude-code-version); its headless runs used 2.1.323.
 - Node.js on the PATH, at least the major version in `runtime.nodeMinMajor` of [config/defaults.json](plugins/pitwall/config/defaults.json) (ADR-0004): the plugin's scripts and hooks run on it. Your project's own stack can be anything.
 - bash: the gate, `scripts/gate`, is a bash script, and every hook starts through bash. On Windows, the bash of Git for Windows (Git Bash).
 - git, and the GitHub CLI (`gh`) signed in to github.com, with admin rights on the repository: pitwall opens every PR, sets the `ai-review` status and merges through `gh`, and sets up merge protection with it. GitHub.com only.
@@ -60,13 +60,14 @@ pitwall asks you only what an agent should not decide. You:
 ## Limits
 
 - A release is a local build at every level. The standard and full levels name staging, QA after every merge and a deployment to production with its smoke check: none of them is built yet, and T8 brings staging and QA in a browser.
-- The standard and full levels have not yet run on a real project, and the adoption of an existing project has run only headless, on a test project: T5b, a real project adopted at the full level, comes after 1.0.
+- The standard and full levels have not run on a real project. The adoption of an existing project has run headless on a test project, and as a dry run on one real project, which was then not adopted (T5b).
+- The adoption is built for a project with no agent process of its own and a gate that runs within a few minutes. The dry run does not see a project's own skills, agents and Claude Code hooks, nor a gate of its own anywhere but `scripts/gate` and its CI (BUG-16 to BUG-18), and on a change's branch pitwall's hooks give the gate 120 seconds after an edit and 540 before a stop (BUG-21).
 - The default branch must be `main`: kickoff makes it so, and the adoption stops while it is not, with the steps of the rename.
 - The marketplace serves the plugin from `main`, not from a tag (T8).
 - On a private repository on GitHub Free there is no branch protection: a hook refuses `gh pr merge` until both checks are green, and a merge on GitHub's web page is not stopped.
 - The guards catch mistakes, not a command built to hide what it does: [R-2, R-3 and R-5](docs/RISKS.md) say what gets past them. A merge that waits for you is held by Claude Code's permission prompt, or in auto mode by its classifier: with permissions skipped, or an allow rule of your own that covers `merge.mjs`, only the skill's text holds it (R-4).
 - Checked on Windows, and in CI on Linux; macOS has not been tried.
-- Open bugs: BUG-9 and BUG-11 to BUG-13, none blocking, in [docs/BUGS.md](docs/BUGS.md).
+- Open bugs: BUG-9, BUG-11 to BUG-13 and BUG-16 to BUG-22, none blocking, in [docs/BUGS.md](docs/BUGS.md).
 
 ## Principles
 

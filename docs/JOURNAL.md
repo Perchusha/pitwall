@@ -2,6 +2,18 @@
 
 One entry per epic, newest first.
 
+## T5b - Closed at the dry run, 1.0.3 (2026-11-15)
+
+The dry run of the adoption, `adopt.mjs --dry-run` of 1.0.2, ran on Last Ones Down and wrote nothing there: 26 paths to add, one blocker (`CLAUDE.md` would pass the docs check's 200 lines), `ROADMAP.md` as the plan, four checks from `package.json`. Read by hand, the project holds an agent process of its own that the dry run does not see: eleven skills with a conductor that answers "continue", two lane agents, three Claude Code hooks and a gate of eleven steps, 7 to 13 minutes, with no CI by the owner's ruling. The owner decided from that list not to adopt the project: a CI pitwall requires, on a private repository on GitHub Free with Windows runners, and that gate before every commit, after every edit and before every stop do not pay off against a system that works. The seven findings are BUG-16 to BUG-22, none blocking; the README's limits say what the adoption is built for; 1.0.3 changes no code. The full level has not run on a real project.
+
+**What the review found.** One fresh-context round, approved: one to fix, the epic file said the guard refuses a commit on `main` where it refuses a push; and notes, taken: a production smoke is in no epic, not in T8; the dry run's check lines as it prints them; the README's line on a gate of the project's own narrowed to a gate outside `scripts/gate` and CI, and the hooks' limits to a change's branch; the status in review; the answered question of 2026-11-14 out of the dry run's section.
+
+| Round | Blocking | To fix | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 1 | 131,666 | 28 | 4.0 |
+
+**Next:** nothing until the owner says: pitwall pauses after 1.0.3, and T8, BUG-9, BUG-11 to BUG-13 and BUG-16 to BUG-22 wait for their word (owner, 2026-11-15).
+
 ## 1.0.2 - BUG-15, a clone with files and no commit (2026-11-15)
 
 A patch, next after 1.0.1, minimal by the owner's word (2026-11-14): in the top folder of a repository with no commit, kickoff refused a folder that holds files and named the adoption, which refused a repository with no commit and named kickoff. Now kickoff's refusal names the files and says what to do with them: move them out of the folder, or commit them, then run `/pitwall:continue` again. The adoption asks kickoff's own preflight, and when it refuses too, gives its refusal under its own, so both name the same files and the same way on, and no second list of what kickoff lays out over is kept. A layout that kickoff has not committed yet goes to `/pitwall:continue`. The check holds the files, staged or not, named by both, what kickoff lays out over left out, and a repository with a commit still sent to the adoption; its cases fail on 1.0.1's scripts. The journal's entries of T4a to T4c, T4d among them, moved to `docs/archive/` to keep this file under its size limit.

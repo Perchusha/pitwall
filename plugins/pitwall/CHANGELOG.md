@@ -2,6 +2,10 @@
 
 One section per version, newest first. Up to 0.12.0 each version is one epic, named as its merge commit on `main` names it; the epic's file holds its acceptance criteria.
 
+## 1.0.3 - 2026-11-15
+
+Docs and bugs only, no code changed. T5b ended at its dry run: Last Ones Down, a real project with an agent process of its own, was not adopted. What the dry run missed is filed as BUG-16 to BUG-22, none blocking, and the README's limits now say that the adoption is built for a project with no agent process of its own and a gate that runs within a few minutes, and that the full level has not run on a real project ([#16](https://github.com/Perchusha/pitwall/pull/16), [the bugs](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md), [T5b](https://github.com/Perchusha/pitwall/blob/main/docs/epics/T5b-full-last-ones-down.md)).
+
 ## 1.0.2 - 2026-11-15
 
 BUG-15: in a clone with files and no commit, the refusals of kickoff and of the adoption name the files no commit holds and say what to do: move them out of the folder, or commit them, then run `/pitwall:continue` again ([#15](https://github.com/Perchusha/pitwall/pull/15), [the bug](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md)).
