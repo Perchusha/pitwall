@@ -11,7 +11,7 @@ flowchart LR
   subgraph loop [Epic loop, one change per lap]
     impl[implement with tests] --> gate --> pr[PR] --> cr[fresh-context review] --> merge[merge by risk class]
   end
-  loop --> release([tagged release, QA, your yes])
+  loop --> release([QA, your yes, tagged release])
 ```
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, and a tagged release that a QA agent and you check.
