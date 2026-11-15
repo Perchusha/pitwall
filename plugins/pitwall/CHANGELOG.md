@@ -2,7 +2,7 @@
 
 One section per version, newest first. Up to 0.12.0 each version is one epic, named as its merge commit on `main` names it; the epic's file holds its acceptance criteria.
 
-## 1.0.2 - 2026-11-14
+## 1.0.2 - 2026-11-15
 
 BUG-15: in a clone with files and no commit, the refusals of kickoff and of the adoption name the files no commit holds and say what to do: move them out of the folder, or commit them, then run `/pitwall:continue` again ([#15](https://github.com/Perchusha/pitwall/pull/15), [the bug](https://github.com/Perchusha/pitwall/blob/main/docs/BUGS.md)).
 

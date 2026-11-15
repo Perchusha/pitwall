@@ -2,6 +2,20 @@
 
 One entry per epic, newest first.
 
+## 1.0.2 - BUG-15, a clone with files and no commit (2026-11-15)
+
+A patch, next after 1.0.1, minimal by the owner's word (2026-11-14): in the top folder of a repository with no commit, kickoff refused a folder that holds files and named the adoption, which refused a repository with no commit and named kickoff. Now kickoff's refusal names the files and says what to do with them: move them out of the folder, or commit them, then run `/pitwall:continue` again. The adoption asks kickoff's own preflight, and when it refuses too, gives its refusal under its own, so both name the same files and the same way on, and no second list of what kickoff lays out over is kept. A layout that kickoff has not committed yet goes to `/pitwall:continue`. The check holds the files, staged or not, named by both, what kickoff lays out over left out, and a repository with a commit still sent to the adoption; its cases fail on 1.0.1's scripts. The journal's entries of T4a to T4c, T4d among them, moved to `docs/archive/` to keep this file under its size limit.
+
+**What the review found.** Round one: one to fix, the adoption's list counted files kickoff lays out over (an operating system's file, a project-scope install's settings), so it advised moving or committing them where kickoff would have laid the folder out; and notes, taken: files git ignores, the archive's name. Round two: one to fix, the adoption's own list still differed from kickoff's both ways, now kickoff's refusal itself; and notes, taken: the wording on files git ignores. Left as they are: an orphan branch, older limits of kickoff's list, and outside the owner's scope, the adoption of a folder with only a README, a warning against committing a secret, the conductor's route for a folder with only local settings. Round three, a check of the last commit, approved with no findings.
+
+| Round | Blocking | To fix | Subagent tokens | Tool calls | Minutes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 1 | 145,594 | 38 | 7.3 |
+| 2 | 0 | 1 | 119,666 | 21 | 6.2 |
+| 3 | 0 | 0 | 97,396 | 20 | 2.7 |
+
+**Next:** T5b, Last Ones Down adopted at the full level, once the owner has renamed its `master` to `main`; then T8, with BUG-9 and BUG-11 to BUG-13 after 1.0.
+
 ## 1.0.1 - BUG-14, a project-scope install (2026-11-14)
 
 A patch, first after 1.0 (owner, 2026-11-14): kickoff counts as empty a folder where the only thing besides `.git` is a `.claude/settings.json` with pitwall enabled. Claude Code 2.1.323, probed in a scratch home, writes `{"enabledPlugins": {"pitwall@pitwall": true}}` for a project-scope install, and the marketplace's GitHub source beside it when the marketplace was added for the project too. `layout.mjs` counts no such file that holds nothing the template's own does not, and writes the template's in its place; settings that hold more are never overwritten, and when they are all the folder holds, the refusal says what to do. The rule is a subset of the template's file rather than "pitwall enabled", so that the layout never loses a setting and needs no rule for conflicts. The check holds both forms, one with a BOM and CRLF, and six refusals; its cases fail on 1.0.0's `layout.mjs`.
