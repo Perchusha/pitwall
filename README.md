@@ -108,8 +108,8 @@ docs/                             how pitwall itself is planned and built
 scripts/check.mjs                 every check CI runs
 scripts/e2e.mjs                   headless runs of the stage skills, run by hand before a PR
 scripts/fake-gh.mjs               the fake gh the checks run the GitHub scripts against
-scripts/guard-corpus.mjs          the guard's corpus: the command lines of local transcripts replayed after a change of the guard, run by hand
-scripts/run-stats.mjs             the numbers of a pitwall run in a project, from Claude Code's local transcripts, run by hand
+scripts/guard-corpus.mjs          the guard's corpus, replayed by hand after each change of the guard
+scripts/run-stats.mjs             a pitwall run's numbers, from Claude Code's local transcripts
 ```
 
 ## Development
