@@ -1,6 +1,18 @@
 # pitwall
 
+[![CI](https://github.com/Perchusha/pitwall/actions/workflows/ci.yml/badge.svg)](https://github.com/Perchusha/pitwall/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Perchusha/pitwall?display_name=release)](https://github.com/Perchusha/pitwall/releases/latest)
+
 Idea to release with Claude Code. You sit on the pit wall and make the calls; agents run the laps.
+
+```mermaid
+flowchart LR
+  idea([One-line idea]) --> kickoff --> discovery --> decide --> spike{{spike, if due}} --> plan --> review[plan review] --> loop
+  subgraph loop [Epic loop, one change per lap]
+    impl[implement with tests] --> gate --> pr[PR] --> cr[fresh-context review] --> merge[merge by risk class]
+  end
+  loop --> release([QA, your yes, tagged release])
+```
 
 pitwall is a Claude Code plugin and a project template. It takes a new project from a one-line idea through research, decisions recorded as ADRs and a plan in epics, then runs every epic through the same loop: clarify, implement with tests, gate, PR, a review by a fresh-context agent, a merge by risk class, and a tagged release that a QA agent and you check.
 
@@ -96,6 +108,8 @@ docs/                             how pitwall itself is planned and built
 scripts/check.mjs                 every check CI runs
 scripts/e2e.mjs                   headless runs of the stage skills, run by hand before a PR
 scripts/fake-gh.mjs               the fake gh the checks run the GitHub scripts against
+scripts/guard-corpus.mjs          the guard's corpus, replayed by hand after each change of the guard
+scripts/run-stats.mjs             a pitwall run's numbers, from Claude Code's local transcripts
 ```
 
 ## Development
